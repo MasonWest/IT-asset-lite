@@ -6,27 +6,91 @@ import type {
   InventoryResult,
 } from '@/types'
 
-/** 设备类型 → 图标（没匹配上就用通用图标兜底，不依赖任何图标包） */
+/**
+ * 设备类型 → emoji（不依赖任何图标包）。
+ *
+ * ⚠️ 两个坑，2026-09-24 用真实 Chromium 实测出来的（Windows / Segoe UI Emoji）：
+ *
+ * 1. **主机和显示器绝对不能共用同一个码点。** 原先主机写 `U+1F5A5` + 变体选择符 `FE0F`、
+ *    显示器写裸 `U+1F5A5` —— 看着是两个不同的字符，其实是一个码点。Chromium 对这两种写法
+ *    fallback 到不同字体，结果**主机画出来是一台显示器、显示器画出来是一台立式设备**，
+ *    整个错位。现在两者换成完全不同的码点。
+ *
+ * 2. **这几个码点在 Windows 上是豆腐块（□），别当候选**：
+ *    `U+1F5B5`(SCREEN)、`U+1F5B4`(HARD DISK)、`U+1F5C5`(空文件柜)、`U+1F5C6`(空卡片盒)。
+ *    它们名字看着最贴切，实际渲染不出来。
+ *
+ * 分配口径：Unicode 里**只有一张「电脑屏幕」图**（`U+1F5A5`），
+ * 主机 / 显示器 / 一体机 / 电视 四个类型抢它一个，必然有让位 —— **谁最像就归谁**：
+ * 显示器拿它（画面就是一块屏），主机改用立式柜体（机箱感），
+ * 一体机改用屏键一体的老式电脑，电视用唯一的电视机符号。
+ */
 const TYPE_ICONS: Record<string, string> = {
-  主机: '🖥️',
-  台式机: '🖥️',
+  // —— 整机类 ——
+  主机: '🗄️',
+  台式机: '🗄️',
   笔记本: '💻',
-  显示器: '🖥',
+  一体机: '🖳',
+  服务器: '🖧',
+  // —— 显示类 ——
+  显示器: '🖥️',
+  电视: '📺',
+  投影仪: '📽️',
+  // —— 外设 ——
   键盘: '⌨️',
   鼠标: '🖱️',
   打印机: '🖨️',
   扫描仪: '📠',
-  路由器: '📡',
-  交换机: '📡',
-  服务器: '🗄️',
-  平板: '📱',
-  手机: '📱',
   摄像头: '📷',
+  音箱: '🔊',
+  // —— 网络设备 ——
+  路由器: '📶',
+  交换机: '📡',
+  // —— 移动设备 ——
+  手机: '📱',
+  平板: '📱',
+  // —— 其他 ——
+  家具: '🪑',
+  装饰摆件: '🖼️',
 }
+
+/**
+ * 类型名没精确命中时，按关键字兜底。
+ *
+ * 用户能自己建设备类型（「显示器（曲面）」「NAS 存储」…），
+ * 一张精确表盖不住 —— 但也不该全都退成 📦，那等于没图标。
+ */
+const TYPE_KEYWORDS: [string[], string][] = [
+  [['一体机', '一体', 'all-in-one'], '🖳'],
+  [['笔记本', '手提', 'laptop', 'macbook'], '💻'],
+  [['主机', '台式', '塔式', '工控机'], '🗄️'],
+  [['服务器', '存储', 'nas', '机架'], '🖧'],
+  [['显示', '屏幕', 'monitor', '曲面'], '🖥️'],
+  [['电视', 'tv', '智慧屏'], '📺'],
+  [['投影'], '📽️'],
+  [['打印'], '🖨️'],
+  [['扫描'], '📠'],
+  [['键盘'], '⌨️'],
+  [['鼠标', '轨迹'], '🖱️'],
+  [['路由', '网关', 'ap'], '📶'],
+  [['交换', '防火墙'], '📡'],
+  [['摄像', '相机', '监控'], '📷'],
+  [['音', '扬声', '耳'], '🔊'],
+  [['手机', '电话'], '📱'],
+  [['平板'], '📱'],
+  [['桌', '椅', '柜', '家具'], '🪑'],
+  [['摆件', '装饰', '画'], '🖼️'],
+]
 
 export function typeIcon(name?: string | null): string {
   if (!name) return '📦'
-  return TYPE_ICONS[name] ?? '📦'
+  const exact = TYPE_ICONS[name]
+  if (exact) return exact
+  const lower = name.toLowerCase()
+  for (const [words, icon] of TYPE_KEYWORDS) {
+    if (words.some((w) => lower.includes(w))) return icon
+  }
+  return '📦'
 }
 
 export interface StatusMeta {
@@ -51,8 +115,9 @@ export function statusMeta(status: string): StatusMeta {
 // 设备类别
 // --------------------------------------------------------------------------- //
 export const CATEGORY_META: Record<DeviceCategory, { label: string; icon: string; color: string; bg: string }> = {
-  host: { label: '主机类', icon: '🖥️', color: '#1f5fd0', bg: '#eaf2ff' },
-  display: { label: '显示类', icon: '🖥', color: '#7a4bd0', bg: '#f2ecff' },
+  // 图标与 TYPE_ICONS 里「主机 / 显示器」保持一致 —— 类别和类型看着是同一个东西，不能两套图
+  host: { label: '主机类', icon: '🗄️', color: '#1f5fd0', bg: '#eaf2ff' },
+  display: { label: '显示类', icon: '🖥️', color: '#7a4bd0', bg: '#f2ecff' },
   other: { label: '其他', icon: '📦', color: '#646a73', bg: '#f2f3f5' },
 }
 
