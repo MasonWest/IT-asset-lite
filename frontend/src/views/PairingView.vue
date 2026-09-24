@@ -37,6 +37,45 @@ const showHistory = ref(false)
 /** 主机列：只看还没挂任何显示器的主机。默认全看 */
 const onlyUnpairedHosts = ref(false)
 
+/**
+ * 使用人里代表「无归属」的占位符。
+ *
+ * 项目里没有人员字典表，使用人是自由文本，于是「这台没人用」被写成了各种样子 ——
+ * 现在库里 15 台写的是斜杠 `/`（13 台主机，全在办公室大厅 / 资料室这类公共区域），
+ * 而且这 13 台全都没有显示器，正好淹在「只看没配显示器的」那个筛选里，
+ * 想配真正要配的那几台得先做一遍排除法。
+ *
+ * 半角、全角斜杠都认 —— 中文输入法下打出 `／` 太正常了。
+ */
+const NO_USER_MARKS = ['/', '／']
+
+function isNoUser(asset: AssetBrief): boolean {
+  const name = asset.user_name?.trim()
+  return !!name && NO_USER_MARKS.includes(name)
+}
+
+/** 主机列：默认把「没使用人」的藏掉 */
+const hideNoUserHosts = ref(true)
+
+/** 被这条规则挡住的主机。数组留全，界面上要能把「藏了几台、怎么放出来」讲清楚 */
+const noUserHosts = computed(() => (board.value?.hosts ?? []).filter((h) => isNoUser(h.host)))
+
+/**
+ * 主机侧的基础集合 = 全部主机 − 被藏掉的没使用人的。
+ *
+ * **只作用于主机侧，显示器不筛。** 显示器写 `/` 也得有人给它找主机去挂，
+ * 藏起来只会漏配；主机写 `/` 则是「这台不归谁」，混在工作列表里才是纯干扰。
+ */
+const hostPool = computed(() =>
+  (board.value?.hosts ?? []).filter((h) => !hideNoUserHosts.value || !isNoUser(h.host)),
+)
+
+/**
+ * 没配显示器的主机数。按**过滤之后**算 —— 拿后端全局统计去当勾选框上的数字，
+ * 会出现「写着 21 台，勾上只看得到 8 台」这种对不上的情况。
+ */
+const unpairedHostCount = computed(() => hostPool.value.filter((h) => !h.monitor_count).length)
+
 /** 「加显示器」弹窗：默认只列还没配出去的，勾上才显示已挂机的 */
 const pickerShowBound = ref(false)
 const pickerKeyword = ref('')
@@ -87,9 +126,12 @@ function matchHost(code: string, user: string | null, name: string): boolean {
   return [code, user, name].filter(Boolean).some((v) => String(v).toLowerCase().includes(kw))
 }
 
-/** 关键字命中的主机（不带上「只看未配对」那个开关）—— 待配对池的下拉要看到全部主机 */
+/**
+ * 关键字命中的主机（不带上「只看未配对」那个开关）—— 待配对池的「挂到主机」下拉
+ * 也用这一个集合，所以它跟左边主机列看到的范围永远一致。
+ */
 const matchedHosts = computed(() =>
-  (board.value?.hosts ?? []).filter((h) =>
+  hostPool.value.filter((h) =>
     matchHost(h.host.asset_code, h.host.user_name, h.monitors.map((m) => m.asset_code).join(' ')),
   ),
 )
@@ -276,7 +318,11 @@ onMounted(async () => {
         <div class="k"><span>📦</span>待配对</div>
         <div class="v">{{ stats.unpaired_monitors ?? 0 }}<small>台</small></div>
       </div>
-      <div class="stat-card" style="cursor: default">
+      <div
+        class="stat-card"
+        style="cursor: default"
+        title="全库统计，不受上方「只看没配显示器的」和过滤开关影响"
+      >
         <div class="k"><span>⚠️</span>没配显示器的主机</div>
         <div class="v">{{ stats.hosts_without_monitor ?? 0 }}<small>台</small></div>
       </div>
@@ -299,6 +345,9 @@ onMounted(async () => {
         placeholder="搜索资产编号 / 使用人 / 品牌型号"
         clearable
       />
+      <el-checkbox v-model="hideNoUserHosts" class="no-user-toggle">
+        隐藏使用人「/」的主机（{{ noUserHosts.length }}）
+      </el-checkbox>
       <span class="count-note">
         {{ visibleHosts.length }} 台主机 · {{ visibleUnpaired.length }} 台待配对显示器
       </span>
@@ -333,7 +382,7 @@ onMounted(async () => {
         <div class="col-head">
           <span>主机（{{ visibleHosts.length }}）</span>
           <el-checkbox v-model="onlyUnpairedHosts" size="small">
-            只看没配显示器的（{{ stats.hosts_without_monitor ?? 0 }}）
+            只看没配显示器的（{{ unpairedHostCount }}）
           </el-checkbox>
         </div>
         <div v-for="h in visibleHosts" :key="h.host.id" class="host-card panel">
@@ -381,6 +430,12 @@ onMounted(async () => {
           <template v-if="onlyUnpairedHosts && matchedHosts.length">
             <div class="title">所有主机都配上显示器了</div>
             <div>取消勾选「只看没配显示器的」，就能看到全部 {{ matchedHosts.length }} 台主机。</div>
+          </template>
+          <template v-else-if="hideNoUserHosts && noUserHosts.length && !keyword.trim()">
+            <div class="title">能显示的主机都被过滤掉了</div>
+            <div>
+              取消勾选上方那个过滤开关，{{ noUserHosts.length }} 台公共区域的主机就会回来。
+            </div>
           </template>
           <template v-else>
             <div class="title">没有匹配的主机</div>
@@ -482,9 +537,16 @@ onMounted(async () => {
             class="picker-radio"
             :disabled="hostOf.get(m.id)?.id === pickerTarget?.id"
           >
-            <span class="picker-code">{{ m.asset_code }}</span>
+            <span class="picker-head-row">
+              <span class="picker-code">{{ m.asset_code }}</span>
+              <!-- 使用人做成独立标签：同一个人的几台设备一眼归堆，不用去记编号 -->
+              <span class="picker-user" :class="{ none: !m.user_name }">
+                {{ m.user_name || '未填使用人' }}
+              </span>
+            </span>
             <span class="picker-sub">
               {{ orDash(m.brand) }} {{ m.model || '' }}
+              <template v-if="m.location"> · {{ m.location }}</template>
               <template v-if="hostOf.get(m.id)">
                 ·
                 <span class="warn-text">当前挂在 {{ hostOf.get(m.id)?.asset_code }}（换绑）</span>
@@ -530,6 +592,15 @@ onMounted(async () => {
 .count-note {
   font-size: 13px;
   color: var(--text-2);
+  white-space: nowrap;
+}
+
+.no-user-toggle {
+  flex-shrink: 0;
+}
+
+.no-user-toggle :deep(.el-checkbox__label) {
+  font-size: 12.5px;
   white-space: nowrap;
 }
 
@@ -878,6 +949,29 @@ onMounted(async () => {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--text-1);
+}
+
+/* 编号 + 使用人排一行。使用人做成标签是为了扫视 —— 同一使用人的几台设备自然会归堆 */
+.picker-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.picker-user {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #3370ff;
+  background: #eef3ff;
+  border-radius: 999px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.picker-user.none {
+  color: var(--text-3);
+  background: #f2f3f5;
 }
 
 .picker-sub {
