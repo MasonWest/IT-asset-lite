@@ -1,0 +1,15 @@
+# IT 资产管理系统 - 后端依赖
+# 安装：python -m pip install -r requirements.txt
+fastapi>=0.115
+uvicorn[standard]>=0.34
+SQLAlchemy>=2.0
+pydantic>=2.9
+# 文件上传（批量导入用的 multipart 表单）
+python-multipart>=0.0.12
+# 二维码
+qrcode[pil]>=8.0
+Pillow>=10.0
+# Excel 读写：导入模板、资产导出、盘点导出、审计导出全靠它。
+# 第二阶段是惰性 import 的，requirements 里一直漏着 —— 靠"恰好装在环境里"跑通，
+# 换一台机器用 start.bat 装依赖就会在导出时炸。第三阶段把它补上（导入功能离不开它）。
+openpyxl>=3.1

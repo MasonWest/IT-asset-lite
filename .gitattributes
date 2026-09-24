@@ -1,0 +1,30 @@
+# 换行符统一规范
+#
+# 不加这个文件的话，Windows 上提交、Linux 上 clone 会互相转换换行符，
+# 产生大量「整个文件都变了」的假 diff，真正的改动反而看不见。
+
+# 默认：由 git 判断是不是文本文件，是文本就统一存成 LF
+* text=auto
+
+# 批处理文件例外：仓库里也保持原样（CRLF），不做任何换行符转换。
+#
+# 为什么用 -text 而不是 eol=crlf：
+#   eol=crlf 只保证「检出到工作区时」是 CRLF，仓库里存的仍是 LF。
+#   而有人会直接从 GitHub 下载 ZIP 来用 —— ZIP 里就是仓库里的字节，
+#   于是拿到的是 LF 的 .bat，在 cmd 里可能解析错（而且不报错，只是行为不对）。
+#   -text 表示「别碰这个文件」，工作区和仓库都是 CRLF，任何途径拿到都一致。
+*.bat -text
+*.cmd -text
+
+# 二进制文件明确标注，避免被当文本处理损坏内容
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.db binary
+*.xlsx binary
