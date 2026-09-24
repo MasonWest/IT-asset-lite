@@ -87,6 +87,48 @@ export interface AssetPage {
   page_size: number
 }
 
+/** 套装聚合行需要「轻提示」的几种情况 —— 只提示，不阻断、不自动改数据 */
+export interface AssetGroupFlags {
+  /** 一台显示器挂了多台主机（当前数据模型下不可能，防御性字段） */
+  multi_host: boolean
+  /** 一台主机挂了 ≥2 台显示器 */
+  multi_monitor: boolean
+  /** 组内成员状态不一致（例如主机「在用」而显示器「在库」） */
+  status_mismatch: boolean
+}
+
+/**
+ * 套装聚合视图的一行。
+ * - `kind === 'bundle'`：一台主机 + N 台显示器
+ * - `kind === 'single'`：没参与配对的散设备
+ */
+export interface AssetGroup {
+  group_key: string
+  kind: 'bundle' | 'single'
+  /** 这一行的门面：套装是主机，散设备是它自己 */
+  primary: Asset
+  extra_hosts: Asset[]
+  monitors: Asset[]
+  monitor_count: number
+  /** 组内全部资产 id —— 打印标签时展开成明细用（标签永远按设备明细打印） */
+  asset_ids: number[]
+  asset_count: number
+  sort_id: number
+  flags: AssetGroupFlags
+}
+
+export interface AssetGroupPage {
+  items: AssetGroup[]
+  /** 聚合后的行数（分页按它算） */
+  total: number
+  page: number
+  page_size: number
+  /** 命中筛选的明细台数，等于同一条件下 /api/assets 的 total */
+  matched_total: number
+  /** 聚合后展开的总台数，因「整组出现」可能大于 matched_total */
+  expanded_total: number
+}
+
 export interface StatusOption {
   value: AssetStatus
   label: string

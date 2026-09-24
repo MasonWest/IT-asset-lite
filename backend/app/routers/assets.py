@@ -36,6 +36,8 @@ from ..models import (
 from ..schemas import (
     AssetCreate,
     AssetEventOut,
+    AssetGroupOut,
+    AssetGroupPage,
     AssetOperationOut,
     AssetOperationRequest,
     AssetOut,
@@ -45,11 +47,12 @@ from ..schemas import (
     RelationOut,
     TimelinePage,
 )
+from ..services import bundles as bundles_service
 from ..services import pairing
 from ..services.audit import asset_label, describe_operation, record_audit
 from ..services.events import describe_changes, diff_changes, record_event
 from ..services.filters import build_conditions
-from ..services.serialize import to_asset_out, to_brief, to_event_out, to_relation_out
+from ..services.serialize import to_asset_out, to_brief, to_event_out, to_group_out, to_relation_out
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -83,6 +86,10 @@ def serialize_event(event: AssetEvent) -> AssetEventOut:
 
 def serialize_relation(relation: AssetRelation) -> RelationOut:
     return to_relation_out(relation)
+
+
+def serialize_group(bundle) -> AssetGroupOut:
+    return to_group_out(bundle)
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +201,61 @@ def list_assets(
             )
         )
     return AssetPage(items=items, total=total, page=page, page_size=page_size)
+
+
+# --------------------------------------------------------------------------- #
+# 套装聚合视图
+# --------------------------------------------------------------------------- #
+# ⚠️ 这个路由**必须声明在 `/{asset_id}` 之前**。
+# FastAPI 按声明顺序匹配，`/api/assets/grouped` 会被 `/{asset_id}` 抢走，
+# 然后因为 "grouped" 不是整数直接 422 —— 而且报错信息完全看不出是这个原因。
+@router.get(
+    "/grouped",
+    response_model=AssetGroupPage,
+    summary="资产列表（主机 + 显示器套装聚合视图）",
+)
+def list_assets_grouped(
+    db: Session = Depends(get_db),
+    keyword: Optional[str] = Query(None, description="模糊搜索：编号/品牌/型号/SN/使用人/位置/备注"),
+    device_type_id: Optional[str] = Query(None, description="设备类型 ID，多个用逗号分隔"),
+    status: Optional[str] = Query(None, description="状态，多个用逗号分隔"),
+    user_name: Optional[str] = Query(None, description="使用人，多个用逗号分隔"),
+    location: Optional[str] = Query(None, description="存放位置，多个用逗号分隔"),
+    paired: Optional[str] = Query(None, description="配对筛选：paired 已配对 / unpaired 未配对"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=1000),
+):
+    """把「主机 + 它挂着的显示器」合并成一行再分页。
+
+    筛选口径与 `/api/assets` 完全一致（共用 `build_conditions`）——
+    但**筛选命中的是明细，展示的是整组**：组内任意一台命中，整组完整出现。
+    详见 `services/bundles.py` 开头的口径说明。
+
+    这是只读的展示视角，不写任何数据，这台接口也不会产生审计日志。
+    """
+    conditions = build_conditions(
+        keyword=keyword,
+        device_type_id=device_type_id,
+        status=status,
+        user_name=user_name,
+        location=location,
+        paired=paired,
+    )
+
+    # 分页发生在**聚合之后**：先切页再聚合会把同一个套装拆到两页，
+    # 用户在任意一页都看不到完整的机器（明细列表里主机和显示器的行距中位数是 85 行）。
+    result = bundles_service.build_bundles(db, conditions=conditions)
+    total = len(result.bundles)
+    start = (page - 1) * page_size
+
+    return AssetGroupPage(
+        items=[serialize_group(b) for b in result.bundles[start : start + page_size]],
+        total=total,
+        page=page,
+        page_size=page_size,
+        matched_total=result.matched_total,
+        expanded_total=result.expanded_total,
+    )
 
 
 @router.get("/{asset_id}", response_model=AssetOut, summary="资产详情")

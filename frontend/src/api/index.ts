@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 
 import type {
   Asset,
+  AssetGroupPage,
   AssetOperationPayload,
   AssetOperationResult,
   AssetPage,
@@ -92,6 +93,11 @@ export const systemApi = {
 
 export const assetApi = {
   list: (query: AssetQuery = {}) => get<AssetPage>('/assets', query),
+  /**
+   * 套装聚合视图：把「主机 + 它挂着的显示器」合并成一行再分页。
+   * 筛选口径与 list 完全一致（服务端共用同一套条件），只是返回的行结构不同。
+   */
+  grouped: (query: AssetQuery = {}) => get<AssetGroupPage>('/assets/grouped', query),
   detail: (id: number) => get<Asset>(`/assets/${id}`),
   create: (payload: AssetPayload) => post<Asset>('/assets', payload),
   update: (id: number, payload: Partial<AssetPayload>) => put<Asset>(`/assets/${id}`, payload),

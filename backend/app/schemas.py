@@ -197,6 +197,58 @@ class AssetPage(BaseModel):
     page_size: int
 
 
+class AssetGroupFlags(BaseModel):
+    """聚合行需要「轻提示」的几种情况。
+
+    全部只提示、不阻断、不自动改数据 —— 状态和使用人是资产级的属性，
+    套装视图没有权力替成员改它们。
+    """
+
+    #: 一台显示器挂了多台主机（当前数据模型下不可能，防御性字段）
+    multi_host: bool = False
+    #: 一台主机挂了 ≥2 台显示器
+    multi_monitor: bool = False
+    #: 组内成员状态不一致（例如主机「在用」而显示器「在库」）
+    status_mismatch: bool = False
+
+
+class AssetGroupOut(BaseModel):
+    """套装聚合视图的一行。
+
+    - `kind = "bundle"`：一台主机 + N 台显示器（`monitors` 非空）
+    - `kind = "single"`：没参与配对的散设备，退化成一行明细
+    """
+
+    #: 前端 row-key，形如 `bundle-123` / `single-45`
+    group_key: str
+    kind: str = "single"
+    #: 这一行的门面：套装是主机，散设备是它自己
+    primary: AssetOut
+    #: 只在脏数据下才非空（多主机），正常情况下恒为空
+    extra_hosts: list[AssetOut] = []
+    #: 套装挂着的显示器；散设备为空
+    monitors: list[AssetOut] = []
+    monitor_count: int = 0
+    #: 组内全部资产 id —— 前端「打印标签」时展开成明细用（标签永远按明细打）
+    asset_ids: list[int] = []
+    asset_count: int = 1
+    #: 排序键（组内最大 id），与明细视图的 Asset.id desc 同向
+    sort_id: int = 0
+    flags: AssetGroupFlags = AssetGroupFlags()
+
+
+class AssetGroupPage(BaseModel):
+    items: list[AssetGroupOut]
+    #: 聚合后的行数（分页按它算）
+    total: int
+    page: int
+    page_size: int
+    #: 命中筛选的明细台数，等于同一条件下 /api/assets 的 total
+    matched_total: int = 0
+    #: 聚合后展开的总台数，因「整组出现」可能大于 matched_total
+    expanded_total: int = 0
+
+
 class FilterOptions(BaseModel):
     """筛选下拉的候选值，全部从现有资产数据里现算，不额外维护字典表。"""
 

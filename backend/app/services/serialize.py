@@ -21,7 +21,7 @@ from ..models import (
     AssetStatus,
     DeviceCategory,
 )
-from ..schemas import AssetBrief, AssetEventOut, AssetOut, RelationOut
+from ..schemas import AssetBrief, AssetEventOut, AssetGroupFlags, AssetGroupOut, AssetOut, RelationOut
 
 
 def parse_json_dict(raw: Optional[str]) -> Optional[dict[str, Any]]:
@@ -84,6 +84,35 @@ def to_asset_out(
         monitors=monitors or [],
         host=host,
         actions=AssetOperation.actions_for(asset.status),
+    )
+
+
+def to_group_out(bundle) -> AssetGroupOut:
+    """套装聚合行 → 对外结构。
+
+    bundle 是 services.bundles.AssetBundle —— 这里按**鸭子类型**用它，不 import 那个模块，
+    也就不用关心 serialize ←→ bundles 的依赖方向（kind == "bundle" 是这个结构对外约定的字面量）。
+    """
+    primary = bundle.primary
+    is_bundle = bundle.kind == "bundle"
+    host_code = primary.asset_code if is_bundle else None
+
+    def member_out(asset: Asset, *, as_host: bool) -> AssetOut:
+        if as_host:
+            return to_asset_out(asset, monitor_count=len(bundle.monitors))
+        return to_asset_out(asset, host_id=primary.id, host_code=host_code)
+
+    return AssetGroupOut(
+        group_key=f"{bundle.kind}-{primary.id}",
+        kind=bundle.kind,
+        primary=member_out(primary, as_host=True),
+        extra_hosts=[member_out(a, as_host=True) for a in bundle.extra_hosts],
+        monitors=[member_out(a, as_host=False) for a in bundle.monitors],
+        monitor_count=len(bundle.monitors),
+        asset_ids=[a.id for a in bundle.members],
+        asset_count=len(bundle.members),
+        sort_id=bundle.sort_id,
+        flags=AssetGroupFlags(**bundle.flags),
     )
 
 
