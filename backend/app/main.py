@@ -27,11 +27,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
 from . import __version__
-from .config import APP_NAME, FRONTEND_DIST, PORT, detect_lan_ip, get_base_url, get_database_file
-from .database import SessionLocal, ensure_schema
+from .config import (
+    APP_NAME,
+    FRONTEND_DIST,
+    PORT,
+    SEED_ON_STARTUP,
+    detect_lan_ip,
+    get_base_url,
+    get_database_file,
+)
+from .database import SessionLocal, ensure_schema, table_counts
 from .models import AuditAction, AuditTarget
 from .routers import assets, audit, device_types, inventory, meta, relations, system, transfer
-from .seed import seed_if_empty
+from .seed import ensure_dictionary, seed_demo
 from .services import audit as audit_service
 
 logger = logging.getLogger("it_asset")
@@ -120,8 +128,15 @@ def _audit_failed_request(request: Request, ip: str, status_code: int, error: st
 async def lifespan(_app: FastAPI):
     # ensure_schema 负责建表 + 轻量迁移，前两阶段跑起来的库直接升级，不用重建
     migration = ensure_schema()
+
+    # 启动只做两件事：建表、补字典数据（设备类型）。
+    # **不写任何资产** —— 演示数据要显式执行 `python seed.py`。
+    # 这样删掉 .db 重启得到的是一个干净空库，不会凭空冒出一批分不清真假的设备。
+    # 想让启动时自动灌（做演示/截图）：设 IT_ASSET_SEED_ON_STARTUP=1。
     with SessionLocal() as db:
-        result = seed_if_empty(db)
+        types_created = ensure_dictionary(db)
+        demo = seed_demo(db) if SEED_ON_STARTUP else None
+        counts = table_counts()
 
     line = "-" * 62
     print(f"\n{line}")
@@ -138,12 +153,17 @@ async def lifespan(_app: FastAPI):
             f"  已升级：{migration['timestamps_shifted']} 个时间戳由 UTC 校正为本地时间"
             f"（本机时区偏移 {migration['offset_minutes']:+d} 分钟）"
         )
-    if result["types_created"] or result["assets_created"]:
-        print(f"  已写入种子数据：设备类型 {result['types_created']} 个 / 资产 {result['assets_created']} 台")
-    if result.get("relations_created") or result.get("events_created"):
+    if types_created:
+        print(f"  已初始化字典数据：设备类型 {types_created} 个")
+    if demo is not None:
         print(
-            f"  已回填：配对 {result.get('relations_created', 0)} 条 / 历史 {result.get('events_created', 0)} 条"
+            "  已写入演示数据（IT_ASSET_SEED_ON_STARTUP 开着）"
+            f"：资产 {demo['assets_created']} 台 / 配对 {demo['relations_created']} 条"
+            f" / 履历 {demo['events_created']} 条"
         )
+    elif not counts.get("assets"):
+        print(f"  当前为空库（设备类型 {counts.get('device_types', 0)} 个，资产 0 台）")
+        print("  要灌演示数据：python seed.py        （清空数据：python reset.py）")
     if detect_lan_ip() == "127.0.0.1":
         print("  [!] 未探测到局域网 IP，手机可能访问不了，请用 IT_ASSET_PUBLIC_BASE_URL 手动指定")
     if not FRONTEND_DIST.is_dir():

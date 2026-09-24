@@ -129,15 +129,17 @@ IT_snipe/
 │   ├── run.py                启动入口
 │   ├── check_env.py          依赖自检（标准库 only，给 .bat 探测用）
 │   ├── backup_db.py          备份脚本（SQLite 在线备份接口 + 完整性校验）
+│   ├── seed.py               手动灌演示数据（启动时不会自动灌）
+│   ├── reset.py              清空业务数据（自动备份 + 输入 RESET 二次确认）
 │   ├── requirements.txt      后端依赖清单
-│   ├── data/it_assets.db     SQLite 数据库（首次启动自动创建 + 灌种子数据）
+│   ├── data/it_assets.db     SQLite 数据库（首次启动自动建表 + 初始化设备类型字典）
 │   └── app/
 │       ├── main.py           应用装配 + 静态托管 + 审计中间件
 │       ├── config.py         端口 / 局域网 IP / 扫码基准地址 / 备份目录 / 版本号
 │       ├── database.py       引擎、会话、老库迁移（ensure_schema）
 │       ├── models.py         七张表的模型定义
 │       ├── schemas.py        请求响应模型
-│       ├── seed.py           种子数据 + 老库回填
+│       ├── seed.py           字典数据自动初始化（ensure_dictionary） + 演示数据手动灌入（seed_demo）
 │       ├── services/         业务逻辑（路由只管收发）
 │       │   ├── events.py         变更事件 + 字段差异比较
 │       │   ├── pairing.py        配对绑定 / 解绑 / 换绑
@@ -221,6 +223,14 @@ IT_snipe/
 **5. 不做登录体系。**
 「操作人」由用户在设置里手填（可留空），靠 IP + 手填操作人区分。**不要自作主张加登录。**
 
+**6. 启动流程只建表 + 补字典，绝不写业务数据。**
+`lifespan` 里只允许调 `ensure_schema()` 和 `ensure_dictionary()`。想加"启动时顺便灌点什么"
+之前先想清楚：删掉 `.db` 重启应该得到一个空库。演示数据只能由 `python seed.py` 显式触发。
+
+**7. 新增/删除表要同步 `database.py` 的表分类。**
+`BUSINESS_TABLES`（业务数据，`reset.py` 会清）和 `DICTIONARY_TABLES`（基础数据，自动补、不被清）
+是人工维护的名单，`ASSET_COLUMNS` 那条红线同理 —— 漏一个就会让 `reset.py` 留下残缺数据。
+
 ---
 
 ## 七、关键设计决策（为什么这么做）
@@ -248,6 +258,11 @@ IT_snipe/
 | 16 | 三个 `.bat` 一律 **GBK + CRLF、无 BOM** | Windows 控制台默认代码页 936。存成 UTF-8 中文提示会变乱码，配 `chcp 65001` 又会错位 |
 | 17 | 时区校正**只平移** `created_at` / `updated_at` | `released_at` / `closed_at` / `checked_at` 本来就是本地时间，往后挪 8 小时等于把好数据改坏 |
 | 18 | 一次性迁移用 `schema_meta` **记账**，幂等 | 重复启动不会重复执行 |
+| 19 | **启动时不灌演示数据**，只自动初始化字典（设备类型） | 自动灌会让人分不清"这些设备是我录的还是系统塞的"；更糟的是误删 `.db` 后重启会凭空长出十台假设备，跟真实数据混一起，比空库更难收拾。演示数据改成手动 `python seed.py` |
+| 20 | **字典数据 ≠ 业务数据**，在 `database.py` 里分成两个常量组 | 设备类型是系统能跑的最小前提（没类型没法录资产），启动时自动补；`reset.py` 只清 `BUSINESS_TABLES`，不碰它，清完界面还能正常用 |
+| 21 | `reset.py` **先确认、再备份、后清空** | 反过来的话，中途放弃（输错确认词）也会留下一堆用不上的备份文件。备份失败就中止 —— 没有后悔药就不动手 |
+| 22 | 删除顺序按**外键依赖**排（子表优先），不临时关外键校验 | `inventory_items` → `asset_relations`/`asset_events` → `inventory_tasks`/`assets`。靠顺序而不是关校验，能让 schema 的问题在重置时就暴露出来 |
+| 23 | `reset.py` 要求**亲手输入 `RESET`**（不是 y/n） | 这是不可撤销操作，一个误敲的回车不该能触发它。`--yes` 留给自动化，`EOFError` 也当作中止 |
 
 ---
 
@@ -351,6 +366,34 @@ netsh advfirewall firewall add rule name="IT资产管理8080" dir=in action=allo
 探测到的 IP 不对（有 VPN / 虚拟机 / WSL 时常见）：点右上角 ⚙ 设置，把「自定义扫码地址」填成
 `http://192.168.x.x:8080` 即可，二维码会立刻按新地址重新生成。
 
+### 数据初始化与维护
+
+启动时**只建表 + 补设备类型字典，不写任何业务数据**。所以删掉 `backend\data\it_assets.db`
+再重启，得到的是一个空库（设备类型 6 个、资产 0 台）—— 这是预期行为。
+
+| 时机 | 做什么 | 触发方式 |
+| --- | --- | --- |
+| 每次启动 | 建表 + 轻量迁移（`ensure_schema`） | 自动 |
+| 每次启动 | 空库时建 6 个设备类型（`ensure_dictionary`） | 自动 |
+| 每次启动 | **不碰任何资产数据** | — |
+| 需要时 | 灌 10 台演示设备 + 配对 + 履历（`seed_demo`） | `python backend\seed.py` |
+| 需要时 | 清空全部业务数据，保留表结构与字典 | `python backend\reset.py` |
+
+```bat
+python backend\seed.py             :: 灌演示数据
+python backend\seed.py --check     :: 只看各表条数，不写
+
+python backend\reset.py            :: 备份 → 列出要删的 → 输入 RESET → 清空
+python backend\reset.py --check    :: 只看会删什么，一个字都不写
+python backend\reset.py --yes      :: 跳过手动确认（自动化用）
+python backend\reset.py --no-backup :: 不先备份（不推荐）
+```
+
+两条命令都**幂等且不碰已有数据**：`seed.py` 只在对应表为空时才写，所以对着有真实数据的库
+跑它不会追加资产、不会往已有履历里插东西；`reset.py` 只删业务表，设备类型和表结构都留着。
+
+想看启动时自动灌（做演示/截图）：设 `IT_ASSET_SEED_ON_STARTUP=1`，别长期开着。
+
 ### 备份
 
 双击 `backup.bat` → 在 `backups\` 生成 `it_assets_20260924_153012.db`，自动只留最近 30 份。
@@ -392,6 +435,12 @@ python backend\backup_db.py --out D:\bak    :: 换目录
 5. **导入闭环**：下载模板 → 填 10 台 → 导入预览显示 10 条新增 → 确认入库；
    同一文件再导一次，选「仅新增」报重复错误、选「新增或更新」报无变化
 6. **导出闭环**：导出当前筛选结果 → 能正常打开且列齐全 → 改一改能再导回来
+7. **删库重启**：删掉 `backend\data\it_assets.db` → 重启 → 应该是空库，只看得见设备类型；
+   跑 `python backend\seed.py` 演示数据才回来
+
+> 第 1–3、7 项依赖人工操作或真实设备。前 6 项的自动化版本已通过（见上表）。
+> 新增的 seed / reset 两个命令已在命令行实测：删库重启后的空库状态、`seed.py` 的幂等跳过、
+> `reset.py` 的两条中止路径（空 stdin / 输错词）和成功路径（备份 + 删除 + VACUUM 回收）。
 
 README「验收步骤」一节按三个阶段给出了更细的逐条清单。
 
@@ -454,10 +503,13 @@ README「验收步骤」一节按三个阶段给出了更细的逐条清单。
 
 - **改了后端依赖要同步改 `backend/check_env.py` 的清单**。`requirements.txt` 管"装什么"，
   `check_env.py` 管"装完能不能 import"，两边必须一起动。
+- **改了表结构要同步 `database.py` 的 `BUSINESS_TABLES` / `DICTIONARY_TABLES`**，
+  否则 `reset.py` 和 `seed.py --check` 会漏表。
 - **改 `.bat` 必须存成 GBK + CRLF**，中文提示才不会乱码。
 - **加了新路由要注意路径参数路由的顺序问题**，批量的走 `/api/transfer` 这类独立前缀。
+- **改行为别改 `seed.py` 与 `main.py` 的分工**：字典走启动，演示数据走命令行。
 - **改了行为就更新本文件**。这是项目的状态基准，过期了比没有更糟。
 
 ---
 
-*最后更新：2026-09-24 · 对应版本 v1.0.0*
+*最后更新：2026-09-24 · 版本基线 v1.0.0（另有未发版改动，见 CHANGELOG.md）*

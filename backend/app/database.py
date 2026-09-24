@@ -64,6 +64,36 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+#: 业务表：用户自己干活攒出来的数据。`reset.py` 清空的就是这些。
+#: 顺序有讲究 —— 必须先删子表，否则 PRAGMA foreign_keys=ON 会拦住删除：
+#: inventory_items 引用 inventory_tasks + assets，asset_relations / asset_events 引用 assets。
+#: 靠这个顺序而不是"临时关掉外键校验"，是为了让 schema 的问题在重置时就暴露出来。
+BUSINESS_TABLES: tuple[str, ...] = (
+    "inventory_items",
+    "asset_relations",
+    "asset_events",
+    "inventory_tasks",
+    "assets",
+    "audit_logs",  # 无外键，但同属业务数据（审计日志只追加，只有 reset 能清）
+)
+
+#: 字典表：系统能跑起来的最小基础数据，**不是**用户的业务数据。
+#: 启动时会自动补齐，reset 不动它 —— 清空业务数据后界面不该连"设备类型"都没有。
+DICTIONARY_TABLES: tuple[str, ...] = ("device_types",)
+
+
+def table_counts() -> dict[str, int]:
+    """各表当前行数。表不存在记 -1（老库还没升到那一步时会出现）。"""
+    counts: dict[str, int] = {}
+    with engine.begin() as conn:
+        for table in BUSINESS_TABLES + DICTIONARY_TABLES:
+            if not _table_exists(conn, table):
+                counts[table] = -1
+                continue
+            counts[table] = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one()
+    return counts
+
+
 def _existing_columns(conn, table: str) -> set[str]:
     rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
     return {row[1] for row in rows}

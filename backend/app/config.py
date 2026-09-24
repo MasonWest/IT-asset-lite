@@ -19,6 +19,18 @@ HOST = os.getenv("IT_ASSET_HOST") or "0.0.0.0"
 # 默认 8080：8000 在很多机器上被打印控件 / 其他服务占着
 PORT = int(os.getenv("IT_ASSET_PORT") or os.getenv("PORT") or 8080)
 
+#: 启动时是否自动灌演示数据（10 台示例资产 + 配对 + 初始履历）。
+#: **默认关闭。** 删掉 .db 重启后应该是一个空库：只有设备类型这类字典数据，
+#: 看不到任何测试资产。想要样例数据就显式执行 `python seed.py`。
+#: 做演示 / 截图时想让它自动灌：设 `IT_ASSET_SEED_ON_STARTUP=1`，但别长期开着 ——
+#: 那样一旦误删数据库文件，重启就会"长"出十台假设备，很难分辨真假。
+SEED_ON_STARTUP = (os.getenv("IT_ASSET_SEED_ON_STARTUP") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 # 备份目录（backup.bat 往这里写；也给将来的定时备份留个统一口径）
 BACKUP_DIR = Path(os.getenv("IT_ASSET_BACKUP_DIR") or (BASE_DIR.parent / "backups"))
 

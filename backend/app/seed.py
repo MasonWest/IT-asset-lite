@@ -1,12 +1,18 @@
-"""初始化种子数据 + 老库回填。
+"""字典数据自动初始化 + 演示数据手动灌入。
 
-三件事，都是幂等的：
-  1. 空库时写入设备类型和示例资产；
-  2. 配对表为空时，按「使用人和位置都对得上」的规则把显示器挂到主机上；
-  3. 历史表为空时，给每台设备补一条「录入台账」事件，让时间线不是空的。
+两条路径分得很清楚，别混：
 
-只在对应的表为空时才动手，绝不覆盖你已经录入的数据。
-想整体跳过：设置环境变量 IT_ASSET_SKIP_SEED=1
+  ensure_dictionary(db)   设备类型这类字典数据。**启动时自动调用** ——
+                          没有设备类型就没法录入资产，它是系统能跑的最小前提。
+                          它不含任何资产。
+  seed_demo(db)           10 台示例资产 + 由它们推导出的配对 + 初始履历。
+                          **只在显式执行 `python seed.py` 时才跑。**
+
+所以删掉 .db 重启后是一个空库：表建好了、设备类型有了、一台资产都没有。
+这是预期行为。想看样例数据就手动灌。
+
+所有写入都是幂等的 —— 只在对应表为空时才动手，绝不覆盖你已经录入的数据。
+想连设备类型都不自动建：设环境变量 IT_ASSET_SKIP_SEED=1。
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from .models import (
     DeviceType,
 )
 
+#: 字典数据：设备类型。空库时自动建，用户之后可以随意增删改。
 DEVICE_TYPES: list[tuple[str, int, str]] = [
     ("主机", 10, DeviceCategory.HOST),
     ("笔记本", 20, DeviceCategory.HOST),
@@ -181,6 +188,7 @@ SEED_ASSETS: list[dict] = [
 
 
 def _seed_types(db: Session) -> int:
+    """空表时建 6 个基础设备类型。字典数据的唯一入口。"""
     if db.execute(select(func.count(DeviceType.id))).scalar_one():
         return 0
     for name, order, category in DEVICE_TYPES:
@@ -190,6 +198,7 @@ def _seed_types(db: Session) -> int:
 
 
 def _seed_assets(db: Session) -> int:
+    """空表时写入 10 台示例资产。**这是演示数据，不是系统必需的数据。**"""
     if db.execute(select(func.count(Asset.id))).scalar_one():
         return 0
 
@@ -280,13 +289,30 @@ def _backfill_relations(db: Session) -> int:
     return created
 
 
-def seed_if_empty(db: Session) -> dict[str, int]:
-    """返回各步骤实际写入了多少条，全部为 0 说明是老库且已初始化过。"""
-    if os.getenv("IT_ASSET_SKIP_SEED") == "1":
-        return {"types_created": 0, "assets_created": 0, "relations_created": 0, "events_created": 0}
+def ensure_dictionary(db: Session) -> int:
+    """补齐字典数据（设备类型），返回新增条数；表非空时返回 0。
 
-    types_created = _seed_types(db)
+    启动时自动跑这一支。它是系统可用的最小前提，而且**不含任何测试资产** ——
+    所以「删掉 .db 重启后只看得见字典数据」是预期行为，不是 bug。
+    """
+    if os.getenv("IT_ASSET_SKIP_SEED") == "1":
+        return 0
+    return _seed_types(db)
+
+
+def seed_demo(db: Session) -> dict[str, int]:
+    """灌演示数据。**只在显式调用时执行**（命令行入口：`python seed.py`）。
+
+    四步各自幂等，返回实际写入条数；全为 0 说明表里已经有数据、整体跳过了。
+
+    两个"顺带回填"要说明一下，它们看着像写假数据，其实是老库升级路径：
+      - 配对表为空 → 按「使用人 + 位置」把显示器挂到主机上；
+      - 履历表为空 → 给每台设备补一条「录入台账」，让时间线不是空的。
+    两者都只在表**完全为空**时才动手，不会往已有履历里插东西。
+    """
+    types_created = ensure_dictionary(db)
     assets_created = _seed_assets(db)
+    # 顺序不能换：配对和履历都是从 assets 推导出来的，资产没有就没什么可回填
     relations_created = _backfill_relations(db)
     events_created = _backfill_events(db)
 
