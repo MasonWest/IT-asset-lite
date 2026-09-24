@@ -46,7 +46,16 @@ def build_conditions(
     location: Optional[str] = None,
     paired: Optional[str] = None,
 ) -> list:
-    """返回 SQLAlchemy 条件列表，调用方自己拼到 select 上。"""
+    """返回 SQLAlchemy 条件列表，调用方自己拼到 select 上。
+
+    「多值」的三个参数（device_type_id / status / user_name / location）
+    都接受逗号分隔的字符串，单值就是只含一个元素的列表 —— 所以老调用方
+    传一个值过来行为完全不变。前端的多选筛选框直接把数组 join(',') 丢过来。
+
+    注意这里**只放列表页和盘点范围共用的条件**。某个页面自己才需要的筛选
+    （比如配对管理页的「只看没配显示器的主机」）留在那个页面的接口里，
+    别往这个函数塞 —— 否则盘点范围会莫名其妙跟着变。
+    """
     conditions = []
 
     if keyword:
@@ -72,10 +81,15 @@ def build_conditions(
     if statuses:
         conditions.append(Asset.status.in_(statuses))
 
-    if user_name:
-        conditions.append(Asset.user_name == user_name)
-    if location:
-        conditions.append(Asset.location == location)
+    # 使用人 / 存放位置不是字典表，值本身就是用户输入的中文串，
+    # 这里不要 strip 掉内部空格以外的任何东西，原样比对
+    user_names = split_values(user_name)
+    if user_names:
+        conditions.append(Asset.user_name.in_(user_names))
+
+    locations = split_values(location)
+    if locations:
+        conditions.append(Asset.location.in_(locations))
 
     if paired == "paired":
         conditions.append(or_(Asset.id.in_(active_host_ids()), Asset.id.in_(active_monitor_ids())))

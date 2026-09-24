@@ -34,6 +34,13 @@ const history = ref<Relation[]>([])
 const historyLoading = ref(false)
 const showHistory = ref(false)
 
+/** 主机列：只看还没挂任何显示器的主机。默认全看 */
+const onlyUnpairedHosts = ref(false)
+
+/** 「加显示器」弹窗：默认只列还没配出去的，勾上才显示已挂机的 */
+const pickerShowBound = ref(false)
+const pickerKeyword = ref('')
+
 const stats = computed(() => board.value?.stats ?? {})
 const hints = computed(() => board.value?.hints ?? [])
 
@@ -52,16 +59,43 @@ const hostOf = computed(() => {
   return map
 })
 
+/** 已经挂在别处的显示器 —— 单独拎出来，弹窗里默认把它们藏掉 */
+const boundMonitors = computed(() => allMonitors.value.filter((m) => hostOf.value.has(m.id)))
+
+const freeMonitorCount = computed(() => allMonitors.value.length - boundMonitors.value.length)
+
+/**
+ * 「加显示器」弹窗里真正列出来的东西。
+ *
+ * 默认**只列没配出去的** —— 一台台主机配显示器时，满屏「当前挂在 XXX」的候选
+ * 纯属干扰，眼睛得先做完排除法才能选中要的那台。要换绑再勾开关把它们放出来。
+ */
+const pickerOptions = computed(() => {
+  const base = pickerShowBound.value ? allMonitors.value : allMonitors.value.filter((m) => !hostOf.value.has(m.id))
+  const kw = pickerKeyword.value.trim().toLowerCase()
+  if (!kw) return base
+  return base.filter((m) =>
+    [m.asset_code, m.brand, m.model, m.user_name, m.location]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(kw)),
+  )
+})
+
 function matchHost(code: string, user: string | null, name: string): boolean {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return true
   return [code, user, name].filter(Boolean).some((v) => String(v).toLowerCase().includes(kw))
 }
 
-const visibleHosts = computed(() =>
+/** 关键字命中的主机（不带上「只看未配对」那个开关）—— 待配对池的下拉要看到全部主机 */
+const matchedHosts = computed(() =>
   (board.value?.hosts ?? []).filter((h) =>
     matchHost(h.host.asset_code, h.host.user_name, h.monitors.map((m) => m.asset_code).join(' ')),
   ),
+)
+
+const visibleHosts = computed(() =>
+  matchedHosts.value.filter((h) => !onlyUnpairedHosts.value || !h.monitor_count),
 )
 
 const visibleUnpaired = computed(() =>
@@ -106,6 +140,9 @@ function openBindPicker(host: AssetBrief) {
   pickerTarget.value = host
   pickedMonitorId.value = undefined
   pickerNote.value = ''
+  // 每次打开都回到「只看未配对」的默认态：这是多数场景，别把上次的临时选择带过来
+  pickerShowBound.value = false
+  pickerKeyword.value = ''
   pickerOpen.value = true
 }
 
@@ -295,6 +332,9 @@ onMounted(async () => {
       <div class="col">
         <div class="col-head">
           <span>主机（{{ visibleHosts.length }}）</span>
+          <el-checkbox v-model="onlyUnpairedHosts" size="small">
+            只看没配显示器的（{{ stats.hosts_without_monitor ?? 0 }}）
+          </el-checkbox>
         </div>
         <div v-for="h in visibleHosts" :key="h.host.id" class="host-card panel">
           <div class="host-row">
@@ -338,8 +378,14 @@ onMounted(async () => {
 
         <div v-if="!loading && !visibleHosts.length" class="empty-state">
           <div class="big">🖥️</div>
-          <div class="title">没有匹配的主机</div>
-          <div>换个关键字，或者到「资产台账 → 设备类型」里把主机类型的类别设成主机类。</div>
+          <template v-if="onlyUnpairedHosts && matchedHosts.length">
+            <div class="title">所有主机都配上显示器了</div>
+            <div>取消勾选「只看没配显示器的」，就能看到全部 {{ matchedHosts.length }} 台主机。</div>
+          </template>
+          <template v-else>
+            <div class="title">没有匹配的主机</div>
+            <div>换个关键字，或者到「资产台账 → 设备类型」里把主机类型的类别设成主机类。</div>
+          </template>
         </div>
       </div>
 
@@ -363,14 +409,14 @@ onMounted(async () => {
           </div>
           <el-dropdown
             trigger="click"
-            :disabled="acting || !visibleHosts.length"
+            :disabled="acting || !matchedHosts.length"
             @command="(host: AssetBrief) => { openBindPicker(host); pickedMonitorId = m.id }"
           >
             <el-button size="small">挂到主机 ▾</el-button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item
-                  v-for="h in visibleHosts"
+                  v-for="h in matchedHosts"
                   :key="h.host.id"
                   :command="h.host"
                 >
@@ -406,12 +452,30 @@ onMounted(async () => {
 
       <template v-else>
         <p class="picker-tip">
-          已经挂在别的主机上的显示器也能选 —— 选它相当于换绑，系统会一次做完「解绑旧的 + 绑到本机」，
-          两台设备的变更历史里都会留下记录。
+          默认只列<strong>还没配出去</strong>的显示器，省得满屏都是「当前挂在 XXX」干扰视线。
+          要把某台已经挂在别的主机上的换过来，勾上下面「显示已挂机的」——
+          选中它按换绑处理，系统一次做完「解绑旧的 + 绑到本机」，两台设备的变更历史里都会留下记录。
         </p>
+
+        <div class="picker-filters">
+          <el-input
+            v-model="pickerKeyword"
+            size="small"
+            placeholder="搜索编号 / 品牌型号 / 使用人"
+            clearable
+          />
+          <el-checkbox v-model="pickerShowBound" size="small">
+            显示已挂机的（{{ boundMonitors.length }} 台）
+          </el-checkbox>
+        </div>
+
+        <div class="picker-count">
+          列出 {{ pickerOptions.length }} 台<template v-if="pickerShowBound">（未配对 {{ freeMonitorCount }} + 已挂机 {{ boundMonitors.length }}）</template>
+        </div>
+
         <el-radio-group v-model="pickedMonitorId" class="picker-grid">
           <el-radio
-            v-for="m in allMonitors"
+            v-for="m in pickerOptions"
             :key="m.id"
             :value="m.id"
             border
@@ -429,6 +493,14 @@ onMounted(async () => {
             </span>
           </el-radio>
         </el-radio-group>
+
+        <div v-if="!pickerOptions.length" class="empty-note">
+          <template v-if="!pickerShowBound && boundMonitors.length && !pickerKeyword.trim()">
+            所有显示器都已经配出去了。要换绑就把上面「显示已挂机的」勾上。
+          </template>
+          <template v-else>没有匹配的显示器，换个关键字或者勾上「显示已挂机的」试试。</template>
+        </div>
+
         <el-input
           v-model="pickerNote"
           placeholder="备注（可选），例如 新同事入职加一台"
@@ -440,7 +512,12 @@ onMounted(async () => {
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 8px">
           <el-button @click="pickerOpen = false">取消</el-button>
-          <el-button type="primary" :loading="acting" :disabled="!allMonitors.length" @click="submitBind">
+          <el-button
+            type="primary"
+            :loading="acting"
+            :disabled="!pickerOptions.length"
+            @click="submitBind"
+          >
             确定
           </el-button>
         </div>
@@ -471,10 +548,21 @@ onMounted(async () => {
 }
 
 .col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-2);
   padding: 0 2px;
+}
+
+.col-head :deep(.el-checkbox__label) {
+  font-size: 12.5px;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .host-card {
@@ -736,6 +824,29 @@ onMounted(async () => {
   background: #fafbfc;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.picker-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.picker-filters .el-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.picker-filters :deep(.el-checkbox__label) {
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.picker-count {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 8px;
 }
 
 .picker-grid {

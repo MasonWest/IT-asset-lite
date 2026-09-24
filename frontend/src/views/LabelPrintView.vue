@@ -3,9 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
-import { assetApi } from '@/api'
+import { assetApi, metaApi } from '@/api'
 import { assetDetailUrl, loadSystemInfo, qrImageSrc } from '@/stores/app'
-import type { Asset } from '@/types'
+import type { Asset, DeviceType } from '@/types'
 import { orDash, statusMeta, typeIcon } from '@/utils/format'
 
 const route = useRoute()
@@ -15,6 +15,19 @@ const loading = ref(false)
 const allAssets = ref<Asset[]>([])
 const selectedIds = ref<number[]>([])
 const search = ref('')
+
+/**
+ * 补打标签时最烦的是"在一百多台里一台台翻"，所以除了搜索框，
+ * 再给两个能一眼缩范围的筛选：类型、存放位置。
+ * 数据全量在前端（page_size=1000），筛选纯前端做，不用打接口。
+ */
+const deviceTypes = ref<DeviceType[]>([])
+const typeIds = ref<number[]>([])
+const locations = ref<string[]>([])
+
+const hasFilter = computed(
+  () => Boolean(search.value.trim()) || typeIds.value.length > 0 || locations.value.length > 0,
+)
 
 const columns = ref(3)
 const labelSize = ref<'sm' | 'md' | 'lg'>('md')
@@ -33,13 +46,21 @@ const SIZE_MAP = {
 
 const filteredAssets = computed(() => {
   const kw = search.value.trim().toLowerCase()
-  if (!kw) return allAssets.value
-  return allAssets.value.filter((a) =>
-    [a.asset_code, a.serial_number, a.brand, a.model, a.device_type_name, a.user_name, a.location]
+  return allAssets.value.filter((a) => {
+    if (typeIds.value.length && !typeIds.value.includes(a.device_type_id)) return false
+    if (locations.value.length && !(a.location && locations.value.includes(a.location))) return false
+    if (!kw) return true
+    return [a.asset_code, a.serial_number, a.brand, a.model, a.device_type_name, a.user_name, a.location]
       .filter(Boolean)
-      .some((v) => String(v).toLowerCase().includes(kw)),
-  )
+      .some((v) => String(v).toLowerCase().includes(kw))
+  })
 })
+
+function clearFilters() {
+  search.value = ''
+  typeIds.value = []
+  locations.value = []
+}
 
 const selectedAssets = computed(() => {
   const order = new Map(selectedIds.value.map((id, index) => [id, index]))
@@ -78,6 +99,16 @@ function invertVisible() {
   const kept = selectedIds.value.filter((id) => !visible.has(id))
   const added = filteredAssets.value.filter((a) => !isChecked(a.id)).map((a) => a.id)
   selectedIds.value = [...kept, ...added]
+}
+
+async function loadMeta() {
+  try {
+    const res = await metaApi.filters()
+    deviceTypes.value = res.device_types
+    locations.value = res.locations
+  } catch {
+    /* 筛选候选拿不到不影响打标签，静默失败即可 */
+  }
 }
 
 async function load() {
@@ -124,7 +155,7 @@ function goBack() {
 }
 
 onMounted(async () => {
-  await loadSystemInfo()
+  await Promise.all([loadSystemInfo(), loadMeta()])
   await load()
 })
 
@@ -154,6 +185,42 @@ watch(
       <aside class="panel picker no-print">
         <div class="picker-head">
           <el-input v-model="search" placeholder="搜索编号 / SN / 使用人" clearable size="small" />
+          <div class="picker-filters">
+            <el-select
+              v-model="typeIds"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              :max-collapse-tags="1"
+              placeholder="全部类型"
+              clearable
+              size="small"
+            >
+              <el-option
+                v-for="t in deviceTypes"
+                :key="t.id"
+                :label="`${t.name}（${t.asset_count}）`"
+                :value="t.id"
+              />
+            </el-select>
+            <el-select
+              v-model="locations"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              :max-collapse-tags="1"
+              placeholder="全部位置"
+              clearable
+              filterable
+              size="small"
+            >
+              <el-option v-for="l in locations" :key="l" :label="l" :value="l" />
+            </el-select>
+          </div>
+          <div v-if="hasFilter" class="picker-filter-tip">
+            筛出 {{ filteredAssets.length }} 台
+            <a @click="clearFilters">清空筛选</a>
+          </div>
           <div class="picker-tools">
             <el-button size="small" @click="selectAllVisible">全选（{{ filteredAssets.length }}）</el-button>
             <el-button size="small" @click="invertVisible">反选</el-button>

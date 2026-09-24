@@ -17,19 +17,29 @@ const items = ref<Asset[]>([])
 const total = ref(0)
 const viewMode = ref<'card' | 'table'>('card')
 
+/**
+ * 筛选条件。
+ *
+ * 类型 / 位置 / 使用人都是**多选**（数组），拼查询参数时 join(',') 丢给后端 ——
+ * 后端那三个条件本来就收逗号分隔的多值，单值只是"只含一个元素的列表"，
+ * 所以这个改动不用动接口，导出的查询串也自动跟着对。
+ *
+ * 「状态」故意保持单选：上面那排统计卡点一下就切状态，卡片是单选语义，
+ * 做成多选会和卡片的表现对不上。
+ */
 const filters = reactive<{
   keyword: string
-  device_type_id?: number
+  device_type_ids: number[]
   status?: string
-  user_name?: string
-  location?: string
+  user_names: string[]
+  locations: string[]
   paired?: 'paired' | 'unpaired'
 }>({
   keyword: '',
-  device_type_id: undefined,
+  device_type_ids: [],
   status: undefined,
-  user_name: undefined,
-  location: undefined,
+  user_names: [],
+  locations: [],
   paired: undefined,
 })
 
@@ -77,10 +87,10 @@ const rangeText = computed(() => {
 const hasFilter = computed(
   () =>
     Boolean(filters.keyword.trim()) ||
-    filters.device_type_id !== undefined ||
+    filters.device_type_ids.length > 0 ||
     filters.status !== undefined ||
-    filters.user_name !== undefined ||
-    filters.location !== undefined ||
+    filters.user_names.length > 0 ||
+    filters.locations.length > 0 ||
     filters.paired !== undefined,
 )
 
@@ -127,8 +137,21 @@ onBeforeUnmount(() => {
   if (keywordTimer) clearTimeout(keywordTimer)
 })
 
+/**
+ * 非关键字的筛选条件变了就重查。
+ *
+ * getter 最后 join 成一个字符串再返回 —— 返回数组字面量的话，数组每次都是新引用，
+ * watch 会认为"变了"从而多打一次接口。返回字符串才是按内容比较。
+ */
 watch(
-  () => [filters.device_type_id, filters.status, filters.user_name, filters.location, filters.paired],
+  () =>
+    [
+      filters.device_type_ids.join('|'),
+      filters.user_names.join('|'),
+      filters.locations.join('|'),
+      filters.status ?? '',
+      filters.paired ?? '',
+    ].join('~'),
   () => {
     page.value = 1
     void load()
@@ -141,10 +164,10 @@ function pickStatus(key: string) {
 
 function resetFilters() {
   filters.keyword = ''
-  filters.device_type_id = undefined
+  filters.device_type_ids = []
   filters.status = undefined
-  filters.user_name = undefined
-  filters.location = undefined
+  filters.user_names = []
+  filters.locations = []
   filters.paired = undefined
   page.value = 1
   void load()
@@ -152,7 +175,9 @@ function resetFilters() {
 
 function openCreate() {
   editing.value = null
-  presetTypeId.value = filters.device_type_id ?? null
+  // 只在「恰好筛了一个类型」时把类型带进新增表单 —— 筛了好几个就不知道
+  // 用户想新建哪一种了，带错比不带更烦人
+  presetTypeId.value = filters.device_type_ids.length === 1 ? filters.device_type_ids[0] : null
   formOpen.value = true
 }
 
@@ -215,10 +240,11 @@ function currentQuery(): AssetQuery {
   const query: AssetQuery = {}
   const kw = filters.keyword.trim()
   if (kw) query.keyword = kw
-  if (filters.device_type_id !== undefined) query.device_type_id = filters.device_type_id
+  // 多选值 join 成逗号串 —— 后端三个条件都按多值解析
+  if (filters.device_type_ids.length) query.device_type_id = filters.device_type_ids.join(',')
   if (filters.status) query.status = filters.status
-  if (filters.user_name) query.user_name = filters.user_name
-  if (filters.location) query.location = filters.location
+  if (filters.user_names.length) query.user_name = filters.user_names.join(',')
+  if (filters.locations.length) query.location = filters.locations.join(',')
   if (filters.paired) query.paired = filters.paired
   return query
 }
@@ -298,7 +324,16 @@ onMounted(async () => {
         placeholder="搜索编号 / 品牌 / 型号 / SN / 使用人 / 位置"
         clearable
       />
-      <el-select v-model="filters.device_type_id" placeholder="全部类型" clearable>
+      <el-select
+        v-model="filters.device_type_ids"
+        multiple
+        collapse-tags
+        collapse-tags-tooltip
+        :max-collapse-tags="1"
+        placeholder="全部类型"
+        clearable
+        style="width: 200px"
+      >
         <el-option
           v-for="t in meta?.device_types ?? []"
           :key="t.id"
@@ -312,10 +347,30 @@ onMounted(async () => {
       <el-select v-model="filters.paired" placeholder="配对：全部" clearable style="width: 130px">
         <el-option v-for="p in pairedOptions" :key="p.value" :label="p.label" :value="p.value" />
       </el-select>
-      <el-select v-model="filters.user_name" placeholder="全部使用人" clearable filterable>
+      <el-select
+        v-model="filters.user_names"
+        multiple
+        collapse-tags
+        collapse-tags-tooltip
+        :max-collapse-tags="1"
+        placeholder="全部使用人"
+        clearable
+        filterable
+        style="width: 180px"
+      >
         <el-option v-for="u in meta?.users ?? []" :key="u" :label="u" :value="u" />
       </el-select>
-      <el-select v-model="filters.location" placeholder="全部位置" clearable filterable>
+      <el-select
+        v-model="filters.locations"
+        multiple
+        collapse-tags
+        collapse-tags-tooltip
+        :max-collapse-tags="1"
+        placeholder="全部位置"
+        clearable
+        filterable
+        style="width: 210px"
+      >
         <el-option v-for="l in meta?.locations ?? []" :key="l" :label="l" :value="l" />
       </el-select>
       <el-button v-if="hasFilter" @click="resetFilters">重置</el-button>

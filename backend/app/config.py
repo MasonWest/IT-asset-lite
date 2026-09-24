@@ -13,7 +13,7 @@ from .database import BASE_DIR, DB_FILE
 
 APP_NAME = "IT 资产管理系统"
 # 版本基线：三个阶段（台账+扫码 / 配对+盘点 / 审计+导入导出）合并后的对外版本
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 HOST = os.getenv("IT_ASSET_HOST") or "0.0.0.0"
 # 默认 8080：8000 在很多机器上被打印控件 / 其他服务占着

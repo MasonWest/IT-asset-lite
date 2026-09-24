@@ -740,6 +740,34 @@ main.page-host {
   flex-wrap: wrap;
 }
 
+/* 补打标签时用来缩范围的多选筛选，堆在搜索框下面 */
+.picker .picker-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.picker .picker-filters .el-select {
+  width: 100%;
+}
+
+.picker .picker-filter-tip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.picker .picker-filter-tip a {
+  cursor: pointer;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
 .picker .picker-list {
   flex: 1;
   overflow-y: auto;
@@ -972,6 +1000,26 @@ main.page-host {
 
   .page-head h1 {
     font-size: 20px;
+  }
+
+  /* 分页在窄屏塞不下「上一页 + 页码 + 下一页 + 跳页输入框」四段，
+     整条会撑到 446px，把页面拉出横向滚动条。去掉跳页输入框并收窄页码按钮，
+     剩下三段在 390px 的屏上放得下（页码多了会自动折叠成省略号）。 */
+  .pager {
+    margin-top: 16px;
+  }
+
+  .pager .el-pagination__jump {
+    display: none;
+  }
+
+  .pager .el-pager li {
+    min-width: 28px;
+  }
+
+  .pager .btn-prev,
+  .pager .btn-next {
+    min-width: 28px;
   }
 
   .head-actions {
