@@ -20,8 +20,14 @@ const search = ref('')
  * 补打标签时最烦的是"在一百多台里一台台翻"，所以除了搜索框，
  * 再给两个能一眼缩范围的筛选：类型、存放位置。
  * 数据全量在前端（page_size=1000），筛选纯前端做，不用打接口。
+ *
+ * ⚠️ 候选值和已选值必须用不同的 ref 名字。
+ * 曾经把候选取名叫 `locations`，又在 loadMeta 里写 `locations.value = res.locations` ——
+ * 顺手就把 14 个候选位置全变成了"已选中"，界面一打开位置筛选就是全选状态，
+ * 而且因为"全选所有位置"恰好等价于不筛，数量断言还看不出来。
  */
 const deviceTypes = ref<DeviceType[]>([])
+const locationOptions = ref<string[]>([])
 const typeIds = ref<number[]>([])
 const locations = ref<string[]>([])
 
@@ -105,7 +111,7 @@ async function loadMeta() {
   try {
     const res = await metaApi.filters()
     deviceTypes.value = res.device_types
-    locations.value = res.locations
+    locationOptions.value = res.locations
   } catch {
     /* 筛选候选拿不到不影响打标签，静默失败即可 */
   }
@@ -214,7 +220,7 @@ watch(
               filterable
               size="small"
             >
-              <el-option v-for="l in locations" :key="l" :label="l" :value="l" />
+              <el-option v-for="l in locationOptions" :key="l" :label="l" :value="l" />
             </el-select>
           </div>
           <div v-if="hasFilter" class="picker-filter-tip">
