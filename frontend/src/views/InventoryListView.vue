@@ -10,11 +10,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiMessage, assetApi, inventoryApi, inventoryExportUrl, metaApi } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { FilterOptions, InventoryResult, InventoryScope, InventoryTask } from '@/types'
 import { formatDate, formatDateTime, orDash } from '@/utils/format'
 
 const router = useRouter()
+/** 点进盘点任务后返回，要回到这一页 */
+const { withBack } = useBackNav('/inventory')
 
 const loading = ref(false)
 const tasks = ref<InventoryTask[]>([])
@@ -167,7 +170,7 @@ async function submitCreate() {
     ElMessage.success(`盘点已发起，共 ${task.total} 台设备`)
     createOpen.value = false
     await load()
-    void router.push(`/inventory/${task.id}`)
+    void router.push({ path: `/inventory/${task.id}`, query: withBack() })
   } catch (error) {
     ElMessage.error(apiMessage(error))
   } finally {
@@ -238,7 +241,7 @@ async function copyScope(task: InventoryTask) {
 }
 
 function openTask(task: InventoryTask) {
-  void router.push(`/inventory/${task.id}`)
+  void router.push({ path: `/inventory/${task.id}`, query: withBack() })
 }
 
 function statusChip(task: InventoryTask) {

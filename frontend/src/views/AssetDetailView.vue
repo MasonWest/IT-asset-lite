@@ -9,6 +9,7 @@ import AssetRelationsPanel from '@/components/AssetRelationsPanel.vue'
 import AssetTimeline from '@/components/AssetTimeline.vue'
 import InventoryContextBar from '@/components/InventoryContextBar.vue'
 import { assetApi, metaApi } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState, assetDetailUrl, loadSystemInfo, qrImageSrc } from '@/stores/app'
 import type { Asset, AssetOperation, FilterOptions } from '@/types'
 import {
@@ -24,6 +25,23 @@ import {
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
+/** 「返回」的目标由 URL 上的 `back` 决定 —— 从台账筛着筛着点进来的，退出去筛选还在 */
+const { backTarget, withBack, goBack } = useBackNav('/')
+
+/**
+ * 返回按钮的文案跟着来路变。
+ * 从配对页 / 审计页点进来的，返回的并不是台账 —— 那时候还写「返回资产台账」就是在骗人。
+ */
+const backText = computed(() => {
+  const p = backTarget.value
+  if (p === '/' || p.startsWith('/?')) return '← 返回资产台账'
+  if (p.startsWith('/pairings')) return '← 返回配对管理'
+  if (p.startsWith('/inventory')) return '← 返回盘点列表'
+  if (p.startsWith('/audit')) return '← 返回审计日志'
+  if (p.startsWith('/labels')) return '← 返回标签打印'
+  if (p.startsWith('/asset/')) return '← 返回上一台设备'
+  return '← 返回'
+})
 
 const loading = ref(true)
 const notFound = ref(false)
@@ -149,7 +167,7 @@ async function onRelationsChanged() {
 <template>
   <div v-loading="loading">
     <div style="margin-bottom: 12px">
-      <el-button link @click="router.push('/')">← 返回资产台账</el-button>
+      <el-button link @click="goBack">{{ backText }}</el-button>
     </div>
 
     <div v-if="notFound && !loading" class="empty-state">
@@ -157,7 +175,7 @@ async function onRelationsChanged() {
       <div class="title">没有找到这台设备</div>
       <div>它可能已经被删除了，或者链接不对。</div>
       <div style="margin-top: 16px">
-        <el-button type="primary" @click="router.push('/')">返回列表</el-button>
+        <el-button type="primary" @click="goBack">返回列表</el-button>
       </div>
     </div>
 

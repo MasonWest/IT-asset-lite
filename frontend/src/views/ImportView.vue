@@ -4,11 +4,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { downloadUrl, transferApi } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { ImportMode, ImportPreview, ImportResult, ImportRow } from '@/types'
 import { importActionMeta, orDash } from '@/utils/format'
 
 const router = useRouter()
+/** 导入完回台账，筛选和页码照旧 */
+const { withBack, goBack } = useBackNav('/')
 
 type Stage = 'idle' | 'previewing' | 'previewed' | 'importing' | 'imported'
 
@@ -113,11 +116,11 @@ function downloadTemplate(fmt: 'xlsx' | 'csv') {
 }
 
 function goAssets() {
-  void router.push('/')
+  goBack()
 }
 
 function goAudit() {
-  void router.push('/audit')
+  void router.push({ path: '/audit', query: withBack() })
 }
 </script>
 

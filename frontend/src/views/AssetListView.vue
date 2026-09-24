@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import type { LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import AssetFormDialog from '@/components/AssetFormDialog.vue'
@@ -10,6 +11,7 @@ import { appState, loadSystemInfo } from '@/stores/app'
 import type { Asset, AssetGroup, AssetQuery, FilterOptions } from '@/types'
 import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
 
+const route = useRoute()
 const router = useRouter()
 
 const loading = ref(false)
@@ -80,6 +82,65 @@ const filters = reactive<{
 
 const page = ref(1)
 const pageSize = ref(24)
+
+/**
+ * URL query ↔ 界面状态。
+ *
+ * 意义在于「点进设备详情再返回，筛选还在」：路由是懒加载、没有 keep-alive，
+ * 列表组件一卸载，所有 ref 就没了。把状态挂在 URL 上，返回时重新挂载就能原样恢复，
+ * 顺带白拿三件事 —— 刷新不丢、能直接分享「带着筛选的链接」、浏览器前进后退也对。
+ *
+ * 同步方向是**单向**的（界面 → URL）：只负责写出去，不监听 URL 回灌，免得两边互相
+ * 触发打成一团。挂载时读一次就够，因为列表页自己的 URL 永远是自己最后一次写的那份。
+ */
+const hydrated = ref(false)
+
+function readStateFromQuery(q: LocationQuery) {
+  const one = (v: unknown) => (typeof v === 'string' ? v : '')
+  const many = (v: unknown) =>
+    one(v)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+  filters.keyword = one(q.keyword)
+  filters.device_type_ids = many(q.device_type_id)
+    .map(Number)
+    .filter((n) => Number.isInteger(n))
+  filters.status = one(q.status) || undefined
+  const paired = one(q.paired)
+  filters.paired = paired === 'paired' || paired === 'unpaired' ? paired : undefined
+  filters.user_names = many(q.user_name)
+  filters.locations = many(q.location)
+  viewMode.value = one(q.view) === 'table' ? 'table' : 'card'
+  const p = Number(one(q.page))
+  page.value = Number.isInteger(p) && p > 0 ? p : 1
+}
+
+/** 界面状态 → URL query。key 刻意和接口 / 导出用的查询参数同名，肉眼就能核对 */
+function currentUrlQuery(): Record<string, string> {
+  const q: Record<string, string> = {}
+  for (const [k, v] of Object.entries(currentQuery())) {
+    if (v !== undefined && v !== null && String(v) !== '') q[k] = String(v)
+  }
+  if (viewMode.value !== 'card') q.view = viewMode.value
+  if (page.value > 1) q.page = String(page.value)
+  return q
+}
+
+/**
+ * 用 replace 而不是 push —— push 的话每敲一个字、每翻一页都会往浏览器历史里塞一条，
+ * 用户点几次「返回」还在列表页里打转，比丢筛选更烦人。
+ */
+function syncUrl() {
+  if (!hydrated.value) return
+  void router.replace({ path: '/', query: currentUrlQuery() })
+}
+
+/** 当前列表的地址（含筛选 / 页码），跳详情时交给对方当返回目标 */
+function backPath(): string {
+  return router.resolve({ path: '/', query: currentUrlQuery() }).fullPath
+}
 
 const meta = ref<FilterOptions | null>(null)
 
@@ -207,9 +268,11 @@ let keywordTimer: ReturnType<typeof setTimeout> | undefined
 watch(
   () => filters.keyword,
   () => {
+    if (!hydrated.value) return
     if (keywordTimer) clearTimeout(keywordTimer)
     keywordTimer = setTimeout(() => {
       page.value = 1
+      syncUrl()
       void load()
     }, 320)
   },
@@ -235,10 +298,16 @@ watch(
       filters.paired ?? '',
     ].join('~'),
   () => {
+    if (!hydrated.value) return
     page.value = 1
+    syncUrl()
     void load()
   },
 )
+
+/** 翻页和切视图不改查询，但同样得进 URL —— 否则返回后又回到第 1 页 / 卡片视图 */
+watch(page, () => syncUrl())
+watch(viewMode, () => syncUrl())
 
 function pickStatus(key: string) {
   filters.status = key === '' ? undefined : key
@@ -252,6 +321,7 @@ function resetFilters() {
   filters.locations = []
   filters.paired = undefined
   page.value = 1
+  syncUrl()
   void load()
 }
 
@@ -270,7 +340,8 @@ function openEdit(asset: Asset) {
 }
 
 function openDetail(asset: Asset) {
-  void router.push(`/asset/${asset.id}`)
+  // 把当前列表地址（含筛选 / 页码）一起带过去，详情页的「返回」才能原样回来
+  void router.push({ path: `/asset/${asset.id}`, query: { back: backPath() } })
 }
 
 /** 表格行点击 → 打开这一行的门面设备（套装就是主机） */
@@ -284,22 +355,25 @@ function rowKeyOf(row: AssetGroup): string {
 
 /** 打印某一行对应的标签。套装行会展开成成员设备 —— 出的是 N 张，不是 1 张 */
 function labelOne(g: AssetGroup) {
-  void router.push(`/labels?ids=${g.asset_ids.join(',')}`)
+  void router.push({ path: '/labels', query: { ids: g.asset_ids.join(','), back: backPath() } })
 }
 
 function goLabels() {
   const ids = selectedAssetIds.value
-  if (ids.length) {
-    void router.push(`/labels?ids=${ids.join(',')}`)
-  } else {
-    void router.push('/labels')
-  }
+  void router.push({
+    path: '/labels',
+    query: ids.length ? { ids: ids.join(','), back: backPath() } : { back: backPath() },
+  })
+}
+
+function goImport() {
+  void router.push({ path: '/import', query: { back: backPath() } })
 }
 
 async function onSaved(asset: Asset, mode: 'create' | 'update') {
   await refreshAll()
   if (mode === 'create') {
-    await router.push(`/asset/${asset.id}`)
+    await router.push({ path: `/asset/${asset.id}`, query: { back: backPath() } })
   }
 }
 
@@ -392,6 +466,12 @@ function runExport() {
 }
 
 onMounted(async () => {
+  // 先按 URL 还原上一次的筛选 / 页码 / 视图（从详情页返回时走的就是这条路）
+  readStateFromQuery(route.query)
+  // watch 是 flush:'pre'（在微任务里跑），等它们都跑完再开闸门 —— 否则「恢复状态」
+  // 这个动作本身会被当成用户在操作，白打一轮接口
+  await nextTick()
+  hydrated.value = true
   await loadSystemInfo()
   await refreshAll()
 })
@@ -408,7 +488,7 @@ onMounted(async () => {
         <el-button @click="typeDialogOpen = true">设备类型</el-button>
         <el-button @click="goLabels">打印标签</el-button>
         <el-button @click="openExport">导出</el-button>
-        <el-button @click="$router.push('/import')">批量导入</el-button>
+        <el-button @click="goImport">批量导入</el-button>
         <el-button type="primary" @click="openCreate">+ 新增资产</el-button>
       </div>
     </div>

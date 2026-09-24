@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { assetApi, metaApi } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { assetDetailUrl, loadSystemInfo, qrImageSrc } from '@/stores/app'
 import type { Asset, DeviceType } from '@/types'
 import { orDash, statusMeta, typeIcon } from '@/utils/format'
 
 const route = useRoute()
-const router = useRouter()
+/** 从台账来的退回台账（带着筛选），从设备详情来的退回那台设备 */
+const { goBack } = useBackNav('/')
 
 const loading = ref(false)
 const allAssets = ref<Asset[]>([])
@@ -156,10 +158,6 @@ function doPrint() {
   window.print()
 }
 
-function goBack() {
-  void router.push('/')
-}
-
 onMounted(async () => {
   await Promise.all([loadSystemInfo(), loadMeta()])
   await load()
@@ -181,7 +179,7 @@ watch(
         </p>
       </div>
       <div class="head-actions">
-        <el-button @click="goBack">返回台账</el-button>
+        <el-button @click="goBack">← 返回</el-button>
         <el-button type="primary" @click="doPrint">打印（{{ selectedAssets.length }} 张）</el-button>
       </div>
     </div>

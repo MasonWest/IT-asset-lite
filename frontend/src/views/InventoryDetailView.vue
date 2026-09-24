@@ -12,6 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiMessage, assetApi, inventoryApi, inventoryExportUrl } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { InventoryItem, InventoryResult, InventoryTaskDetail } from '@/types'
 import {
@@ -24,6 +25,8 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+/** 点进某台设备后要能退回这个盘点任务 */
+const { withBack, goBack } = useBackNav('/inventory')
 
 const loading = ref(false)
 const task = ref<InventoryTaskDetail | null>(null)
@@ -204,7 +207,7 @@ async function removeTask() {
   try {
     await inventoryApi.remove(taskId.value, appState.operator || null)
     ElMessage.success('已删除')
-    void router.push('/inventory')
+    goBack()
   } catch (error) {
     ElMessage.error(apiMessage(error))
   }
@@ -219,7 +222,7 @@ function exportFile(fmt: 'xlsx' | 'csv', onlyDiff = false) {
 }
 
 function openAsset(id: number) {
-  void router.push(`/asset/${id}`)
+  void router.push({ path: `/asset/${id}`, query: withBack() })
 }
 
 const resultCards = computed(() => {
@@ -244,7 +247,7 @@ watch(() => route.params.id, load)
 <template>
   <div v-loading="loading">
     <div style="margin-bottom: 12px">
-      <el-button link @click="router.push('/inventory')">← 返回盘点列表</el-button>
+      <el-button link @click="goBack">← 返回盘点列表</el-button>
     </div>
 
     <div v-if="notFound && !loading" class="empty-state">
@@ -252,7 +255,7 @@ watch(() => route.params.id, load)
       <div class="title">没有这个盘点任务</div>
       <div>它可能已经被删除了，或者链接不对。</div>
       <div style="margin-top: 16px">
-        <el-button type="primary" @click="router.push('/inventory')">返回盘点列表</el-button>
+        <el-button type="primary" @click="goBack">返回盘点列表</el-button>
       </div>
     </div>
 

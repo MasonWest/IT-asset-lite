@@ -13,11 +13,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiMessage, pairingApi } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { AssetBrief, PairingBoard, Relation } from '@/types'
 import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
 
 const router = useRouter()
+/** 从这一页点进设备详情，返回时要回到配对页而不是台账 */
+const { withBack } = useBackNav('/pairings')
 
 const loading = ref(false)
 const board = ref<PairingBoard | null>(null)
@@ -259,7 +262,7 @@ async function unbind(host: AssetBrief, monitor: AssetBrief) {
 }
 
 function openAsset(id: number) {
-  void router.push(`/asset/${id}`)
+  void router.push({ path: `/asset/${id}`, query: withBack() })
 }
 
 function saveOperatorName() {

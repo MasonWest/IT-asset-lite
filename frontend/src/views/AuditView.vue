@@ -4,11 +4,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { auditApi, downloadUrl } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { AuditLog, AuditMeta, AuditQuery } from '@/types'
 import { auditVisual, formatDateTime, relativeTime, toIsoDate } from '@/utils/format'
 
 const router = useRouter()
+/** 从审计点进设备 / 盘点任务，返回时要回到审计页（带着当时的筛选） */
+const { withBack } = useBackNav('/audit')
 
 const loading = ref(false)
 const items = ref<AuditLog[]>([])
@@ -170,7 +173,7 @@ function targetLink(entry: AuditLog): string | null {
 
 function openTarget(entry: AuditLog) {
   const link = targetLink(entry)
-  if (link) void router.push(link)
+  if (link) void router.push({ path: link, query: withBack() })
 }
 
 function doExport(fmt: 'xlsx' | 'csv') {

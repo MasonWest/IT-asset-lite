@@ -11,6 +11,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiMessage, assetApi, pairingApi } from '@/api'
+import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { Asset, AssetBrief, Relation } from '@/types'
 import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
@@ -24,6 +25,8 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+/** 顺着配对关系跳到对端设备的详情，返回时回到这台设备的详情（而不是直接被弹回台账） */
+const { withBack } = useBackNav()
 
 const relations = ref<Relation[]>([])
 const historyLoading = ref(false)
@@ -154,7 +157,7 @@ async function release(relation: Relation) {
 }
 
 function openAsset(brief: AssetBrief) {
-  void router.push(`/asset/${brief.id}`)
+  void router.push({ path: `/asset/${brief.id}`, query: withBack() })
 }
 
 watch(() => props.asset.id, loadRelations, { immediate: true })
