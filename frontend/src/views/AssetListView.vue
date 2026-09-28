@@ -10,6 +10,7 @@ import { assetApi, downloadUrl, metaApi, transferApi } from '@/api'
 import { appState, loadSystemInfo } from '@/stores/app'
 import type { Asset, AssetGroup, AssetQuery, FilterOptions } from '@/types'
 import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
+import { matchByPinyin } from '@/utils/pinyin'
 
 const route = useRoute()
 const router = useRouter()
@@ -143,6 +144,39 @@ function backPath(): string {
 }
 
 const meta = ref<FilterOptions | null>(null)
+
+/**
+ * 「使用人」下拉的拼音过滤。
+ *
+ * 候选值是几十个人名，纯靠鼠标翻太慢，所以打 `wjy` 也要能命中「王嘉怡」。
+ * 过滤是**纯本地**的（`matchByPinyin` 里对缓存好的拼音别名做 includes），
+ * 不打接口，所以不需要防抖。
+ */
+const userQuery = ref('')
+const userOptions = computed(() =>
+  (meta.value?.users ?? []).filter((u) => matchByPinyin(u, userQuery.value)),
+)
+function filterUsers(q: string) {
+  userQuery.value = q
+}
+
+/**
+ * 清关键字。两个时机都要清，而且都得清两遍（Element Plus 那份 + 我们这份）：
+ *
+ * - **选完之后**：el-select 的 `reserve-keyword` 默认是 `true`（本意是给远程搜索用的，
+ *   让人能用同一个关键字连挑几个），于是选完「王嘉怡」框里还留着 `wjy`，
+ *   接着打 `ztt` 会拼成 `wjyztt`、一个候选都没有。所以这里显式设 `:reserve-keyword="false"`。
+ *   但 EP 清的是它自己的 `inputValue`，**不会**回调 `filter-method`，我们这份 `userQuery`
+ *   得靠 `@change` 一起清，否则会出现"输入框空了、候选还只剩一个"的错位。
+ * - **收起下拉**：EP 关闭时同样只清它自己的，不清我们这份就会留下残缺列表。
+ */
+function resetUserQuery() {
+  userQuery.value = ''
+}
+
+function onUserVisibleChange(open: boolean) {
+  if (!open) resetUserQuery()
+}
 
 const formOpen = ref(false)
 const editing = ref<Asset | null>(null)
@@ -547,12 +581,16 @@ onMounted(async () => {
         collapse-tags
         collapse-tags-tooltip
         :max-collapse-tags="1"
-        placeholder="全部使用人"
+        placeholder="全部使用人（可打拼音首字母）"
         clearable
         filterable
+        :filter-method="filterUsers"
+        :reserve-keyword="false"
         style="width: 180px"
+        @change="resetUserQuery"
+        @visible-change="onUserVisibleChange"
       >
-        <el-option v-for="u in meta?.users ?? []" :key="u" :label="u" :value="u" />
+        <el-option v-for="u in userOptions" :key="u" :label="u" :value="u" />
       </el-select>
       <el-select
         v-model="filters.locations"

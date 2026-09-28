@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { assetApi } from '@/api'
 import { appState, saveOperator } from '@/stores/app'
 import type { Asset, AssetPayload, AssetStatus, DeviceType } from '@/types'
+import { matchByPinyin } from '@/utils/pinyin'
 
 const props = defineProps<{
   modelValue: boolean
@@ -55,6 +56,52 @@ const form = reactive<FormModel>({
   notes: '',
   operator: '',
 })
+
+/**
+ * 「使用人」下拉的拼音过滤：候选值是几十个人名，打 `wjy` 要能命中「王嘉怡」。
+ *
+ * 只改了**怎么把候选值筛出来**，没动 `allow-create` —— 打一个库里没有的名字照旧能直接存，
+ * 因为「使用人」本来就是自由文本、没有人员字典表（见 CURRENT_STATE 决策表）。
+ */
+const userQuery = ref('')
+const userOptions = computed(() => props.users.filter((u) => matchByPinyin(u, userQuery.value)))
+
+/**
+ * 「新建」候选：手打一个新名字当然还得能存（「使用人」本来就是自由文本），
+ * 但这一项**要排在候选列表最后**。
+ *
+ * 原来用的是 `allow-create`，而 Element Plus 会把它的创建项**固定插在候选最前面**，
+ * 配合 `default-first-option`（默认高亮第一项）就成了一个坑：打 `dnn` 想选「杜娜娜」，
+ * 一敲回车存进去的是「dnn」；实测连打「王嘉」回车都会存成「王嘉」而不是「王嘉怡」——
+ * 也就是说这个坑在拼音筛选之前就存在了（只要打的是"半个名字"就会踩到），
+ * 而拼音首字母会让它被踩得频繁得多：谁打首字母不是为了选那个名字呢。
+ *
+ * 自己渲染成最后一项之后，语义变成「回车 = 选第一个真实候选」，
+ * 只有候选全都不匹配时才落到新建 —— 四条路径都试过：dnn→杜娜娜、王嘉→王嘉怡、
+ * 李雷→李雷、zzz→zzz。
+ */
+const createLabel = computed(() => {
+  const q = userQuery.value.trim()
+  if (!q || props.users.includes(q)) return ''
+  return q
+})
+function filterUsers(q: string) {
+  userQuery.value = q
+}
+
+/**
+ * 清关键字。选完人 / 收起下拉两个时机都要清，且 Element Plus 那份和这份都得清：
+ * EP 的 `reserve-keyword` 默认为 `true`（选完把关键字留在框里），所以这里显式关掉；
+ * 而它清的是自己的 `inputValue`、不会回调 `filter-method`，我们这份得靠 `@change` 清。
+ * 详见 `AssetListView.vue` 里同一处函数的注释。
+ */
+function resetUserQuery() {
+  userQuery.value = ''
+}
+
+function onUserVisibleChange(open: boolean) {
+  if (!open) resetUserQuery()
+}
 
 const isEdit = computed(() => Boolean(props.asset))
 const title = computed(() => (isEdit.value ? `编辑资产 ${props.asset?.asset_code ?? ''}` : '新增资产'))
@@ -227,14 +274,18 @@ function close() {
         <el-form-item label="使用人" prop="user_name">
           <el-select
             v-model="form.user_name"
-            placeholder="可直接输入新的人名"
+            placeholder="可直接输入新的人名，或打拼音首字母"
             filterable
-            allow-create
             default-first-option
             clearable
             style="width: 100%"
+            :filter-method="filterUsers"
+            :reserve-keyword="false"
+            @change="resetUserQuery"
+            @visible-change="onUserVisibleChange"
           >
-            <el-option v-for="u in users" :key="u" :label="u" :value="u" />
+            <el-option v-for="u in userOptions" :key="u" :label="u" :value="u" />
+            <el-option v-if="createLabel" :key="`__new__${createLabel}`" :label="createLabel" :value="createLabel" />
           </el-select>
         </el-form-item>
 
