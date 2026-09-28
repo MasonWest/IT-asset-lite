@@ -80,15 +80,54 @@ function buildQuery(): AuditQuery {
   return query
 }
 
-function hasFilter(): boolean {
-  return Boolean(
-    filters.action.length ||
-      filters.operator ||
-      filters.ip ||
-      filters.status ||
-      filters.keyword.trim(),
-  )
+/** 筛选栏里除「时间范围」之外的条件。
+ *
+ *  时间范围永远有值（默认就是近 7 天），所以它算不算"筛过"得单独跟默认值比 ——
+ *  这正是原来「点了今日操作、蓝框却还停在全部记录」的根因：整套判定里没有一处看过时间。 */
+const hasExtraFilter = computed(() =>
+  Boolean(
+    filters.action.length || filters.operator || filters.ip || filters.status || filters.keyword.trim(),
+  ),
+)
+
+/** 时间范围是不是恰好等于给定的两端 */
+function rangeIs(from: string, to: string): boolean {
+  const r = filters.range
+  return !!r && r[0] === from && r[1] === to
 }
+
+const isTodayRange = computed(() => {
+  const today = toIsoDate(new Date())
+  return rangeIs(today, today)
+})
+
+const isDefaultRange = computed(() => {
+  const [from, to] = defaultRange()
+  return rangeIs(from, to)
+})
+
+/** 三张统计卡是一个单选组：任意时刻只有一张亮，判定由当前筛选值反推。
+ *
+ *  不另存一份"当前视图"状态 —— 存两份迟早和筛选栏打架（在筛选栏手动选了什么，卡片却不认）。
+ *  顺序是 失败 > 今日 > 全部；有额外条件（选了操作人、结果选了成功、输过关键字）
+ *  或自选了别的日期区间时谁都不亮，那属于自定义视图，本来就不该冒充某个卡片。
+ *  卡片本身是单选语义，所以筛选栏的「结果」也保持单选 —— 它和失败卡是同一个值。 */
+const activeView = computed<'all' | 'today' | 'failed' | null>(() => {
+  if (filters.status === 'failed') return 'failed'
+  if (hasExtraFilter.value) return null
+  if (isTodayRange.value) return 'today'
+  if (isDefaultRange.value) return 'all'
+  return null
+})
+
+/** 视图偏离了默认（默认 = 近 7 天 + 没有任何其他条件）。决定「重置」按钮露不露 */
+const isDefaultView = computed(() => activeView.value === 'all')
+
+/** 系统里到底有没有过记录。
+ *
+ *  空状态文案用它而不是"当前视图有没有结果"：一周前记过、这周没有时，
+ *  原来会写成「还没有任何操作记录」，看着像从没记过账，其实是时间窗把这周滤空了。 */
+const hasAnyRecord = computed(() => (meta.value?.total ?? 0) > 0)
 
 async function load() {
   loading.value = true
@@ -147,10 +186,15 @@ function resetFilters() {
   void load()
 }
 
-/** 点统计卡直接筛选 */
+/** 点统计卡直接切到那个视图。
+ *
+ *  「今日」必须顺手把「失败」那个结果条件还回去 —— 否则在失败视图下点它，
+ *  两个条件叠在一起，列表里还只有失败记录，用户看到的就是"点了没反应"。
+ *  反过来「失败」不动时间范围：想只看今天失败的，就先点今日再点失败。 */
 function quickToday() {
   const today = toIsoDate(new Date())
   filters.range = [today, today]
+  filters.status = undefined
 }
 
 function quickFailed() {
@@ -302,16 +346,17 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- 三张卡是单选组：点一下就切到那个视图，蓝框只跟着当前视图走（判定见 activeView） -->
     <div class="stat-row">
-      <div class="stat-card" :class="{ active: !hasFilter() }" @click="resetFilters">
+      <div class="stat-card" :class="{ active: activeView === 'all' }" @click="resetFilters">
         <div class="k"><span>📜</span>全部记录</div>
         <div class="v">{{ meta?.total ?? 0 }}<small>条</small></div>
       </div>
-      <div class="stat-card" @click="quickToday">
+      <div class="stat-card" :class="{ active: activeView === 'today' }" @click="quickToday">
         <div class="k"><span>📅</span>今日操作</div>
         <div class="v">{{ meta?.today ?? 0 }}<small>条</small></div>
       </div>
-      <div class="stat-card" :class="{ active: filters.status === 'failed' }" @click="quickFailed">
+      <div class="stat-card" :class="{ active: activeView === 'failed' }" @click="quickFailed">
         <div class="k"><span>⚠️</span>失败操作</div>
         <div class="v">{{ meta?.failed ?? 0 }}<small>条</small></div>
       </div>
@@ -347,7 +392,7 @@ onMounted(async () => {
       </el-select>
       <el-input v-model="filters.keyword" class="grow"
                 placeholder="搜索操作对象 / 操作内容 / 操作人 / IP" clearable />
-      <el-button v-if="hasFilter()" @click="resetFilters">重置</el-button>
+      <el-button v-if="!isDefaultView" @click="resetFilters">重置</el-button>
     </div>
 
     <div v-loading="loading" class="audit-panel">
@@ -398,15 +443,15 @@ onMounted(async () => {
 
       <div v-else-if="!loading" class="empty-state">
         <div class="big">📜</div>
-        <div class="title">{{ hasFilter() ? '这段时间没有符合条件的操作' : '还没有任何操作记录' }}</div>
+        <div class="title">{{ hasAnyRecord ? '这段时间没有符合条件的操作' : '还没有任何操作记录' }}</div>
         <div>
           {{
-            hasFilter()
+            hasAnyRecord
               ? '换个时间范围或筛选项试试'
               : '新增设备、改状态、配对、盘点、导入导出都会自动记在这里'
           }}
         </div>
-        <div v-if="hasFilter()" style="margin-top: 14px">
+        <div v-if="!isDefaultView" style="margin-top: 14px">
           <el-button @click="resetFilters">重置筛选</el-button>
         </div>
       </div>
