@@ -380,6 +380,46 @@ export function orDash(value?: string | number | null): string {
   return String(value)
 }
 
+/**
+ * 使用人里代表「无归属」的占位符。
+ *
+ * 项目没有人员字典表，使用人是自由文本，于是「这台不归谁」被写成了斜杠 ——
+ * 现在库里 15 台写的是 `/`（13 台主机，全在办公室大厅 / 资料室这类公共区域）。
+ * 半角、全角都认：中文输入法下打出 `／` 太正常了。
+ */
+export const NO_USER_MARKS = ['/', '／']
+
+/**
+ * 这个使用人算不算「没填」。
+ *
+ * **`/` 不是一个人名，是「没填」。** 凡是把使用人当**人名**展示的地方
+ * （配对页的主机分组、选择弹窗里的人员标签）都要先过这一遍 ——
+ * 否则界面上会冒出一个蓝色的「/」标签，看着像有这么个人。
+ *
+ * 注意别拿它当「空值判断」用：`undefined` / `''` 返回 false。
+ * 要的是「这个字段有没有指向某个人」，两种情况合起来看才行。
+ */
+export function isNoUser(userName?: string | null): boolean {
+  const name = userName?.trim()
+  return !!name && NO_USER_MARKS.includes(name)
+}
+
+/**
+ * 这台设备到底归不归某个人。**空值和斜杠都算「没归属」。**
+ *
+ * 跟 `isNoUser()` 的差别只在空值上：`isNoUser('')` 是 false（"没写斜杠"），
+ * `hasOwner('')` 也是 false（"没人用"）。判断"要不要显示成人名"用这个，
+ * 判断"写没写那个占位符"用上面那个。
+ */
+export function hasOwner(userName?: string | null): boolean {
+  return Boolean(userName?.trim()) && !isNoUser(userName)
+}
+
+/** 人员标签上的文案：没归属的一律显成「未填使用人」，不显示成斜杠 */
+export function userLabel(userName?: string | null): string {
+  return hasOwner(userName) ? String(userName).trim() : '未填使用人'
+}
+
 export function warrantyText(asset: { warranty_until: string | null; warranty_days_left: number | null }): {
   text: string
   tone: 'ok' | 'warn' | 'expired' | 'none'

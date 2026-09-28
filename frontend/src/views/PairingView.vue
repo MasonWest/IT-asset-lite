@@ -16,7 +16,7 @@ import { apiMessage, pairingApi } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { AssetBrief, PairingBoard, Relation } from '@/types'
-import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
+import { formatDate, hasOwner, isNoUser, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
 
 const router = useRouter()
 /** 从这一页点进设备详情，返回时要回到配对页而不是台账 */
@@ -40,28 +40,21 @@ const showHistory = ref(false)
 /** 主机列：只看还没挂任何显示器的主机。默认全看 */
 const onlyUnpairedHosts = ref(false)
 
-/**
- * 使用人里代表「无归属」的占位符。
+/*
+ * 「使用人写斜杠 = 没填」这条规则已经挪到 `utils/format.ts` 的 `isNoUser()`：
+ * 资产详情里的绑定 / 换主机弹窗也要按同一个口径显示人员标签，
+ * 规则放两份迟早会漂（改一处忘一处），所以提成公共函数。
  *
- * 项目里没有人员字典表，使用人是自由文本，于是「这台没人用」被写成了各种样子 ——
- * 现在库里 15 台写的是斜杠 `/`（13 台主机，全在办公室大厅 / 资料室这类公共区域），
- * 而且这 13 台全都没有显示器，正好淹在「只看没配显示器的」那个筛选里，
- * 想配真正要配的那几台得先做一遍排除法。
- *
- * 半角、全角斜杠都认 —— 中文输入法下打出 `／` 太正常了。
+ * 这里额外要说清的只有「为什么只筛主机侧」：
+ * 那 13 台写 `/` 的主机全都没有显示器，正好淹在「只看没配显示器的」筛选里，
+ * 想挑出真正要配的那几台得先做一遍排除法。
  */
-const NO_USER_MARKS = ['/', '／']
-
-function isNoUser(asset: AssetBrief): boolean {
-  const name = asset.user_name?.trim()
-  return !!name && NO_USER_MARKS.includes(name)
-}
 
 /** 主机列：默认把「没使用人」的藏掉 */
 const hideNoUserHosts = ref(true)
 
 /** 被这条规则挡住的主机。数组留全，界面上要能把「藏了几台、怎么放出来」讲清楚 */
-const noUserHosts = computed(() => (board.value?.hosts ?? []).filter((h) => isNoUser(h.host)))
+const noUserHosts = computed(() => (board.value?.hosts ?? []).filter((h) => isNoUser(h.host.user_name)))
 
 /**
  * 主机侧的基础集合 = 全部主机 − 被藏掉的没使用人的。
@@ -70,7 +63,7 @@ const noUserHosts = computed(() => (board.value?.hosts ?? []).filter((h) => isNo
  * 藏起来只会漏配；主机写 `/` 则是「这台不归谁」，混在工作列表里才是纯干扰。
  */
 const hostPool = computed(() =>
-  (board.value?.hosts ?? []).filter((h) => !hideNoUserHosts.value || !isNoUser(h.host)),
+  (board.value?.hosts ?? []).filter((h) => !hideNoUserHosts.value || !isNoUser(h.host.user_name)),
 )
 
 /**
@@ -543,8 +536,8 @@ onMounted(async () => {
             <span class="picker-head-row">
               <span class="picker-code">{{ m.asset_code }}</span>
               <!-- 使用人做成独立标签：同一个人的几台设备一眼归堆，不用去记编号 -->
-              <span class="picker-user" :class="{ none: !m.user_name }">
-                {{ m.user_name || '未填使用人' }}
+              <span class="picker-user" :class="{ none: !hasOwner(m.user_name) }">
+                {{ userLabel(m.user_name) }}
               </span>
             </span>
             <span class="picker-sub">

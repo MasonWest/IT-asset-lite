@@ -14,7 +14,7 @@ import { apiMessage, assetApi, pairingApi } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { Asset, AssetBrief, Relation } from '@/types'
-import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
+import { formatDate, hasOwner, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
 
 const props = defineProps<{
   asset: Asset
@@ -302,7 +302,13 @@ watch(() => props.asset.id, loadRelations, { immediate: true })
               border
               class="picker-radio"
             >
-              <span class="picker-code">{{ m.asset_code }}</span>
+              <span class="picker-head-row">
+                <span class="picker-code">{{ m.asset_code }}</span>
+                <!-- 使用人做成独立标签：同一个人的几台设备一眼归堆，不用去记编号 -->
+                <span class="picker-user" :class="{ none: !hasOwner(m.user_name) }">
+                  {{ userLabel(m.user_name) }}
+                </span>
+              </span>
               <span class="picker-sub">
                 {{ orDash(m.brand) }} {{ m.model || '' }}
                 <template v-if="m.location"> · {{ m.location }}</template>
@@ -314,9 +320,16 @@ watch(() => props.asset.id, loadRelations, { immediate: true })
         <div v-else>
           <el-radio-group v-model="pickedId" class="picker-grid">
             <el-radio v-for="h in hosts" :key="h.id" :value="h.id" border class="picker-radio">
-              <span class="picker-code">{{ h.asset_code }}</span>
+              <!-- 「换主机」这一侧本来就有使用人，但写成行内文字；跟上面显示器那侧统一成标签，
+                   否则同一个弹窗里两种模式下同一个概念的画法不一样 -->
+              <span class="picker-head-row">
+                <span class="picker-code">{{ h.asset_code }}</span>
+                <span class="picker-user" :class="{ none: !hasOwner(h.user_name) }">
+                  {{ userLabel(h.user_name) }}
+                </span>
+              </span>
               <span class="picker-sub">
-                {{ h.device_type_name }} · 使用人 {{ orDash(h.user_name) }}
+                {{ h.device_type_name }}
                 <template v-if="h.location"> · {{ h.location }}</template>
               </span>
             </el-radio>
@@ -531,11 +544,34 @@ watch(() => props.asset.id, loadRelations, { immediate: true })
   min-width: 0;
 }
 
+.picker-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .picker-code {
   font-size: 13.5px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--text-1);
+}
+
+/* 使用人独立成标签，配色与配对页的选择弹窗一致（飞书蓝） */
+.picker-user {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #3370ff;
+  background: #eef3ff;
+  border-radius: 999px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.picker-user.none {
+  color: var(--text-3);
+  background: #f2f3f5;
 }
 
 .picker-sub {
