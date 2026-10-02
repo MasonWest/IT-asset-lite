@@ -813,7 +813,7 @@ class Workstation(Base):
     #: 与 assets.user_name 同口径的裸字符串。系统没有用户表（红线：不做登录），
     #: 所以这里是自由文本，不做字典、不做外键。
     #: 注意：它**不是** assets.user_name 的副本 ——
-    #: 「W23 这个位置归王嘉怡」和「这台主机现在归王嘉怡」是两个不同的事实，
+    #: 「W23 这个位置归林晓薇」和「这台主机现在归林晓薇」是两个不同的事实，
     #: 两者不一致本身就是盘点要抓的信号，不做强制同步。
     user_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 

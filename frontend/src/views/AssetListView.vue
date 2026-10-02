@@ -152,7 +152,7 @@ const meta = ref<FilterOptions | null>(null)
 /**
  * 「使用人」下拉的拼音过滤。
  *
- * 候选值是几十个人名，纯靠鼠标翻太慢，所以打 `wjy` 也要能命中「王嘉怡」。
+ * 候选值是几十个人名，纯靠鼠标翻太慢，所以打 `lxw` 也要能命中「林晓薇」。
  * 过滤是**纯本地**的（`matchByPinyin` 里对缓存好的拼音别名做 includes），
  * 不打接口，所以不需要防抖。
  */
@@ -168,8 +168,8 @@ function filterUsers(q: string) {
  * 清关键字。两个时机都要清，而且都得清两遍（Element Plus 那份 + 我们这份）：
  *
  * - **选完之后**：el-select 的 `reserve-keyword` 默认是 `true`（本意是给远程搜索用的，
- *   让人能用同一个关键字连挑几个），于是选完「王嘉怡」框里还留着 `wjy`，
- *   接着打 `ztt` 会拼成 `wjyztt`、一个候选都没有。所以这里显式设 `:reserve-keyword="false"`。
+ *   让人能用同一个关键字连挑几个），于是选完「林晓薇」框里还留着 `lxw`，
+ *   接着打 `zyx` 会拼成 `lxwzyx`、一个候选都没有。所以这里显式设 `:reserve-keyword="false"`。
  *   但 EP 清的是它自己的 `inputValue`，**不会**回调 `filter-method`，我们这份 `userQuery`
  *   得靠 `@change` 一起清，否则会出现"输入框空了、候选还只剩一个"的错位。
  * - **收起下拉**：EP 关闭时同样只清它自己的，不清我们这份就会留下残缺列表。

@@ -4,7 +4,7 @@ import { pinyin } from 'pinyin-pro'
  * 中文候选值的拼音别名 —— 让「打首字母就能选」成立。
  *
  * 用在台账筛选栏和编辑资产里的「使用人」：候选值就是几十个人名 / 房间名，
- * 想把「王嘉怡」挑出来得用鼠标在人堆里翻，打 `wjy` 就命中才顺手。
+ * 想把「林晓薇」挑出来得用鼠标在人堆里翻，打 `lxw` 就命中才顺手。
  *
  * 为什么不自己拿 GB2312 一级字库的编码区间去推首字母（那套边界表很常见、看着零依赖）：
  * 一级字库只收 3755 个高频字，**「婷 嘉 鑫 媛 婧 茗 娓 昝」这些名字常用字全在二级字库**，
@@ -19,9 +19,9 @@ import { pinyin } from 'pinyin-pro'
 const letters = (s: string) => s.replace(/[^a-z]/gi, '').toLowerCase()
 
 export interface PinyinAlias {
-  /** 首字母串：「王嘉怡」→ `wjy` */
+  /** 首字母串：「林晓薇」→ `lxw` */
   py: string
-  /** 全拼串：「王嘉怡」→ `wangjiayi`，打全拼也能命中 */
+  /** 全拼串：「林晓薇」→ `linxiaowei`，打全拼也能命中 */
   full: string
 }
 
@@ -37,8 +37,8 @@ export function pinyinAlias(value: string): PinyinAlias {
    *
    * 这个区分是必须的，两种"一刀切"写法都错：
    *   - 不开姓氏模式 → 「单」「查」「曾」「解」「仇」「区」当姓时读音全错（s→d、z→c…）；
-   *   - 全串开姓氏模式 → 姓氏读音会带到第二个字上，「王佳乐」读成 wang-jiayue，
-   *     于是首字母变成 `wjy`，可人家自己打的是 `wjl`。
+   *   - 全串开姓氏模式 → 姓氏读音会被当成整串的读音规则，把后面每个字的读音一起带偏
+   *     （典型现象是首字母串完全对不上——用户按常用读音打的字母一个也命不中）。
    * 名字里只有第一个字是姓，所以只在开头开。
    */
   const opt = { toneType: 'none' as const, mode: 'surname' as const, surname: 'head' as const }
