@@ -3,12 +3,12 @@
 ## 解决什么问题
 
 批量导入资产时，显示器编号常常是「对应主机编号 + 一个后缀」，
-比如主机 `B022-03-00001` 配的显示器叫 `B022-03-00001-M`。
+比如主机 `A100-01-00001` 配的显示器叫 `A100-01-00001-M`。
 一台一台点「绑定」不现实（几十上百台），本脚本按这个命名规则一次性关联。
 
 规则（默认后缀 `-M`，可用 --suffix 改）：
 
-    B022-03-00001-M  →  主机 B022-03-00001
+    A100-01-00001-M  →  主机 A100-01-00001
 
 ## 安全性设计
 
@@ -27,7 +27,7 @@
     python link_monitors.py                分析并列出配对计划，一个字都不写
     python link_monitors.py --yes          备份 → 实际写入
     python link_monitors.py --suffix=_M    换一个后缀（下划线形式）
-    python link_monitors.py --operator=张翔  指定审计里的操作人
+    python link_monitors.py --operator=你的名字  指定审计里的操作人
 """
 
 from __future__ import annotations

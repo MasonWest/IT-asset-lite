@@ -27,8 +27,20 @@ import type {
   PairingBoard,
   Relation,
   RelationHistoryPage,
+  MapInventoryView,
   SystemInfo,
   TimelinePage,
+  Workstation,
+  WorkstationCreatePayload,
+  WorkstationLayoutItem,
+  WorkstationLayoutResult,
+  WorkstationMap,
+  WorkstationUpdatePayload,
+  FloorMap,
+  FloorMapList,
+  FloorMapSavePayload,
+  WorkstationBulkPayload,
+  WorkstationBulkResult,
 } from '@/types'
 
 const http = axios.create({
@@ -84,6 +96,11 @@ async function put<T>(url: string, body?: unknown, params?: unknown): Promise<T>
 
 async function del<T>(url: string, params?: unknown): Promise<T> {
   const res = await http.delete<T>(url, { params: params as never })
+  return res.data
+}
+
+async function patch<T>(url: string, body?: unknown, params?: unknown): Promise<T> {
+  const res = await http.patch<T>(url, body, { params: params as never })
   return res.data
 }
 
@@ -221,6 +238,7 @@ function assetQueryParams(query: AssetQuery = {}): Record<string, unknown> {
   if (query.user_name) out.user_name = query.user_name
   if (query.location) out.location = query.location
   if (query.paired) out.paired = query.paired
+  if (query.workstation) out.workstation = query.workstation
   return out
 }
 
@@ -283,6 +301,107 @@ export const transferApi = {
       }),
     )
   },
+}
+
+// --------------------------------------------------------------------------- //
+// 工位（资产空间地图）
+// --------------------------------------------------------------------------- //
+/**
+ * 工位相关的接口。
+ *
+ * 注意「工位上挂的资产」走的是 `/workstations/{id}/assets`，
+ * 那查的是 `assets.workstation_id`（单一真相），**不是**工位表里存的资产列表 ——
+ * 工位表里根本不存资产列表。
+ */
+export const workstationApi = {
+  /** 地图渲染用：工位列表 + 画布尺寸。画布尺寸由后端给，前端不再硬编码 */
+  map: () => get<WorkstationMap>('/workstations'),
+
+  detail: (id: number) => get<Workstation>(`/workstations/${id}`),
+
+  /** 侧栏「资产清单」：真实资产，按 asset_code 排序 */
+  assets: (id: number) => get<Asset[]>(`/workstations/${id}/assets`),
+
+  /** 新增。code 留空由**后端**生成 —— 前端算会并发撞号 */
+  create: (payload: WorkstationCreatePayload) => post<Workstation>('/workstations', payload),
+
+  update: (id: number, payload: WorkstationUpdatePayload) =>
+    patch<Workstation>(`/workstations/${id}`, payload),
+
+  /**
+   * 拖动后**攒批**提交坐标。
+   * 逐次提交会让审计被几十次布局微调刷屏 —— 一次布局调整 = 1 条审计。
+   */
+  saveLayout: (items: WorkstationLayoutItem[], operator?: string | null) =>
+    patch<WorkstationLayoutResult>('/workstations/layout', { items, operator }),
+
+  /** 把一批资产挂到这个工位上 */
+  bindAssets: (id: number, assetIds: number[], operator?: string | null) =>
+    post<{ moved: number; asset_codes: string[] }>(`/workstations/${id}/assets`, {
+      asset_ids: assetIds,
+      operator,
+    }),
+
+  /** 从工位上摘下来（**资产留着**，只是没有工位了） */
+  unbindAsset: (id: number, assetId: number, operator?: string | null) =>
+    del<{ ok: boolean; asset_code: string }>(
+      `/workstations/${id}/assets/${assetId}`,
+      operator ? { operator } : undefined,
+    ),
+
+  /**
+   * 删除工位（软删除）。
+   * @param force 工位上还有资产时，是否一并清空这些资产的工位归属（**不删资产**）
+   */
+  remove: (id: number, opts: { operator?: string | null; force?: boolean } = {}) =>
+    del<{ ok: boolean; code: string; detached_assets: string[]; note: string }>(
+      `/workstations/${id}`,
+      pruneParams({ operator: opts.operator ?? '', force: opts.force ? 'true' : '' }),
+    ),
+
+  /**
+   * 批量生成工位（行列排布）。
+   *
+   * ⚠️ **必须走这个接口，不要循环调 `create()`** ——
+   * 一次批量操作 = 1 条审计（全系统口径）。循环 24 次会往审计页灌 24 条，
+   * 把真正的资产操作淹掉。
+   */
+  bulk: (payload: WorkstationBulkPayload) =>
+    post<WorkstationBulkResult>('/workstations/bulk', payload),
+}
+
+/**
+ * 平面图。**当前只有一张** —— 所以没有 `maps[]`、没有选择器、没有 `?map=`。
+ *
+ * 唯一用得到的入口是 `default()`（地图/编辑器打开时读）与 `save()`（编辑器提交）。
+ * `list()` 存在只是为了让"契约上有列表"这件事可查，**UI 不许用它渲染多个图**。
+ */
+export const floorMapApi = {
+  list: () => get<FloorMapList>('/floor-maps'),
+
+  /** 默认（也是唯一）那张图。地图页与编辑器都读它。 */
+  default: () => get<FloorMap>('/floor-maps/default'),
+
+  detail: (id: number) => get<FloorMap>(`/floor-maps/${id}`),
+
+  /**
+   * 保存整张图（覆盖 layout）。
+   *
+   * ⚠️ 必须带 `expected_updated_at`（乐观锁）：两个人同时开着编辑器时，
+   * 后保存的那个会拿到 409 而不是静默覆盖。不带 = 跳过检查，只有脚本该这么用。
+   */
+  save: (id: number, payload: FloorMapSavePayload) => put<FloorMap>(`/floor-maps/${id}`, payload),
+}
+
+export const mapInventoryApi = {
+  /**
+   * 地图盘点视图：**按 task_id 显式取**，一次拿全图状态。
+   *
+   * 不复用 `/inventory/context/{asset_id}` —— 那个是单任务假设
+   * （取"该设备所属的最近一个进行中任务"），在资产详情页合理，
+   * 但地图问的是"这一片工位整体盘到哪了"，必须明确聚合的是哪一次。
+   */
+  view: (taskId: number) => get<MapInventoryView>(`/inventory/tasks/${taskId}/map-view`),
 }
 
 // --------------------------------------------------------------------------- //

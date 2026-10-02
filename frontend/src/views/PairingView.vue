@@ -8,19 +8,17 @@
  *   · 右边是主机列表 —— 每台主机下面挂着它的显示器，点 × 就解绑
  *   · 从别的主机上把显示器拿走，走的是同一套选人弹窗（后端按换绑处理，一次事务做完）
  */
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiMessage, pairingApi } from '@/api'
-import { useBackNav } from '@/composables/useBackNav'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { AssetBrief, PairingBoard, Relation } from '@/types'
 import { formatDate, hasOwner, isNoUser, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
 
+const route = useRoute()
 const router = useRouter()
-/** 从这一页点进设备详情，返回时要回到配对页而不是台账 */
-const { withBack } = useBackNav('/pairings')
 
 const loading = ref(false)
 const board = ref<PairingBoard | null>(null)
@@ -254,8 +252,59 @@ async function unbind(host: AssetBrief, monitor: AssetBrief) {
   }
 }
 
+/*
+ * 筛选状态写进 URL —— 和资产台账（AssetListView）同一套做法。
+ *
+ * 这一页的三个筛选（关键字 / 隐藏使用人「/」的主机 / 只看没配显示器的）原先只存在
+ * 组件里的 ref 上，而路由懒加载没有 keep-alive：点进设备详情，组件一卸载就全没了，
+ * 退回配对页得从头再勾一遍。
+ *
+ * 写进 URL 顺带白拿三件事：刷新不丢、链接可分享、浏览器前进后退也对。
+ * 同步方向是**单向**的（界面 → URL），挂载时读一次就够。
+ */
+const hydrated = ref(false)
+
+/** 界面状态 → URL。只在偏离默认值时才写，所以默认视图的地址就是干净的 `/pairings` */
+function currentUrlQuery(): Record<string, string> {
+  const q: Record<string, string> = {}
+  if (keyword.value.trim()) q.keyword = keyword.value.trim()
+  if (!hideNoUserHosts.value) q.hide_no_user = '0'
+  if (onlyUnpairedHosts.value) q.unpaired = '1'
+  return q
+}
+
+function readStateFromQuery() {
+  const one = (v: unknown) => (typeof v === 'string' ? v : '')
+  keyword.value = one(route.query.keyword)
+  // 默认就是「隐藏」，所以只有显式的 `0` 才算关掉 —— 裸地址 / 老书签进来仍是原行为
+  hideNoUserHosts.value = one(route.query.hide_no_user) !== '0'
+  onlyUnpairedHosts.value = one(route.query.unpaired) === '1'
+}
+
+/** 用 replace 而不是 push —— push 的话每敲一个字都往历史里塞一条，点几次「返回」还在配对页打转 */
+function syncUrl() {
+  if (!hydrated.value) return
+  void router.replace({ path: '/pairings', query: currentUrlQuery() })
+}
+
+// getter 返回字符串而不是数组：数组每次都是新引用，watch 会当成"变了"从而多写一次 URL
+watch(
+  () => [keyword.value, hideNoUserHosts.value, onlyUnpairedHosts.value].join('~'),
+  () => syncUrl(),
+)
+
+/**
+ * 当前地址（含筛选），点进设备详情时交给对方当返回目标。
+ *
+ * 直接由当前筛选值算，**不读 `route.fullPath`** —— `syncUrl` 的 replace 是异步的，
+ * 刚敲完字就点设备时路由可能还没落定，那样带过去的 back 会少一个条件。
+ */
+function backPath(): string {
+  return router.resolve({ path: '/pairings', query: currentUrlQuery() }).fullPath
+}
+
 function openAsset(id: number) {
-  void router.push({ path: `/asset/${id}`, query: withBack() })
+  void router.push({ path: `/asset/${id}`, query: { back: backPath() } })
 }
 
 function saveOperatorName() {
@@ -269,6 +318,9 @@ async function toggleHistory() {
 }
 
 onMounted(async () => {
+  // 先按地址栏还原筛选（从设备详情退回来时靠它），再开始往 URL 写
+  readStateFromQuery()
+  hydrated.value = true
   await loadSystemInfo()
   operatorInput.value = appState.operator
   await load()

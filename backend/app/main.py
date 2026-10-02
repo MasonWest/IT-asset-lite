@@ -38,7 +38,18 @@ from .config import (
 )
 from .database import SessionLocal, ensure_schema, table_counts
 from .models import AuditAction, AuditTarget
-from .routers import assets, audit, device_types, inventory, meta, relations, system, transfer
+from .routers import (
+    assets,
+    audit,
+    device_types,
+    floor_maps,
+    inventory,
+    meta,
+    relations,
+    system,
+    transfer,
+    workstations,
+)
 from .seed import ensure_dictionary, seed_demo
 from .services import audit as audit_service
 
@@ -68,6 +79,18 @@ _FAILED_ROUTES: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"^/api/transfer/import$"), AuditAction.ASSET_IMPORT, AuditTarget.FILE),
     (re.compile(r"^/api/device-types/\d+$"), AuditAction.TYPE_UPDATE, AuditTarget.DEVICE_TYPE),
     (re.compile(r"^/api/device-types$"), AuditAction.TYPE_CREATE, AuditTarget.DEVICE_TYPE),
+    # 工位。注意 layout / import 这两条**必须排在 /\d+ 和 $ 之前**：
+    # 它们是字面量路径，FastAPI 与这里的匹配都按先后顺序，落到兜底分支的话
+    # 失败的工位操作会被记成「编辑资产 / 操作对象：系统」—— 审计里多出一条根本不存在的操作。
+    (re.compile(r"^/api/workstations/layout$"), AuditAction.WORKSTATION_MOVE, AuditTarget.WORKSTATION),
+    (re.compile(r"^/api/workstations/bulk$"), AuditAction.WORKSTATION_CREATE, AuditTarget.WORKSTATION),
+    (re.compile(r"^/api/workstations/import$"), AuditAction.WORKSTATION_CREATE, AuditTarget.WORKSTATION),
+    (re.compile(r"^/api/workstations/\d+$"), AuditAction.WORKSTATION_UPDATE, AuditTarget.WORKSTATION),
+    (re.compile(r"^/api/workstations$"), AuditAction.WORKSTATION_CREATE, AuditTarget.WORKSTATION),
+    # 平面图。同样按「字面量路径在 /\d+ 之前」排：
+    # 底部那张图是单图，接口设计成 /api/floor-maps/{id}，将来也不会出现别的固定子路径。
+    (re.compile(r"^/api/floor-maps/\d+$"), AuditAction.MAP_UPDATE, AuditTarget.MAP),
+    (re.compile(r"^/api/floor-maps$"), AuditAction.MAP_CREATE, AuditTarget.MAP),
 ]
 
 
@@ -148,6 +171,14 @@ async def lifespan(_app: FastAPI):
     print(f"  数据库   : {get_database_file()}")
     if migration.get("category_added"):
         print("  已升级：device_types 补上 category 列并回填设备类别")
+    if migration.get("workstation_column_added"):
+        print("  已升级：assets 补上 workstation_id 列（资产 ↔ 工位关联）")
+    if migration.get("floor_map_added"):
+        print("  已升级：workstations 补上 floor_map_id 列（工位 ↔ 平面图关联）")
+    if migration.get("default_floor_map_created"):
+        print(f"  已建默认平面图 “{migration['default_floor_map_name']}”（含 19 个建筑图元）")
+    if migration.get("workstations_attached"):
+        print(f"  已把 {migration['workstations_attached']} 个工位挂到默认图")
     if migration.get("timestamps_shifted"):
         print(
             f"  已升级：{migration['timestamps_shifted']} 个时间戳由 UTC 校正为本地时间"
@@ -224,6 +255,8 @@ app.include_router(assets.router)
 app.include_router(relations.router)
 app.include_router(inventory.router)
 app.include_router(transfer.router)
+app.include_router(workstations.router)
+app.include_router(floor_maps.router)
 app.include_router(audit.router)
 
 

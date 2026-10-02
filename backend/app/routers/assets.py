@@ -67,6 +67,9 @@ _TRACKED_FIELDS = (
     "status",
     "user_name",
     "location",
+    #: 资产换工位必须进这个名单，否则「这台机器搬到哪去了」在时间线上毫无痕迹 ——
+    #: 而那正是下次盘点要找的答案。
+    "workstation_id",
     "purchase_date",
     "warranty_until",
     "notes",
@@ -164,6 +167,7 @@ def list_assets(
     user_name: Optional[str] = Query(None, description="使用人，多个用逗号分隔"),
     location: Optional[str] = Query(None, description="存放位置，多个用逗号分隔"),
     paired: Optional[str] = Query(None, description="配对筛选：paired 已配对 / unpaired 未配对"),
+    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有工位点位的资产"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
 ):
@@ -177,6 +181,7 @@ def list_assets(
         user_name=user_name,
         location=location,
         paired=paired,
+        workstation=workstation,
     )
 
     if conditions:
@@ -222,6 +227,7 @@ def list_assets_grouped(
     user_name: Optional[str] = Query(None, description="使用人，多个用逗号分隔"),
     location: Optional[str] = Query(None, description="存放位置，多个用逗号分隔"),
     paired: Optional[str] = Query(None, description="配对筛选：paired 已配对 / unpaired 未配对"),
+    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有工位点位的资产"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
 ):
@@ -240,6 +246,7 @@ def list_assets_grouped(
         user_name=user_name,
         location=location,
         paired=paired,
+        workstation=workstation,
     )
 
     # 分页发生在**聚合之后**：先切页再聚合会把同一个套装拆到两页，
@@ -383,6 +390,7 @@ def update_asset(asset_id: int, payload: AssetUpdate, db: Session = Depends(get_
     changes = diff_changes(before, after)
 
     if changes:
+        changes = _humanize_changes(db, changes)
         status_changed = "status" in changes
         event_type = AssetEventType.STATUS if status_changed and len(changes) == 1 else AssetEventType.UPDATE
         summary = describe_changes(changes)
@@ -412,6 +420,36 @@ def update_asset(asset_id: int, payload: AssetUpdate, db: Session = Depends(get_
     db.commit()
     db.refresh(asset)
     return _serialize_detail(db, asset)
+
+
+def _humanize_changes(db: Session, changes: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    """把变更里的外键 ID 换成人能看懂的名字。
+
+    差异比较拿的是原始列值，所以 `workstation_id` 会算出「3 → 10」这种
+    ——时间线上写「所在工位 3 → 10」等于没说，用户得回地图里数第 3 个格子是谁。
+    这里只改**展示用**的 from / to，`diff_changes` 的比较逻辑不动。
+
+    注意：`changes` 的键保持原样（`workstation_id`），因为
+    `_TRACKED_FIELDS` 那套判断、审计的 `detail.fields` 都依赖键名。
+    """
+    from ..models import Workstation  # 局部导入，避免与 models 的循环依赖
+
+    entry = changes.get("workstation_id")
+    if not entry:
+        return changes
+
+    def name(value: str) -> str:
+        if value in ("空", "", None):
+            return "空"
+        try:
+            station_id = int(value)
+        except (TypeError, ValueError):
+            return value
+        station = db.get(Workstation, station_id)
+        return station.code if station is not None else f"#{station_id}"
+
+    changes["workstation_id"] = {"from": name(entry.get("from")), "to": name(entry.get("to"))}
+    return changes
 
 
 @router.delete("/{asset_id}", status_code=status.HTTP_200_OK, summary="删除资产")

@@ -45,6 +45,7 @@ def build_conditions(
     user_name: Optional[str] = None,
     location: Optional[str] = None,
     paired: Optional[str] = None,
+    workstation: Optional[str] = None,
 ) -> list:
     """返回 SQLAlchemy 条件列表，调用方自己拼到 select 上。
 
@@ -55,6 +56,11 @@ def build_conditions(
     注意这里**只放列表页和盘点范围共用的条件**。某个页面自己才需要的筛选
     （比如配对管理页的「只看没配显示器的主机」）留在那个页面的接口里，
     别往这个函数塞 —— 否则盘点范围会莫名其妙跟着变。
+
+    `workstation` 是「有没有落到空间点位」这条轴，与 status **正交**：
+    一台设备可以既在库、又没点位，也可以在用、还没点位（人换了位置忘了改）。
+    所以只支持 `"none"`（没点位）一种取值，和 `paired` 一样是"要不要加这个条件"，
+    不是"在几个值里选一个"。传 `None` / 空串 / 别的值都等于不加条件。
     """
     conditions = []
 
@@ -95,5 +101,10 @@ def build_conditions(
         conditions.append(or_(Asset.id.in_(active_host_ids()), Asset.id.in_(active_monitor_ids())))
     elif paired == "unpaired":
         conditions.append(~or_(Asset.id.in_(active_host_ids()), Asset.id.in_(active_monitor_ids())))
+
+    # 「没落到工位」= workstation_id 为空。只判 NULL 不判空串 ——
+    # 这一列是外键，能写进去的只有整数或 NULL，不存在空串这种脏值。
+    if workstation == "none":
+        conditions.append(Asset.workstation_id.is_(None))
 
     return conditions

@@ -62,6 +62,13 @@ def get_filters(db: Session = Depends(get_db)):
         select(func.count(Asset.id)).where(Asset.device_type.has(category=DeviceCategory.DISPLAY))
     ).scalar_one()
 
+    # 「无点位」不是状态、是一台设备有没有落到空间点位上，所以单独算。
+    # 台账页把它做成一张统计卡（顶掉原来的「已报废」—— 那个状态在这个库里恒为 0，
+    # 卡片永远显示 0，等于白占一格），点一下就是筛选。见 build_conditions 的 workstation。
+    no_workstation_count = db.execute(
+        select(func.count(Asset.id)).where(Asset.workstation_id.is_(None))
+    ).scalar_one()
+
     return FilterOptions(
         device_types=[
             DeviceTypeOut(
@@ -80,6 +87,7 @@ def get_filters(db: Session = Depends(get_db)):
         total=int(db.execute(select(func.count(Asset.id))).scalar_one()),
         status_counts=status_counts,
         device_type_counts={str(k): v for k, v in type_counts.items()},
+        no_workstation_count=int(no_workstation_count),
         pair_stats={
             "hosts": int(host_count),
             "monitors": int(monitor_count),

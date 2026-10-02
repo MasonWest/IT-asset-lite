@@ -53,6 +53,7 @@ async function refreshInfo() {
 
       <nav>
         <RouterLink to="/">资产台账</RouterLink>
+        <RouterLink to="/map">空间地图</RouterLink>
         <RouterLink to="/pairings">配对管理</RouterLink>
         <RouterLink to="/inventory">盘点</RouterLink>
         <RouterLink to="/import">批量导入</RouterLink>
@@ -75,7 +76,12 @@ async function refreshInfo() {
       </div>
     </header>
 
-    <main class="page-host">
+    <!--
+      `page-host--flush`：路由 meta.flush 为真的页面（目前只有空间地图）**满铺**。
+      地图要的是"抬头 HUD 下面整块都是画布"，而不是被限制在 1240px 阅读宽度里居中。
+      见 router/index.ts 里 space-map 的 meta 注释。
+    -->
+    <main class="page-host" :class="{ 'page-host--flush': Boolean($route.meta.flush) }">
       <RouterView />
     </main>
 

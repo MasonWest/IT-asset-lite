@@ -72,6 +72,7 @@ const filters = reactive<{
   user_names: string[]
   locations: string[]
   paired?: 'paired' | 'unpaired'
+  workstation?: 'none'
 }>({
   keyword: '',
   device_type_ids: [],
@@ -79,6 +80,7 @@ const filters = reactive<{
   user_names: [],
   locations: [],
   paired: undefined,
+  workstation: undefined,
 })
 
 const page = ref(1)
@@ -111,6 +113,8 @@ function readStateFromQuery(q: LocationQuery) {
   filters.status = one(q.status) || undefined
   const paired = one(q.paired)
   filters.paired = paired === 'paired' || paired === 'unpaired' ? paired : undefined
+  // 只认 none，别的值一律当没筛 —— 手工改地址栏写错不该让列表变空
+  filters.workstation = one(q.workstation) === 'none' ? 'none' : undefined
   filters.user_names = many(q.user_name)
   filters.locations = many(q.location)
   viewMode.value = one(q.view) === 'table' ? 'table' : 'card'
@@ -180,17 +184,53 @@ function onUserVisibleChange(open: boolean) {
 
 const formOpen = ref(false)
 const editing = ref<Asset | null>(null)
+/**
+ * 从地图「挂设备到工位」跳进来时预选的工位。
+ *
+ * 只借道 URL（`/?new=1&workstation=23`），不放进全局 store：
+ * 这是一次性的跳转意图，刷新页面后就不该还在生效。
+ */
+const presetWorkstationId = ref<number | null>(null)
 const presetTypeId = ref<number | null>(null)
 const typeDialogOpen = ref(false)
 
 const selected = ref<AssetGroup[]>([])
 
-const statusCards = [
-  { key: '', label: '全部设备', icon: '📦' },
-  { key: 'in_use', label: '在用', icon: '✅' },
-  { key: 'idle', label: '在库', icon: '🗄️' },
-  { key: 'repair', label: '维修中', icon: '🔧' },
-  { key: 'scrapped', label: '已报废', icon: '🗑️' },
+/**
+ * 顶部统计卡。**这一行里混了两种筛选轴**，`dim` 就是用来区分"点这张卡改哪个字段"的。
+ *
+ * - `dim: 'status'` —— 设备状态（在用 / 在库 / 维修中），落到 `filters.status`
+ * - `dim: 'workstation'` —— 有没有落到空间点位，落到 `filters.workstation`
+ *
+ * 两个轴在后端是**正交**的：一台设备可以既「在用」又「没点位」（人换位置了忘了改），
+ * 也能既「在库」又「没点位」。但**卡片是单选语义** —— 点一张就把另一轴清掉，
+ * 否则会出现"点了无点位，列表却还按上一次的在用筛着"这种界面与结果对不上的状态。
+ * 想真做交集，用筛选栏里那两个下拉，那儿本来就是组合语义。
+ *
+ * 「已报废」被「无点位资产」顶掉：真实库 142 台资产的 status 只有 idle / in_use 两种，
+ * `scrapped` 恒为 0 —— 那张卡永远显示 0，白占一格。**状态下拉里仍然保留「已报废」**
+ * （见 statusOptions），报废真出现时从那里筛，能力没丢。
+ */
+type StatCard = {
+  dim: 'status' | 'workstation'
+  key: string
+  label: string
+  icon: string
+  tip?: string
+}
+
+const statCards: StatCard[] = [
+  { dim: 'status', key: '', label: '全部设备', icon: '📦' },
+  { dim: 'status', key: 'in_use', label: '在用', icon: '✅' },
+  { dim: 'status', key: 'idle', label: '在库', icon: '🗄️' },
+  { dim: 'status', key: 'repair', label: '维修中', icon: '🔧' },
+  {
+    dim: 'workstation',
+    key: 'none',
+    label: '无点位资产',
+    icon: '🎯',
+    tip: '还没落到空间地图工位上的资产。点一下只看这些，然后去地图上把它们挂到对应工位。',
+  },
 ]
 
 const pairedOptions = [
@@ -232,7 +272,8 @@ const hasFilter = computed(
     filters.status !== undefined ||
     filters.user_names.length > 0 ||
     filters.locations.length > 0 ||
-    filters.paired !== undefined,
+    filters.paired !== undefined ||
+    filters.workstation !== undefined,
 )
 
 /** 选中行展开成「设备明细 id」—— 打印标签永远按明细走，套装只是列表的一种看法 */
@@ -330,6 +371,7 @@ watch(
       filters.locations.join('|'),
       filters.status ?? '',
       filters.paired ?? '',
+      filters.workstation ?? '',
     ].join('~'),
   () => {
     if (!hydrated.value) return
@@ -343,8 +385,38 @@ watch(
 watch(page, () => syncUrl())
 watch(viewMode, () => syncUrl())
 
-function pickStatus(key: string) {
-  filters.status = key === '' ? undefined : key
+/**
+ * 点统计卡。
+ *
+ * 「无点位资产」再点一次**不会取消** —— 和状态卡一致（点「在用」也不会回到全部）。
+ * 要清掉就点「全部设备」。让所有卡行为一致，比"哪张能反选要靠猜"重要。
+ */
+function pickCard(c: StatCard) {
+  if (c.dim === 'workstation') {
+    filters.workstation = 'none'
+    filters.status = undefined
+    return
+  }
+  filters.status = c.key === '' ? undefined : c.key
+  filters.workstation = undefined
+}
+
+/**
+ * 卡片高亮。
+ *
+ * 「全部设备」要求**两个轴都没筛**。只判 `filters.status === undefined` 不够 ——
+ * 筛了「无点位」时状态本来就是空的，那张卡会跟着一起亮，用户看着像"什么都没筛"。
+ */
+function cardActive(c: StatCard): boolean {
+  if (c.dim === 'workstation') return filters.workstation === c.key
+  if (c.key === '') return filters.status === undefined && filters.workstation === undefined
+  return filters.status === c.key
+}
+
+function cardValue(c: StatCard): number {
+  if (c.dim === 'workstation') return meta.value?.no_workstation_count ?? 0
+  if (c.key === '') return meta.value?.total ?? 0
+  return meta.value?.status_counts?.[c.key] ?? 0
 }
 
 function resetFilters() {
@@ -354,6 +426,7 @@ function resetFilters() {
   filters.user_names = []
   filters.locations = []
   filters.paired = undefined
+  filters.workstation = undefined
   page.value = 1
   syncUrl()
   void load()
@@ -361,6 +434,7 @@ function resetFilters() {
 
 function openCreate() {
   editing.value = null
+  presetWorkstationId.value = null
   // 只在「恰好筛了一个类型」时把类型带进新增表单 —— 筛了好几个就不知道
   // 用户想新建哪一种了，带错比不带更烦人
   presetTypeId.value = filters.device_type_ids.length === 1 ? filters.device_type_ids[0] : null
@@ -370,6 +444,21 @@ function openCreate() {
 function openEdit(asset: Asset) {
   editing.value = asset
   presetTypeId.value = null
+  presetWorkstationId.value = null
+  formOpen.value = true
+}
+
+/**
+ * 打开「新增资产」，并预选某个工位 —— 地图侧「挂设备到工位」走这条路。
+ *
+ * 刻意**不做成"给某个工位挑设备"**：那需要在弹窗里塞一个设备选择器，
+ * 而设备已有一百多台、还有筛选和分页，等于在弹窗里再写一个台账。
+ * 反过来（先建/选设备、再指定工位）只需要一个下拉，两条入口都通。
+ */
+function openCreateOnStation(workstationId: number) {
+  editing.value = null
+  presetTypeId.value = null
+  presetWorkstationId.value = workstationId
   formOpen.value = true
 }
 
@@ -465,6 +554,8 @@ function currentQuery(): AssetQuery {
   if (filters.user_names.length) query.user_name = filters.user_names.join(',')
   if (filters.locations.length) query.location = filters.locations.join(',')
   if (filters.paired) query.paired = filters.paired
+  // 点位轴。key 与接口同名，导出的查询串也自动跟着对
+  if (filters.workstation) query.workstation = filters.workstation
   return query
 }
 
@@ -502,6 +593,13 @@ function runExport() {
 onMounted(async () => {
   // 先按 URL 还原上一次的筛选 / 页码 / 视图（从详情页返回时走的就是这条路）
   readStateFromQuery(route.query)
+  // 地图侧「挂设备到工位」跳过来：?new=1&workstation=23
+  // 只认正整数，脏参数忽略即可（不是错误，用户手改地址栏很常见）
+  if (route.query.new) {
+    const wid = Number(route.query.workstation)
+    if (Number.isInteger(wid) && wid > 0) openCreateOnStation(wid)
+    else openCreate()
+  }
   // watch 是 flush:'pre'（在微任务里跑），等它们都跑完再开闸门 —— 否则「恢复状态」
   // 这个动作本身会被当成用户在操作，白打一轮接口
   await nextTick()
@@ -527,18 +625,22 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 状态统计：永远按设备明细算，点一下就是筛选（不受聚合视图影响） -->
+    <!--
+      状态 / 点位统计：永远按设备明细算，点一下就是筛选（不受聚合视图影响）。
+      「无点位资产」不是状态、是另一条轴，所以用 dim 区分 —— 见 statCards 的注释。
+    -->
     <div class="stat-row">
       <div
-        v-for="c in statusCards"
-        :key="c.key"
+        v-for="c in statCards"
+        :key="`${c.dim}-${c.key}`"
         class="stat-card"
-        :class="{ active: (filters.status ?? '') === c.key }"
-        @click="pickStatus(c.key)"
+        :class="{ active: cardActive(c) }"
+        :title="c.tip"
+        @click="pickCard(c)"
       >
         <div class="k"><span>{{ c.icon }}</span>{{ c.label }}</div>
         <div class="v">
-          {{ c.key === '' ? (meta?.total ?? 0) : (meta?.status_counts?.[c.key] ?? 0) }}
+          {{ cardValue(c) }}
           <small>台</small>
         </div>
       </div>
@@ -677,8 +779,15 @@ onMounted(async () => {
             <span class="val">{{ orDash(g.primary.location) }}</span>
           </div>
           <div class="row">
-            <span class="ic">🏷️</span>
-            <span class="sn-chip">{{ g.primary.serial_number || 'SN 未登记' }}</span>
+            <span class="ic">🎯</span>
+            <!--
+              这里原本显示 SN。真实库里 142 台资产的 serial_number **全是空的**，
+              一行「SN 未登记」等于没信息；工位编码有 89 台有值、直接对应地图上的格子，
+              扫一眼就知道这台机器在哪。SN 仍然可以在详情页和编辑表单里看到、也仍然可搜。
+            -->
+            <span class="point-chip" :class="{ unset: !g.primary.workstation_code }">
+              {{ g.primary.workstation_code ? `点位:${g.primary.workstation_code}` : '未设点位' }}
+            </span>
           </div>
           <div class="row">
             <span class="ic">🛡️</span>
@@ -746,7 +855,7 @@ onMounted(async () => {
                 <span>{{ row.primary.device_type_name }}</span>
                 <span class="muted">
                   {{ orDash(row.primary.brand) }} {{ row.primary.model || '' }} ·
-                  {{ orDash(row.primary.serial_number) }}
+                  点位 {{ row.primary.workstation_code || '未设' }}
                 </span>
                 <span class="muted">挂 {{ row.monitor_count }} 台显示器</span>
               </div>
@@ -759,7 +868,7 @@ onMounted(async () => {
                 <span class="code">{{ m.asset_code }}</span>
                 <span>{{ m.device_type_name }}</span>
                 <span>{{ orDash(m.brand) }} {{ m.model || '' }}</span>
-                <span class="sn">{{ orDash(m.serial_number) }}</span>
+                <span class="pt">{{ m.workstation_code || '未设点位' }}</span>
                 <el-tag size="small" effect="light" :style="statusStyle(m)">
                   {{ m.status_label }}
                 </el-tag>
@@ -786,8 +895,16 @@ onMounted(async () => {
             {{ orDash(row.primary.brand) }} {{ row.primary.model || '' }}
           </template>
         </el-table-column>
-        <el-table-column label="序列号 SN" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ orDash(row.primary.serial_number) }}</template>
+        <el-table-column label="点位" width="110">
+          <template #default="{ row }">
+            <span
+              class="point-chip"
+              :class="{ unset: !row.primary.workstation_code }"
+              style="display: inline-block"
+            >
+              {{ row.primary.workstation_code || '未设点位' }}
+            </span>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
@@ -881,6 +998,7 @@ onMounted(async () => {
       :users="meta?.users ?? []"
       :locations="meta?.locations ?? []"
       :preset-type-id="presetTypeId"
+      :preset-workstation-id="presetWorkstationId"
       @saved="onSaved"
     />
 
@@ -1076,7 +1194,7 @@ onMounted(async () => {
   color: var(--text-1);
 }
 
-.bundle-panel-row .sn {
+.bundle-panel-row .pt {
   color: var(--text-3);
 }
 

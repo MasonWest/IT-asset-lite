@@ -244,6 +244,23 @@ main.page-host {
 }
 
 /* --------------------------------------------------------------------------
+   满铺页（路由 meta.flush === true，目前只有空间地图）
+
+   上面那套 max-width + padding 是为「一屏文字」定的阅读宽度约束。
+   套到地图上会同时犯三个错：把 100vw 的画布截成居中窄块、
+   上下各留 24/64 空白、总高超出视口而多出一条纵向滚动条 ——
+   表现就是"接进系统后地图整体缩小了"。地图要的是抬头 HUD 下面整块都是画布。
+
+   用 `main.page-host.page-host--flush`（两个类）而不是单个 `.page-host--flush`：
+   下面窄屏媒体查询里的 `main.page-host` 在源码里更靠后，
+   同特异性下会把它盖掉，那样手机上又缩回去了。
+   -------------------------------------------------------------------------- */
+main.page-host.page-host--flush {
+  max-width: none;
+  padding: 0;
+}
+
+/* --------------------------------------------------------------------------
    通用面板 / 页头
    -------------------------------------------------------------------------- */
 .panel {
@@ -519,18 +536,37 @@ main.page-host {
   flex: 1;
 }
 
-.sn-chip {
+/* --------------------------------------------------------------------------
+   「点位」标记（列表卡片 + 表格共用）
+
+   这一格原来显示 SN（`.sn-chip`）。真实库里 142 台资产的 serial_number 全是空的，
+   一行「SN 未登记」等于没信息；工位编码有值、直接对应空间地图上的格子，扫一眼
+   就知道这台机器在哪。SN 仍然可在详情页 / 编辑表单看到，也仍然可以搜。
+
+   有值 → 浅蓝底 + 加粗：它现在是有信息量的，应该跳出来。
+   没值 → 灰虚线：真实库里这是常态（53/142），别做得刺眼。
+   -------------------------------------------------------------------------- */
+.point-chip {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
-  color: var(--text-2);
-  background: #f6f7f9;
-  border: 1px solid var(--border);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #3350c4;
+  background: #eef3ff;
+  border: 1px solid #d3daff;
   border-radius: 6px;
   padding: 1px 7px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
+}
+
+.point-chip.unset {
+  color: var(--text-3);
+  background: #fafbfc;
+  border: 1px dashed var(--border-strong);
+  font-weight: 400;
 }
 
 /* --------------------------------------------------------------------------

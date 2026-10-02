@@ -1,5 +1,6 @@
-export type AssetStatus = 'in_use' | 'idle' | 'repair' | 'scrapped'
+import type { FloorLayout } from '@/utils/floorMap'
 
+export type AssetStatus = 'in_use' | 'idle' | 'repair' | 'scrapped'
 /** 设备类别 —— 决定能不能参与主机/显示器配对 */
 export type DeviceCategory = 'host' | 'display' | 'other'
 
@@ -61,6 +62,10 @@ export interface Asset {
   status_label: string
   user_name: string | null
   location: string | null
+  /** 挂在哪个工位上。绝大多数资产为 null（不在工位上） */
+  workstation_id: number | null
+  /** 工位编码，便于列表直接显示，不用再查一次 */
+  workstation_code: string | null
   purchase_date: string | null
   warranty_until: string | null
   warranty_days_left: number | null
@@ -142,6 +147,8 @@ export interface FilterOptions {
   total: number
   status_counts: Record<string, number>
   device_type_counts: Record<string, number>
+  /** 没有落到任何工位点位的资产数（台账页「无点位资产」统计卡） */
+  no_workstation_count: number
   pair_stats: Record<string, number>
 }
 
@@ -155,6 +162,14 @@ export interface AssetPayload {
   status: AssetStatus
   user_name?: string | null
   location?: string | null
+  /**
+   * 所在工位。
+   *
+   * **`null` 与"不传"在语义上不同**：不传 = 不动；传 null = 从工位上摘下来。
+   * 后端靠 `model_dump(exclude_unset=True)` 区分这两者，所以表单提交时
+   * 这个键**必须显式带上**，不能因为是 null 就省略。
+   */
+  workstation_id?: number | null
   purchase_date?: string | null
   warranty_until?: string | null
   notes?: string | null
@@ -181,6 +196,13 @@ export interface AssetQuery {
   user_name?: string
   location?: string
   paired?: 'paired' | 'unpaired'
+  /**
+   * 点位轴：`none` = 只看没落到任何工位点位的资产。
+   *
+   * 与 `status` **正交**（一台设备可以既「在用」又「没点位」），所以不是枚举选择，
+   * 而是"要不要加这个条件" —— 传别的值等于不筛。
+   */
+  workstation?: 'none'
   page?: number
   page_size?: number
 }
@@ -457,4 +479,187 @@ export interface AuditQuery {
   keyword?: string
   page?: number
   page_size?: number
+}
+
+// --------------------------------------------------------------------------- //
+// 工位（资产空间地图）
+// --------------------------------------------------------------------------- //
+/** 工位朝向。桌子朝哪边摆 —— 是家具属性，与它在画布第几行无关 */
+export type Facing = 'up' | 'down'
+
+/**
+ * 工位级盘点状态。前三种来自后端 `inventory_items.result` 的聚合，
+ * 后两种是**视图层专有**的中性态（后端也算好了，只是不落库）：
+ *   - `empty`        这位置一台资产都没有 —— 不是"盘过了"，也不是"漏盘"
+ *   - `not_in_scope` 有资产，但不属于当前选中的这次盘点（本次不盘）
+ */
+export type MapState = 'checked' | 'abnormal' | 'pending' | 'empty' | 'not_in_scope'
+
+export interface Workstation {
+  id: number
+  code: string
+  x: number
+  y: number
+  facing: Facing
+  user_name: string | null
+  room: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+  /** 工位上挂了几台资产 —— 后端派生，不落库 */
+  asset_count: number
+}
+
+export interface WorkstationMapCanvas {
+  width: number
+  height: number
+  /** 与前端视觉网格必须一致：视觉 20px 而吸附 4px 的话，用户肉眼看不出"对齐了" */
+  grid: number
+}
+
+/** 单张平面图。`layout` 是后端解析后的对象，不是字符串。 */
+export interface FloorMap {
+  id: number
+  name: string
+  canvas: WorkstationMapCanvas
+  layout: FloorLayout
+  is_default: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface FloorMapList {
+  total: number
+  /** ⚠️ 当前恒为一张。前端只取 `items[0]`，禁止做选择器/多图 UI。 */
+  items: FloorMap[]
+}
+
+export interface FloorMapSavePayload {
+  name?: string | null
+  layout?: FloorLayout | null
+  /** 乐观锁：打开页面时看到的 updated_at。不带则跳过检查。 */
+  expected_updated_at?: string | null
+  operator?: string | null
+}
+
+/** 批量生成工位的参数。与后端 `WorkstationBulkGenerate` 一一对应。 */
+export interface WorkstationBulkPayload {
+  /** 生成总数（不是列数） */
+  count: number
+  origin_x: number
+  origin_y: number
+  step_x?: number
+  step_y?: number
+  /** 每行几个 */
+  cols?: number
+  /** `down` / `up` / `alternate`（一列朝下一列朝上，面对面） */
+  facing?: string
+  code_prefix?: string | null
+  /** 起始编码建议（如 W63）。为空则后端按现有最大值续号。 */
+  start_code?: string | null
+  room?: string | null
+  operator?: string | null
+}
+
+export interface WorkstationBulkResult {
+  created: number
+  codes: string[]
+  first_code: string | null
+  last_code: string | null
+  items: Workstation[]
+}
+
+export interface WorkstationMap {
+  canvas: WorkstationMapCanvas
+  /**
+   * 平面图的建筑图元（地台/走道/房间/墙体/分隔条/前厅/入口）。
+   * 由后端从默认平面图带出 —— 前端不再写死。没有图时是空对象。
+   * 解析一律走 `utils/floorMap.ts::parseLayout`，别在这里直接摸 shapes。
+   */
+  layout: FloorLayout
+  floor_map_id: number | null
+  total: number
+  assigned: number
+  empty: number
+  items: Workstation[]
+}
+
+export interface WorkstationCreatePayload {
+  code?: string | null
+  x: number
+  y: number
+  facing?: Facing | null
+  user_name?: string | null
+  room?: string | null
+  operator?: string | null
+}
+
+export interface WorkstationUpdatePayload {
+  code?: string
+  x?: number
+  y?: number
+  facing?: Facing
+  user_name?: string | null
+  room?: string | null
+  operator?: string | null
+}
+
+export interface WorkstationLayoutItem {
+  id: number
+  x: number
+  y: number
+}
+
+export interface WorkstationLayoutResult {
+  updated: number
+  unchanged: number
+  changes: Array<{ id: number; code: string; from: [number, number]; to: [number, number] }>
+}
+
+// --------------------------------------------------------------------------- //
+// 地图盘点视图
+// --------------------------------------------------------------------------- //
+export interface MapInventoryAsset {
+  asset_id: number
+  asset_code: string
+  device_type_name: string
+  brand: string | null
+  model: string | null
+  status: AssetStatus
+  status_label: string
+  result: InventoryResult
+  result_label: string
+  operator: string | null
+  checked_at: string | null
+  /** 盘点之后账面又被改过 —— 后端拿「盘点时刻快照」比出来的 */
+  changed_since: boolean
+  snapshot_user: string | null
+  snapshot_location: string | null
+}
+
+export interface MapInventoryWorkstation {
+  workstation_id: number
+  code: string
+  x: number
+  y: number
+  facing: Facing
+  user_name: string | null
+  room: string | null
+  state: MapState
+  state_label: string
+  /** 属于本次任务的资产明细（empty / not_in_scope 时为空） */
+  assets: MapInventoryAsset[]
+  /** 该工位下资产总数（含不属于本次任务的）—— 用来区分 empty 与 not_in_scope */
+  asset_count: number
+}
+
+export interface MapInventoryView {
+  task: InventoryTask
+  canvas: WorkstationMapCanvas
+  workstations: MapInventoryWorkstation[]
+  counts: Record<string, number>
+  /** 没有被任何工位认领的资产数（没位置 = 没人管） */
+  unassigned: number
+  /** 有工位、但不属于本次任务的资产数（这些设备本次不盘） */
+  out_of_scope: number
 }

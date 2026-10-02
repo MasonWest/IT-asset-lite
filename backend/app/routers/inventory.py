@@ -36,6 +36,7 @@ from ..models import (
     InventoryResult,
     InventoryTask,
     InventoryTaskStatus,
+    Workstation,
 )
 from ..schemas import (
     InventoryContext,
@@ -47,11 +48,16 @@ from ..schemas import (
     InventoryTaskDetail,
     InventoryTaskOut,
 )
+from ..schemas_workstations import (
+    MapInventoryAsset,
+    MapInventoryView,
+    MapInventoryWorkstation,
+    WorkstationMapCanvas,
+)
 from ..services.audit import asset_label, record_audit
 from ..services.events import record_event
 from ..services.filters import build_conditions
 from ..services.serialize import to_asset_out
-
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 
 EXPORT_COLUMNS = [
@@ -514,6 +520,153 @@ def delete_task(
     db.delete(task)
     db.commit()
     return {"ok": True, "deleted_id": task_id, "name": name}
+
+
+# --------------------------------------------------------------------------- #
+# 地图盘点视图
+# --------------------------------------------------------------------------- #
+#: 工位级状态的聚合优先级：**异常 > 待盘 > 已盘**。
+#: 只要有一台异常，工位就报异常 —— 异常必须能被一眼看见，
+#: 不能被"其他都正常"掩盖。
+_STATE_LABELS: dict[str, str] = {
+    InventoryResult.CHECKED: "已盘",
+    InventoryResult.ABNORMAL: "异常",
+    InventoryResult.PENDING: "待盘",
+    # 这两个状态**只存在于地图视图层**，不会写进 inventory_items：
+    # 它们是"查不到对应行"推出来的，不是盘点结果。给 InventoryResult 加第四态
+    # 会污染导出、筛选和统计 —— 那个枚举描述的是**资产**的盘点结果，
+    # 而"空工位"和"不在本次范围"都不是资产。
+    "empty": "空位",
+    "not_in_scope": "不在本次范围",
+}
+
+
+@router.get(
+    "/tasks/{task_id}/map-view",
+    response_model=MapInventoryView,
+    summary="地图盘点视图（按任务取全图状态）",
+)
+def map_view(task_id: int, db: Session = Depends(get_db)):
+    """空间聚合视图专用的接口。
+
+    **为什么不能复用 `/context/{asset_id}`**：那个接口是「单任务假设」——
+    取该设备所属的、最近一个进行中任务，返回一个答案就够了。
+    这在资产详情页合理（用户问的是"这台设备归哪个盘点"），
+    但地图问的是「**这一片工位整体盘到哪了**」—— 聚合视图必须明确
+    "聚合的是哪一次"。否则两个盘点任务同时进行时，地图会显示一个
+    用户没问过的任务的答案：大部分格子看似"待盘"，实际上那批设备
+    在另一个任务里早就盘完了。所以这里**按 task_id 显式取**，
+    由界面上的任务选择器决定看哪一个。
+
+    返回的 `empty` / `not_in_scope` 是本视图层专有的两种中性态：
+      - `empty`：这位置一台资产都没有 —— 不是"盘过了"，也不是"漏盘"
+      - `not_in_scope`：有资产，但不属于这次盘点（本次不盘）
+    都不计入 task.total / checked（那两者是**资产**维度，正是进度分母）。
+    """
+    task = _get_task_or_404(db, task_id)
+
+    stations = list(
+        db.execute(
+            select(Workstation)
+            .where(Workstation.active.is_(True))
+            .order_by(Workstation.y.asc(), Workstation.x.asc(), Workstation.id.asc())
+        ).scalars().all()
+    )
+
+    # 本次任务的明细：asset_id → item
+    items = list(
+        db.execute(select(InventoryItem).where(InventoryItem.task_id == task_id)).scalars().all()
+    )
+    item_by_asset: dict[int, InventoryItem] = {int(i.asset_id): i for i in items}
+
+    # 所有挂在工位上的资产（含不属于本次任务的）
+    assets = list(db.execute(select(Asset).where(Asset.workstation_id.is_not(None))).scalars().all())
+    assets_by_station: dict[int, list[Asset]] = {}
+    for asset in assets:
+        assets_by_station.setdefault(int(asset.workstation_id), []).append(asset)
+
+    state_counts: dict[str, int] = {key: 0 for key in _STATE_LABELS}
+    out_of_scope = 0
+    workstations: list[MapInventoryWorkstation] = []
+
+    for station in stations:
+        own = assets_by_station.get(station.id, [])
+        in_task = [a for a in own if a.id in item_by_asset]
+        out_of_scope += len(own) - len(in_task)
+
+        if not own:
+            state = "empty"
+        elif not in_task:
+            state = "not_in_scope"
+        else:
+            results = [item_by_asset[a.id].result for a in in_task]
+            if InventoryResult.ABNORMAL in results:
+                state = InventoryResult.ABNORMAL
+            elif InventoryResult.PENDING in results:
+                state = InventoryResult.PENDING
+            else:
+                state = InventoryResult.CHECKED
+
+        state_counts[state] = state_counts.get(state, 0) + 1
+
+        detail: list[MapInventoryAsset] = []
+        for asset in in_task:
+            item = item_by_asset[asset.id]
+            current = (asset.user_name, asset.location, asset.status)
+            snapshot = (item.snapshot_user, item.snapshot_location, item.snapshot_status)
+            detail.append(
+                MapInventoryAsset(
+                    asset_id=asset.id,
+                    asset_code=asset.asset_code,
+                    device_type_name=asset.device_type.name if asset.device_type else "",
+                    brand=asset.brand,
+                    model=asset.model,
+                    status=asset.status,
+                    status_label=AssetStatus.LABELS.get(asset.status, asset.status),
+                    result=item.result,
+                    result_label=InventoryResult.LABELS.get(item.result, item.result),
+                    operator=item.operator,
+                    checked_at=item.checked_at,
+                    # 盘点之后账面又被改过 —— 这是盘点最有价值的信号，
+                    # snapshot_* 里存着盘点时刻的账面值，直接比出来
+                    changed_since=item.result != InventoryResult.PENDING and snapshot != current,
+                    snapshot_user=item.snapshot_user,
+                    snapshot_location=item.snapshot_location,
+                )
+            )
+
+        workstations.append(
+            MapInventoryWorkstation(
+                workstation_id=station.id,
+                code=station.code,
+                x=station.x,
+                y=station.y,
+                facing=station.facing,
+                user_name=station.user_name,
+                room=station.room,
+                state=state,
+                state_label=_STATE_LABELS.get(state, state),
+                assets=detail,
+                asset_count=len(own),
+            )
+        )
+
+    # 没有被任何工位认领的资产数 —— 盘点时最该被看见的一批（没位置 = 没人管）
+    unassigned = int(
+        db.execute(
+            select(func.count(Asset.id)).where(Asset.workstation_id.is_(None))
+        ).scalar_one()
+    )
+
+    base = serialize_task(task, _counts(db, [task.id]).get(task.id, {}), scope_text(db, _load_scope(task)))
+    return MapInventoryView(
+        task=base,
+        canvas=WorkstationMapCanvas(),
+        workstations=workstations,
+        counts=state_counts,
+        unassigned=unassigned,
+        out_of_scope=out_of_scope,
+    )
 
 
 # --------------------------------------------------------------------------- #

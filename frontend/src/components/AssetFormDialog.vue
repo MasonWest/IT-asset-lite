@@ -3,10 +3,11 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 
-import { assetApi } from '@/api'
+import { assetApi, workstationApi } from '@/api'
+import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState, saveOperator } from '@/stores/app'
-import type { Asset, AssetPayload, AssetStatus, DeviceType } from '@/types'
-import { matchByPinyin } from '@/utils/pinyin'
+import type { Asset, AssetPayload, AssetStatus, DeviceType, Workstation } from '@/types'
+import { compareStationCode } from '@/utils/workstationMap'
 
 const props = defineProps<{
   modelValue: boolean
@@ -15,6 +16,8 @@ const props = defineProps<{
   users: string[]
   locations: string[]
   presetTypeId?: number | null
+  /** 地图点「挂设备」进来时预选的工位 —— 省得用户再翻一遍下拉 */
+  presetWorkstationId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -32,6 +35,15 @@ interface FormModel {
   status: AssetStatus
   user_name: string
   location: string
+  /**
+   * 所在工位。
+   *
+   * 用 `number | null` 而不是 `undefined` 区分两种语义，这个区分**必须保住**：
+   *   - `undefined` 后端收不到这个键 → **不动**原有工位
+   *   - `null` 后端收到明确的 null → 把设备从工位上**摘下来**
+   * 两者在界面上是同一个「清除」按钮，但要能表达出来。
+   */
+  workstation_id: number | null
   purchase_date: string
   warranty_until: string
   notes: string
@@ -51,6 +63,7 @@ const form = reactive<FormModel>({
   status: 'in_use',
   user_name: '',
   location: '',
+  workstation_id: null,
   purchase_date: '',
   warranty_until: '',
   notes: '',
@@ -58,50 +71,62 @@ const form = reactive<FormModel>({
 })
 
 /**
- * 「使用人」下拉的拼音过滤：候选值是几十个人名，打 `wjy` 要能命中「王嘉怡」。
+ * 工位候选。
  *
- * 只改了**怎么把候选值筛出来**，没动 `allow-create` —— 打一个库里没有的名字照旧能直接存，
- * 因为「使用人」本来就是自由文本、没有人员字典表（见 CURRENT_STATE 决策表）。
+ * 只在弹窗打开时拉一次 —— 工位是低频数据（62 个），不值得缓存到全局 store。
+ * 拿不到就退化成「空下拉」，不影响编辑其余字段。
+ *
+ * ⚠️ **必须重排**：接口 `GET /api/workstations` 给的是 `y, x, id` 顺序，
+ * 那是**地图渲染**的顺序（同一排的挨着给）。照原样铺进下拉里，
+ * 编码就是 W01→W14→W27→W40… 这种"一排跳一段"的乱序，62 项根本没法找。
+ * 详细理由见 `utils/workstationMap.ts` 的 `compareStationCode`。
  */
-const userQuery = ref('')
-const userOptions = computed(() => props.users.filter((u) => matchByPinyin(u, userQuery.value)))
+const stations = ref<Workstation[]>([])
+const stationLoading = ref(false)
 
-/**
- * 「新建」候选：手打一个新名字当然还得能存（「使用人」本来就是自由文本），
- * 但这一项**要排在候选列表最后**。
- *
- * 原来用的是 `allow-create`，而 Element Plus 会把它的创建项**固定插在候选最前面**，
- * 配合 `default-first-option`（默认高亮第一项）就成了一个坑：打 `dnn` 想选「杜娜娜」，
- * 一敲回车存进去的是「dnn」；实测连打「王嘉」回车都会存成「王嘉」而不是「王嘉怡」——
- * 也就是说这个坑在拼音筛选之前就存在了（只要打的是"半个名字"就会踩到），
- * 而拼音首字母会让它被踩得频繁得多：谁打首字母不是为了选那个名字呢。
- *
- * 自己渲染成最后一项之后，语义变成「回车 = 选第一个真实候选」，
- * 只有候选全都不匹配时才落到新建 —— 四条路径都试过：dnn→杜娜娜、王嘉→王嘉怡、
- * 李雷→李雷、zzz→zzz。
- */
-const createLabel = computed(() => {
-  const q = userQuery.value.trim()
-  if (!q || props.users.includes(q)) return ''
-  return q
-})
-function filterUsers(q: string) {
-  userQuery.value = q
+async function loadStations() {
+  if (stationLoading.value) return
+  stationLoading.value = true
+  try {
+    const map = await workstationApi.map()
+    stations.value = [...map.items].sort((a, b) => compareStationCode(a.code, b.code))
+  } catch {
+    stations.value = []
+  } finally {
+    stationLoading.value = false
+  }
 }
 
 /**
- * 清关键字。选完人 / 收起下拉两个时机都要清，且 Element Plus 那份和这份都得清：
- * EP 的 `reserve-keyword` 默认为 `true`（选完把关键字留在框里），所以这里显式关掉；
- * 而它清的是自己的 `inputValue`、不会回调 `filter-method`，我们这份得靠 `@change` 清。
- * 详见 `AssetListView.vue` 里同一处函数的注释。
+ * 工位下拉的文案：编码 + 使用人 + （该工位已有几台）。
+ * 「已有几台」很有用 —— 一个人正常是主机 + 显示器共 2 台，
+ * 挂到第 3 台时用户能立刻看出是不是挂错了工位。
  */
-function resetUserQuery() {
-  userQuery.value = ''
+function stationLabel(s: Workstation): string {
+  const parts = [s.code]
+  if (s.user_name) parts.push(s.user_name)
+  if (s.room) parts.push(s.room)
+  const text = parts.join(' · ')
+  return s.asset_count ? `${text}（已有 ${s.asset_count} 台）` : text
 }
 
-function onUserVisibleChange(open: boolean) {
-  if (!open) resetUserQuery()
-}
+/**
+ * 「使用人」下拉。候选是几十个人名，打 `wjy` 要能命中「王嘉怡」；
+ * 同时打一个库里没有的名字也要能直接存 —— 「使用人」本来就是自由文本、没有人员字典表
+ * （见 CURRENT_STATE 决策表）。
+ *
+ * 拼音筛选 + 「新建项垫底」的完整理由与两个坑都在 `composables/useFreeTextOptions.ts`，
+ * 地图侧栏的「工位使用人」用的是同一份 —— 那边曾经只搬了一半、导致新名字存不进去。
+ *
+ * 解构出来的这几个名字和改造之前**一模一样**，所以下面模板一个字都不用动。
+ */
+const {
+  options: userOptions,
+  createLabel,
+  onFilter: filterUsers,
+  reset: resetUserQuery,
+  onVisibleChange: onUserVisibleChange,
+} = useFreeTextOptions(() => props.users)
 
 const isEdit = computed(() => Boolean(props.asset))
 const title = computed(() => (isEdit.value ? `编辑资产 ${props.asset?.asset_code ?? ''}` : '新增资产'))
@@ -132,6 +157,7 @@ const rules: FormRules<FormModel> = {
 
 function resetForm() {
   const src = props.asset
+  void loadStations()
   // 经办人永远取「当前操作人」，不要从旧记录里带 —— 大多数时候是换个人在改
   form.operator = appState.operator
   if (src) {
@@ -144,6 +170,8 @@ function resetForm() {
     form.status = src.status
     form.user_name = src.user_name ?? ''
     form.location = src.location ?? ''
+    // 已有工位就显示它；没有则用地图带过来的预选值
+    form.workstation_id = src.workstation_id ?? props.presetWorkstationId ?? null
     form.purchase_date = src.purchase_date ?? ''
     form.warranty_until = src.warranty_until ?? ''
     form.notes = src.notes ?? ''
@@ -157,6 +185,7 @@ function resetForm() {
     form.status = 'in_use'
     form.user_name = ''
     form.location = ''
+    form.workstation_id = props.presetWorkstationId ?? null
     form.purchase_date = ''
     form.warranty_until = ''
     form.notes = ''
@@ -187,6 +216,9 @@ function toPayload(): AssetPayload {
     status: form.status,
     user_name: clean(form.user_name),
     location: clean(form.location),
+    // 明确传 null = 从工位上摘下来；后端靠 exclude_unset 区分"没传"和"传了 null"，
+    // 所以这里**必须显式带上这个键**，不能因为它是 null 就省略。
+    workstation_id: form.workstation_id ?? null,
     purchase_date: form.purchase_date || null,
     warranty_until: form.warranty_until || null,
     notes: clean(form.notes),
@@ -285,8 +317,41 @@ function close() {
             @visible-change="onUserVisibleChange"
           >
             <el-option v-for="u in userOptions" :key="u" :label="u" :value="u" />
-            <el-option v-if="createLabel" :key="`__new__${createLabel}`" :label="createLabel" :value="createLabel" />
+            <el-option
+              v-if="createLabel"
+              :key="`__new__${createLabel}`"
+              :label="createLabel"
+              :value="createLabel"
+            />
           </el-select>
+        </el-form-item>
+
+        <el-form-item label="所在工位" prop="workstation_id">
+          <!--
+            这个字段是「设备挂在哪个工位」的入口。
+            做在资产表单里而不是地图上：设备归属只存在设备自己身上
+            （assets.workstation_id），地图只是换个角度看它。
+            下拉里带上「已有 N 台」——一个人正常是主机+显示器共 2 台，
+            挂到第 3 台时能立刻看出是不是挂错了。
+          -->
+          <el-select
+            v-model="form.workstation_id"
+            placeholder="可留空（不在工位上，如机房设备、公共设备）"
+            filterable
+            clearable
+            style="width: 100%"
+            :loading="stationLoading"
+          >
+            <el-option
+              v-for="s in stations"
+              :key="s.id"
+              :label="stationLabel(s)"
+              :value="s.id"
+            />
+          </el-select>
+          <div class="field-hint">
+            选它 = 这台设备出现在地图上那个工位里；清空 = 从工位上摘下来（<b>设备不会被删</b>）
+          </div>
         </el-form-item>
 
         <el-form-item label="存放位置" prop="location" class="full">
@@ -364,6 +429,19 @@ function close() {
 
 .form-grid .full {
   grid-column: 1 / -1;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.7;
+  margin-top: 4px;
+}
+
+.field-hint :deep(b),
+.field-hint b {
+  color: var(--text-2);
+  font-weight: 600;
 }
 
 @media (max-width: 640px) {

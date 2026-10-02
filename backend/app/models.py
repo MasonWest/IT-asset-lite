@@ -7,6 +7,8 @@
 - asset_events          资产变更历史（时间线），所有状态流转 / 配对 / 盘点都往这里落一条
 - inventory_tasks       盘点任务
 - inventory_items       盘点明细（每个任务 × 每台设备一行）
+- workstations          工位（资产空间地图上的一个格子）
+- floor_maps            平面图（工位站的建筑图元：地台 / 走廊 / 房间 / 墙体）
 - audit_logs            操作审计日志（谁、从哪个 IP、什么时间、干了什么）
 
 asset_events 和 audit_logs 长得像，但视角不同，别合并：
@@ -245,6 +247,21 @@ class AuditAction:
     TYPE_UPDATE = "type_update"
     TYPE_DELETE = "type_delete"
 
+    #: 工位（资产空间地图）。move 与 update 刻意分开 ——
+    #: 「调整布局」和「改工位归属」是两件事：前者是排版动作，后者改的是业务归属。
+    #: 合成一个的话，用户在审计页想筛「谁改过工位归属」会被几十条拖拽记录淹掉。
+    WORKSTATION_CREATE = "workstation_create"
+    WORKSTATION_UPDATE = "workstation_update"
+    WORKSTATION_MOVE = "workstation_move"
+    WORKSTATION_DELETE = "workstation_delete"
+
+    #: 平面图（地图编辑器）。与工位分开：
+    #: 「画平面图」改的是建筑结构，「摆工位」改的是座位 —— 两件事在审计页要能筛得开。
+    #: 一次保存整张图 = 1 条 map_update（图元全在前端一起编辑，见 FloorMap 的说明）。
+    MAP_CREATE = "map_create"
+    MAP_UPDATE = "map_update"
+    MAP_DELETE = "map_delete"
+
     AUDIT_EXPORT = "audit_export"
 
     LABELS: dict[str, str] = {
@@ -265,6 +282,13 @@ class AuditAction:
         TYPE_CREATE: "新增设备类型",
         TYPE_UPDATE: "编辑设备类型",
         TYPE_DELETE: "删除设备类型",
+        WORKSTATION_CREATE: "新增工位",
+        WORKSTATION_UPDATE: "编辑工位",
+        WORKSTATION_MOVE: "调整工位布局",
+        WORKSTATION_DELETE: "删除工位",
+        MAP_CREATE: "新建平面图",
+        MAP_UPDATE: "编辑平面图",
+        MAP_DELETE: "删除平面图",
         AUDIT_EXPORT: "导出审计日志",
     }
 
@@ -286,6 +310,13 @@ class AuditAction:
         TYPE_CREATE: "🏷️",
         TYPE_UPDATE: "🏷️",
         TYPE_DELETE: "🏷️",
+        WORKSTATION_CREATE: "🪑",
+        WORKSTATION_UPDATE: "🪑",
+        WORKSTATION_MOVE: "🧭",
+        WORKSTATION_DELETE: "🗑️",
+        MAP_CREATE: "🗺️",
+        MAP_UPDATE: "🗺️",
+        MAP_DELETE: "🗺️",
         AUDIT_EXPORT: "📤",
     }
 
@@ -294,6 +325,15 @@ class AuditAction:
         "资产台账": (ASSET_CREATE, ASSET_UPDATE, ASSET_DELETE, ASSET_OPERATE),
         "主机 / 显示器配对": (ASSET_PAIR, ASSET_UNPAIR, ASSET_REBIND),
         "盘点": (INVENTORY_CREATE, INVENTORY_MARK, INVENTORY_CLOSE, INVENTORY_REOPEN, INVENTORY_DELETE),
+        "工位与地图": (
+            WORKSTATION_CREATE,
+            WORKSTATION_UPDATE,
+            WORKSTATION_MOVE,
+            WORKSTATION_DELETE,
+            MAP_CREATE,
+            MAP_UPDATE,
+            MAP_DELETE,
+        ),
         "导入导出": (ASSET_IMPORT, ASSET_EXPORT, AUDIT_EXPORT),
         "设备类型": (TYPE_CREATE, TYPE_UPDATE, TYPE_DELETE),
     }
@@ -315,6 +355,8 @@ class AuditTarget:
     ASSET = "asset"
     INVENTORY = "inventory"
     DEVICE_TYPE = "device_type"
+    WORKSTATION = "workstation"
+    MAP = "map"
     FILE = "file"
     SYSTEM = "system"
 
@@ -322,6 +364,8 @@ class AuditTarget:
         ASSET: "设备",
         INVENTORY: "盘点任务",
         DEVICE_TYPE: "设备类型",
+        WORKSTATION: "工位",
+        MAP: "平面图",
         FILE: "文件",
         SYSTEM: "系统",
     }
@@ -386,6 +430,14 @@ class Asset(Base):
     user_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     location: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 
+    #: 挂在哪个工位上（资产空间地图）。绝大多数资产不在工位上，所以可空。
+    #: RESTRICT：工位上还挂着资产时，数据库层面不允许把工位硬删掉 ——
+    #: 这是最后一道网，面向用户的拦截应该是应用层的 409 + 人话文案。
+    #: 工位正常退役走的是软删除（active=False），那条路径根本不触发外键。
+    workstation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workstations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+
     purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     warranty_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
@@ -397,6 +449,9 @@ class Asset(Base):
     )
 
     device_type: Mapped[DeviceType] = relationship(back_populates="assets", lazy="joined")
+    workstation: Mapped["Workstation | None"] = relationship(
+        back_populates="assets", lazy="joined"
+    )
 
     #: 作为「主机」侧的配对关系
     host_relations: Mapped[list["AssetRelation"]] = relationship(
@@ -644,3 +699,151 @@ class AuditLog(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<AuditLog {self.id} {self.action} by={self.operator} ip={self.ip}>"
+
+
+# --------------------------------------------------------------------------- #
+# 工位（资产空间地图）
+# --------------------------------------------------------------------------- #
+class Facing:
+    """工位朝向。桌子朝哪边摆 —— 它是家具的物理属性，与它在画布第几行无关。
+
+    为什么必须落库而不是按行列推导：**「调整位置」是这个模块的核心交互**，
+    用户可以任意拖动格子。一旦某个工位被拖到别的行，「按行交替」的规则就不再成立，
+    而朝向显然不应该因为拖动而改变。
+    """
+
+    UP = "up"
+    DOWN = "down"
+
+    LABELS: dict[str, str] = {UP: "朝上", DOWN: "朝下"}
+    ALL: tuple[str, ...] = (UP, DOWN)
+
+
+class FloorMap(Base):
+    """平面图 —— 一张地图上的建筑图元（地台 / 走廊 / 房间 / 墙体 / 前厅 / 入口）。
+
+    为什么现在才有这张表（推翻了一期「不建 floor_maps」的结论）：
+    一期的判断是「只有一张画布、尺寸是渲染常量、用户改不了」—— 三条前提当时都成立。
+    但用户要**自己画平面图**之后，前提全没了：
+      - 尺寸成了用户数据（他的办公室可能是 1200×800）
+      - 图元成了用户数据（他没有直播间，但有两个仓库）
+      - "第二张图"从想象中的通用性变成了第二个办公室的真实需求
+
+    为什么图元存 `layout` JSON 而**不建 map_shapes 表**：
+      - 图元是**纯几何 + 一个标签**，没有任何东西引用它 —— 没有身份的实体不值得一张表；
+      - 整张图永远是一起编辑、一起保存 → 一次 UPDATE，天然对上「1 次保存 = 1 条审计」；
+      - 撤销 / 重做 / 复制地图全在前端文档层完成，零后端配合。
+    对照：`asset_events.detail` 用 Text 不用 JSON 列、`InventoryScope.scope` 存 JSON —— 同一取舍。
+
+    为什么**工位不在这里**：工位有 `code` 唯一约束、被 `assets.workstation_id` 引用、
+    还要参与盘点聚合 —— 它有身份、有引用者，必须是表。两者形态不同不是不一致，
+    是它们本来就是两种东西。
+    """
+
+    __tablename__ = "floor_maps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    #: 画布尺寸。用户可改 —— 这正是它从"渲染常量"变成"业务数据"的地方。
+    #: 与既有约定一致：坐标存的就是画布坐标，将来叠底图时按同样尺寸画进同一坐标系即可。
+    width: Mapped[int] = mapped_column(Integer, nullable=False, default=960)
+    height: Mapped[int] = mapped_column(Integer, nullable=False, default=1320)
+    grid: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+
+    #: 图元 JSON：{"schema_version": 1, "shapes": [...]}，存 Text 不存 JSON 列。
+    #:
+    #: ⚠️ `schema_version` 不是"为未来扩展预留"，是 JSON 文档最基本的可演进性：
+    #: 半年后 room 的字段一变，库里这些 layout 就分不清是哪一版格式了。
+    #: 读取**一律经** frontend/src/utils/floorMap.ts::parseLayout 做 normalize，
+    #: 组件不许直接 JSON.parse。未知版本号要拒绝加载并提示，不能静默渲染出错位的图。
+    layout: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+    #: 默认图。单图阶段恒为 True 且只有一行；
+    #: 多图之后表示"从入口进来默认打开的那张"。
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+
+    #: 软删除 —— 与 workstations / asset_relations 同一设计。
+    #: 图上还有工位时不允许硬删（RESTRICT + 应用层 409），
+    #: 因为删图连带的是那些工位上的资产归属，因果上不成立。
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now, onupdate=datetime.now
+    )
+
+    workstations: Mapped[list["Workstation"]] = relationship(back_populates="floor_map")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<FloorMap {self.id} {self.name} {self.width}x{self.height} default={self.is_default}>"
+
+
+class Workstation(Base):
+    """工位 —— 地图上的一个格子，资产可以挂到它上面。
+
+    只存「摆在哪、朝哪、归谁用」。**资产挂在哪个工位不在这里存** ——
+    那是 `assets.workstation_id` 反着指向它。理由有三条：
+     1. 一台资产同一时刻只在一个工位上（多对一），一条外键就够；
+     2. 工位下有几台资产是派生查询，不落库（红线 2：一份数据两处存，迟早对不上）；
+     3. 资产在工位间流转的轨迹由 asset_events 记，不需要在这里再存一份列表。
+
+    关于 code：**可编辑，但不释放**。用户能把 W23 改成「销售-01」（编码不承载语义，
+    这样部门调整时不用重编号）；但工位软删除后 code 仍被占用，不会再被新建的工位拿去。
+    这样审计里两条指向"W23"的记录永远说的是同一个位置。
+
+    关于坐标：**存的是画布坐标**（基准画布 960×1320），不是物理尺寸。
+    将来要叠真实平面图时，按同样的 960×1320 画进同一坐标系即可，坐标一个都不用改。
+    """
+
+    __tablename__ = "workstations"
+    __table_args__ = (UniqueConstraint("code", name="uq_workstation_code"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    x: Mapped[int] = mapped_column(Integer, nullable=False)
+    y: Mapped[int] = mapped_column(Integer, nullable=False)
+    facing: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=Facing.DOWN, server_default=Facing.DOWN
+    )
+
+    #: 与 assets.user_name 同口径的裸字符串。系统没有用户表（红线：不做登录），
+    #: 所以这里是自由文本，不做字典、不做外键。
+    #: 注意：它**不是** assets.user_name 的副本 ——
+    #: 「W23 这个位置归王嘉怡」和「这台主机现在归王嘉怡」是两个不同的事实，
+    #: 两者不一致本身就是盘点要抓的信号，不做强制同步。
+    user_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    #: 房间备注。自由文本，只有「前台」「总经理办公室」这类特殊工位才填。
+    room: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    #: 软删除 —— 与 asset_relations 解绑不删行是同一个设计。
+    #: 物理删掉会让「这个位置曾经存在过」这段历史消失，而且 code 被释放后
+    #: 新工位可以复用同一个编码，审计里的记录就再也说不清是哪个位置了。
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    #: 属于哪张平面图（floor_maps）。**可空**，理由与 assets.workstation_id 同类：
+    #: 单图阶段这一列总是有值（迁移时回填默认图），但落库语义上"没挂图"是合法状态，
+    #: 强行 NOT NULL 会让将来"新建图但还没放工位"这种中间态无处安放。
+    #:
+    #: ⚠️ 这一列是**关系预留，不是功能预留**：它让"加第二张图"将来只是一次数据搬迁，
+    #: 而**不代表前端现在支持多图**。前端必须保持"只有这一张图"的心智模型 ——
+    #: 不许出现地图选择器、`?map=` 状态、`maps[]` 之类的东西。
+    #: 否则会滑进"数据库支持多图 / API 半支持 / 前端假装支持 / 业务还是单图"的假状态。
+    floor_map_id: Mapped[int | None] = mapped_column(
+        ForeignKey("floor_maps.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now, onupdate=datetime.now
+    )
+
+    assets: Mapped[list["Asset"]] = relationship(back_populates="workstation")
+    floor_map: Mapped["FloorMap | None"] = relationship(back_populates="workstations")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Workstation {self.id} {self.code} ({self.x},{self.y}) active={self.active}>"
