@@ -1,5 +1,5 @@
 /**
- * 工位地图的纯函数与常量。
+ * 点位地图的纯函数与常量。
  *
  * 从这里拆出来的理由：这些规则**独立于 Vue 也能讲清楚**，而且改动风险集中在它们身上
  * （网格对齐、状态映射、导出格式）。放在 `.vue` 里就得靠读模板猜。
@@ -7,7 +7,7 @@
 
 import type { Facing, MapState, Workstation } from '@/types'
 
-/** 工位格子尺寸，与原型一致 */
+/** 点位格子尺寸，与原型一致 */
 export const DESK_W = 80
 export const DESK_H = 56
 
@@ -25,7 +25,7 @@ export const GRID = 20
 export const FALLBACK_CANVAS = { width: 960, height: 1320, grid: GRID }
 
 /**
- * 工位状态 → 视觉元信息。
+ * 点位状态 → 视觉元信息。
  *
  * 五种状态里前三种来自后端 `inventory_items.result` 的聚合，
  * 后两种（`empty` / `not_in_scope`）是**中性态**：
@@ -94,10 +94,10 @@ export function clampToCanvas(
 }
 
 /**
- * 导出的工位 JSON（`asset-space-map/workstations@1`）。
+ * 导出的点位 JSON（`asset-space-map/workstations@1`）。
  *
- * ⚠️ **刻意不导出 assets**。工位文件只描述工位本身；真实资产归属是
- * `assets.workstation_id` 反着指向工位的，不是由这份文件决定。
+ * ⚠️ **刻意不导出 assets**。点位文件只描述点位本身；真实资产归属是
+ * `assets.workstation_id` 反着指向点位的，不是由这份文件决定。
  * 原型早期版本在这里带上了本地演示资产，结果那份 JSON 被导进后端时
  * 差点凭空造出一批假设备。
  */
@@ -142,14 +142,14 @@ function parseCode(code: string): { prefix: string; num: number } | null {
 }
 
 /**
- * 工位编码排序：`W1 < W2 < W10 < W20`。
+ * 点位编码排序：`W1 < W2 < W10 < W20`。
  *
  * ⚠️ **不能用 `localeCompare` 直接排** —— 那是字典序，`W10` 会排在 `W2` 前面，
- * 62 个工位里 W1x/W2x 整段插错位置，比不排还乱。必须按前缀 + 数值比。
+ * 62 个点位里 W1x/W2x 整段插错位置，比不排还乱。必须按前缀 + 数值比。
  *
  * 为什么要在前端排而不是改后端：`GET /api/workstations` 的顺序是
  * `y, x, id`，那是**地图渲染**的顺序（同一排的挨着给），本身没有任何问题。
- * 「按编码选」是下拉这个**使用场景**的诉求，不是工位数据的固有属性 ——
+ * 「按编码选」是下拉这个**使用场景**的诉求，不是点位数据的固有属性 ——
  * 把排序塞进接口，等于让地图去迁就一个下拉的偏好，还会动到已有的接口断言。
  *
  * 未命中「字母+数字」的自定义编码统一垫在最后（`W01…W62` 是主流，先给它们让位），

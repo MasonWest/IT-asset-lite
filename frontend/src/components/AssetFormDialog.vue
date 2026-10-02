@@ -16,7 +16,7 @@ const props = defineProps<{
   users: string[]
   locations: string[]
   presetTypeId?: number | null
-  /** 地图点「挂设备」进来时预选的工位 —— 省得用户再翻一遍下拉 */
+  /** 地图点「挂设备」进来时预选的点位 —— 省得用户再翻一遍下拉 */
   presetWorkstationId?: number | null
 }>()
 
@@ -36,11 +36,11 @@ interface FormModel {
   user_name: string
   location: string
   /**
-   * 所在工位。
+   * 所在点位。
    *
    * 用 `number | null` 而不是 `undefined` 区分两种语义，这个区分**必须保住**：
-   *   - `undefined` 后端收不到这个键 → **不动**原有工位
-   *   - `null` 后端收到明确的 null → 把设备从工位上**摘下来**
+   *   - `undefined` 后端收不到这个键 → **不动**原有点位
+   *   - `null` 后端收到明确的 null → 把设备从点位上**摘下来**
    * 两者在界面上是同一个「清除」按钮，但要能表达出来。
    */
   workstation_id: number | null
@@ -71,9 +71,9 @@ const form = reactive<FormModel>({
 })
 
 /**
- * 工位候选。
+ * 点位候选。
  *
- * 只在弹窗打开时拉一次 —— 工位是低频数据（62 个），不值得缓存到全局 store。
+ * 只在弹窗打开时拉一次 —— 点位是低频数据（62 个），不值得缓存到全局 store。
  * 拿不到就退化成「空下拉」，不影响编辑其余字段。
  *
  * ⚠️ **必须重排**：接口 `GET /api/workstations` 给的是 `y, x, id` 顺序，
@@ -98,9 +98,9 @@ async function loadStations() {
 }
 
 /**
- * 工位下拉的文案：编码 + 使用人 + （该工位已有几台）。
+ * 点位下拉的文案：编码 + 使用人 + （该点位已有几台）。
  * 「已有几台」很有用 —— 一个人正常是主机 + 显示器共 2 台，
- * 挂到第 3 台时用户能立刻看出是不是挂错了工位。
+ * 挂到第 3 台时用户能立刻看出是不是挂错了点位。
  */
 function stationLabel(s: Workstation): string {
   const parts = [s.code]
@@ -116,7 +116,7 @@ function stationLabel(s: Workstation): string {
  * （见 CURRENT_STATE 决策表）。
  *
  * 拼音筛选 + 「新建项垫底」的完整理由与两个坑都在 `composables/useFreeTextOptions.ts`，
- * 地图侧栏的「工位使用人」用的是同一份 —— 那边曾经只搬了一半、导致新名字存不进去。
+ * 地图侧栏的「点位使用人」用的是同一份 —— 那边曾经只搬了一半、导致新名字存不进去。
  *
  * 解构出来的这几个名字和改造之前**一模一样**，所以下面模板一个字都不用动。
  */
@@ -170,7 +170,7 @@ function resetForm() {
     form.status = src.status
     form.user_name = src.user_name ?? ''
     form.location = src.location ?? ''
-    // 已有工位就显示它；没有则用地图带过来的预选值
+    // 已有点位就显示它；没有则用地图带过来的预选值
     form.workstation_id = src.workstation_id ?? props.presetWorkstationId ?? null
     form.purchase_date = src.purchase_date ?? ''
     form.warranty_until = src.warranty_until ?? ''
@@ -216,7 +216,7 @@ function toPayload(): AssetPayload {
     status: form.status,
     user_name: clean(form.user_name),
     location: clean(form.location),
-    // 明确传 null = 从工位上摘下来；后端靠 exclude_unset 区分"没传"和"传了 null"，
+    // 明确传 null = 从点位上摘下来；后端靠 exclude_unset 区分"没传"和"传了 null"，
     // 所以这里**必须显式带上这个键**，不能因为它是 null 就省略。
     workstation_id: form.workstation_id ?? null,
     purchase_date: form.purchase_date || null,
@@ -326,9 +326,9 @@ function close() {
           </el-select>
         </el-form-item>
 
-        <el-form-item label="所在工位" prop="workstation_id">
+        <el-form-item label="所在点位" prop="workstation_id">
           <!--
-            这个字段是「设备挂在哪个工位」的入口。
+            这个字段是「设备挂在哪个点位」的入口。
             做在资产表单里而不是地图上：设备归属只存在设备自己身上
             （assets.workstation_id），地图只是换个角度看它。
             下拉里带上「已有 N 台」——一个人正常是主机+显示器共 2 台，
@@ -336,7 +336,7 @@ function close() {
           -->
           <el-select
             v-model="form.workstation_id"
-            placeholder="可留空（不在工位上，如机房设备、公共设备）"
+            placeholder="可留空（不在点位上，如机房设备、公共设备）"
             filterable
             clearable
             style="width: 100%"
@@ -350,7 +350,7 @@ function close() {
             />
           </el-select>
           <div class="field-hint">
-            选它 = 这台设备出现在地图上那个工位里；清空 = 从工位上摘下来（<b>设备不会被删</b>）
+            选它 = 这台设备出现在地图上那个点位里；清空 = 从点位上摘下来（<b>设备不会被删</b>）
           </div>
         </el-form-item>
 

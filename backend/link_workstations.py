@@ -1,23 +1,23 @@
-"""把「一个人 ↔ 一台主机 + 一台显示器」的组合，自动落到工位上。
+"""把「一个人 ↔ 一台主机 + 一台显示器」的组合，自动落到点位上。
 
-背景：工位导出 JSON 里的人名和资产系统是对应的，但**只有一部分人**是
+背景：点位导出 JSON 里的人名和资产系统是对应的，但**只有一部分人**是
 「恰好一台主机 + 一台显示器」的干净结构。这个脚本只处理这部分，
 其余的一律不碰 —— 硬关联出来的错数据，比没有数据更难发现。
 
 ## 干的事（两步，都在一个事务里）
 
-1. **人 → 工位**：工位上的使用人本来就来自 JSON（由 `import_workstations.py` 灌入），
+1. **人 → 点位**：点位上的使用人本来就来自 JSON（由 `import_workstations.py` 灌入），
    这里只做校验，不改它。
-2. **资产 → 工位**：把这个人的那台主机和那台显示器，落到他的工位上
+2. **资产 → 点位**：把这个人的那台主机和那台显示器，落到他的点位上
    （写 `assets.workstation_id`）。
 
 ## 判据（必须**全部**满足，缺一不可）
 
-- 工位存在、且 `user_name` 非空（空格子不处理）
+- 点位存在、且 `user_name` 非空（空格子不处理）
 - 该姓名在资产里**恰好 1 台 `category=host`** 且**恰好 1 台 `category=display`**
   —— 0 台或 2 台都算"不符合"，跳过
-- 那两台资产**当前没有工位归属**（已经有的一律不覆盖，说明是人工放过的）
-- 那两台资产**状态不是已报废**（报废设备不该出现在工位上）
+- 那两台资产**当前没有点位归属**（已经有的一律不覆盖，说明是人工放过的）
+- 那两台资产**状态不是已报废**（报废设备不该出现在点位上）
 
 不符合的会在干跑里逐条列出**原因**，由使用者自己到系统里处理。
 
@@ -30,7 +30,7 @@
 
 ## 幂等
 
-重复运行是安全的：已经关联过的资产会被归到"已有工位"并跳过，不会重复写。
+重复运行是安全的：已经关联过的资产会被归到"已有点位"并跳过，不会重复写。
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def collect(db):
                 detail.append("显示器：" + "、".join(a.asset_code for a in d))
             if len(h) == 0 and len(d) == 1:
                 detail.append(f"只有显示器 {d[0].asset_code}")
-            skipped.append((name, f"工位 {station.code} · " + "；".join(detail)))
+            skipped.append((name, f"点位 {station.code} · " + "；".join(detail)))
             continue
 
         host, monitor = h[0], d[0]
@@ -110,16 +110,16 @@ def collect(db):
         if monitor.status == AssetStatus.SCRAPPED:
             problems.append(f"显示器 {monitor.asset_code} 已报废")
         if host.workstation_id is not None:
-            problems.append(f"主机 {host.asset_code} 已有工位")
+            problems.append(f"主机 {host.asset_code} 已有点位")
         if monitor.workstation_id is not None:
-            problems.append(f"显示器 {monitor.asset_code} 已有工位")
+            problems.append(f"显示器 {monitor.asset_code} 已有点位")
         if problems:
-            skipped.append((name, f"工位 {station.code} · " + "；".join(problems)))
+            skipped.append((name, f"点位 {station.code} · " + "；".join(problems)))
             continue
 
         ready.append({"name": name, "station": station, "host": host, "monitor": monitor})
 
-    # 有设备、但地图上没有工位的人 —— 不是错误，只是提示
+    # 有设备、但地图上没有点位的人 —— 不是错误，只是提示
     no_desk = []
     for name in sorted(set(hosts) | set(displays)):
         if name not in station_by_name:
@@ -135,7 +135,7 @@ def describe(ready, skipped, no_desk) -> None:
         print("  （没有符合条件的组合）")
     for item in ready:
         print(
-            f"  {item['name']:<8} 工位 {item['station'].code:<5}"
+            f"  {item['name']:<8} 点位 {item['station'].code:<5}"
             f" 主机 {item['host'].asset_code:<18} 显示器 {item['monitor'].asset_code}"
         )
     print(f"  小计：{len(ready)} 人 / {len(ready) * 2} 台资产")
@@ -149,29 +149,29 @@ def describe(ready, skipped, no_desk) -> None:
 
     if no_desk:
         print()
-        print("提示：资产里有设备、但地图上没有对应工位的人（本次无法关联）")
+        print("提示：资产里有设备、但地图上没有对应点位的人（本次无法关联）")
         for name, nh, nd in no_desk:
             print(f"  {name:<8} 主机 {nh} 台、显示器 {nd} 台")
 
     print()
-    print("说明：以上只写「资产 → 工位」的归属。设备之间的主机↔显示器配对关系")
+    print("说明：以上只写「资产 → 点位」的归属。设备之间的主机↔显示器配对关系")
     print("      **不在本脚本范围内**（那件事由系统里的配对功能负责）。")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="把「一个人 = 1 主机 + 1 显示器」的组合自动关联到工位（默认干跑）"
+        description="把「一个人 = 1 主机 + 1 显示器」的组合自动关联到点位（默认干跑）"
     )
     parser.add_argument("--yes", action="store_true", help="真的写入（不加就是干跑）")
     parser.add_argument("--no-backup", action="store_true", help="跳过自动备份（不推荐）")
-    parser.add_argument("--operator", default="工位自动关联", help="写进审计的操作人")
+    parser.add_argument("--operator", default="点位自动关联", help="写进审计的操作人")
     args = parser.parse_args()
 
     ensure_schema()
     with SessionLocal() as db:
         station_count = db.query(Workstation).filter(Workstation.active.is_(True)).count()
         if station_count == 0:
-            print("[错误] 数据库里一个工位都没有。先跑一次导入：")
+            print("[错误] 数据库里一个点位都没有。先跑一次导入：")
             print("       python import_workstations.py --yes")
             return 1
 
@@ -211,7 +211,7 @@ def main() -> int:
                     asset,
                     AssetEventType.UPDATE,
                     operator=args.operator,
-                    note=f"所在工位 空 → {label}（按使用人自动关联）",
+                    note=f"所在点位 空 → {label}（按使用人自动关联）",
                     detail={
                         "changes": {"workstation_id": {"from": "", "to": label}},
                         "auto_linked_by": args.operator,
@@ -225,9 +225,9 @@ def main() -> int:
             AuditAction.WORKSTATION_UPDATE,
             target_type=AuditTarget.WORKSTATION,
             target_id=None,
-            target_label=f"工位自动关联（{len(ready)} 人）",
+            target_label=f"点位自动关联（{len(ready)} 人）",
             summary=(
-                f"按使用人自动关联工位：{len(ready)} 人 / {touched_assets} 台资产"
+                f"按使用人自动关联点位：{len(ready)} 人 / {touched_assets} 台资产"
                 f"（每人恰好 1 主机 + 1 显示器）；"
                 f"跳过不符合条件 {len(skipped)} 人"
             ),
@@ -245,7 +245,7 @@ def main() -> int:
     print(f"[完成] 已关联 {len(ready)} 人 / {touched_assets} 台资产")
     print(f"       跳过 {len(skipped)} 人（不符合条件，留给你自己处理）")
     print()
-    print("想核对效果：打开资产台账看这几台的「所在工位」，或打开空间地图看工位的资产清单。")
+    print("想核对效果：打开资产台账看这几台的「所在点位」，或打开空间地图看点位的资产清单。")
     return 0
 
 

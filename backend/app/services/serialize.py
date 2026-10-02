@@ -57,7 +57,7 @@ def to_asset_out(
     if asset.warranty_until:
         days_left = (asset.warranty_until - date.today()).days
 
-    # 工位是 joined 加载的；用 workstation_code 让前端不必再查一次接口就能显示
+    # 点位是 joined 加载的；用 workstation_code 让前端不必再查一次接口就能显示
     station = getattr(asset, "workstation", None)
 
     return AssetOut(

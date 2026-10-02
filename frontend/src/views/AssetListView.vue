@@ -185,7 +185,7 @@ function onUserVisibleChange(open: boolean) {
 const formOpen = ref(false)
 const editing = ref<Asset | null>(null)
 /**
- * 从地图「挂设备到工位」跳进来时预选的工位。
+ * 从地图「挂设备到点位」跳进来时预选的点位。
  *
  * 只借道 URL（`/?new=1&workstation=23`），不放进全局 store：
  * 这是一次性的跳转意图，刷新页面后就不该还在生效。
@@ -229,7 +229,7 @@ const statCards: StatCard[] = [
     key: 'none',
     label: '无点位资产',
     icon: '🎯',
-    tip: '还没落到空间地图工位上的资产。点一下只看这些，然后去地图上把它们挂到对应工位。',
+    tip: '还没落到空间地图点位上的资产。点一下只看这些，然后去地图上把它们挂到对应点位。',
   },
 ]
 
@@ -449,11 +449,11 @@ function openEdit(asset: Asset) {
 }
 
 /**
- * 打开「新增资产」，并预选某个工位 —— 地图侧「挂设备到工位」走这条路。
+ * 打开「新增资产」，并预选某个点位 —— 地图侧「挂设备到点位」走这条路。
  *
- * 刻意**不做成"给某个工位挑设备"**：那需要在弹窗里塞一个设备选择器，
+ * 刻意**不做成"给某个点位挑设备"**：那需要在弹窗里塞一个设备选择器，
  * 而设备已有一百多台、还有筛选和分页，等于在弹窗里再写一个台账。
- * 反过来（先建/选设备、再指定工位）只需要一个下拉，两条入口都通。
+ * 反过来（先建/选设备、再指定点位）只需要一个下拉，两条入口都通。
  */
 function openCreateOnStation(workstationId: number) {
   editing.value = null
@@ -593,7 +593,7 @@ function runExport() {
 onMounted(async () => {
   // 先按 URL 还原上一次的筛选 / 页码 / 视图（从详情页返回时走的就是这条路）
   readStateFromQuery(route.query)
-  // 地图侧「挂设备到工位」跳过来：?new=1&workstation=23
+  // 地图侧「挂设备到点位」跳过来：?new=1&workstation=23
   // 只认正整数，脏参数忽略即可（不是错误，用户手改地址栏很常见）
   if (route.query.new) {
     const wid = Number(route.query.workstation)
@@ -782,7 +782,7 @@ onMounted(async () => {
             <span class="ic">🎯</span>
             <!--
               这里原本显示 SN。真实库里 142 台资产的 serial_number **全是空的**，
-              一行「SN 未登记」等于没信息；工位编码有 89 台有值、直接对应地图上的格子，
+              一行「SN 未登记」等于没信息；点位编码有 89 台有值、直接对应地图上的格子，
               扫一眼就知道这台机器在哪。SN 仍然可以在详情页和编辑表单里看到、也仍然可搜。
             -->
             <span class="point-chip" :class="{ unset: !g.primary.workstation_code }">

@@ -1,4 +1,4 @@
-"""把工位导出 JSON 灌进数据库（一次性 bootstrap / 灾难恢复）。
+"""把点位导出 JSON 灌进数据库（一次性 bootstrap / 灾难恢复）。
 
 用法（在 backend 目录下）：
 
@@ -10,10 +10,10 @@
 **默认干跑，`--yes` 才写** —— 这是 `link_monitors.py` 已经跑通过的那套交互
 （干跑 46 对 → --yes 一次写入 → 重跑全部落到「已配好」分支、零重复写入）。
 
-⚠️ 关于重导：本脚本以 `code` 为匹配键 upsert。如果工位编码已被人工改过
-（比如 W23 改成了「销售-01」），重导**会新建一个 W23 而不是更新那个工位** ——
+⚠️ 关于重导：本脚本以 `code` 为匹配键 upsert。如果点位编码已被人工改过
+（比如 W23 改成了「销售-01」），重导**会新建一个 W23 而不是更新那个点位** ——
 因为库里已经没有 code = W23 的行了。日常调整请走界面，不要重跑本脚本。
-脚本会检测"坐标与另一个工位完全重合"并给出提示，那种情况基本就是这个坑。
+脚本会检测"坐标与另一个点位完全重合"并给出提示，那种情况基本就是这个坑。
 
 ⚠️ 关于 JSON 里的 `assets` 字段：那是**原型侧的假资产**，本脚本显式忽略
 （细节见 services/workstation_importer.py 开头的长注释）。
@@ -58,7 +58,7 @@ def _describe(plan: workstation_importer.ImportPlan, *, verbose: bool) -> None:
     print()
 
     if plan.duplicate_positions:
-        print("⚠️  坐标重合提示（可能是同一个工位改了编码后被重导）：")
+        print("⚠️  坐标重合提示（可能是同一个点位改了编码后被重导）：")
         for line in plan.duplicate_positions:
             print(f"    {line}")
         print()
@@ -96,9 +96,9 @@ def _describe(plan: workstation_importer.ImportPlan, *, verbose: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="把工位导出 JSON 灌进数据库（默认干跑，--yes 才写）"
+        description="把点位导出 JSON 灌进数据库（默认干跑，--yes 才写）"
     )
-    parser.add_argument("--file", default=None, help=f"工位 JSON，默认 {DEFAULT_FILE}")
+    parser.add_argument("--file", default=None, help=f"点位 JSON，默认 {DEFAULT_FILE}")
     parser.add_argument("--yes", action="store_true", help="真的写入（不加就是干跑）")
     parser.add_argument("--no-backup", action="store_true", help="跳过自动备份（不推荐）")
     parser.add_argument("--quiet", action="store_true", help="不打印逐条明细")
@@ -119,7 +119,7 @@ def main() -> int:
             print(f"[错误] {plan.schema_note}")
             return 1
         if plan.empty:
-            print("[错误] 这份文件里一个工位都没有（workstations 为空）")
+            print("[错误] 这份文件里一个点位都没有（workstations 为空）")
             return 1
 
         _describe(plan, verbose=not args.quiet)
@@ -145,7 +145,7 @@ def main() -> int:
         outcome = workstation_importer.apply_plan(db, plan)
 
         # 一次导入 = 1 条审计（不是 62 条）。与「批量导入 30 台设备 = 1 条」同口径。
-        # 工位变动**不写 asset_events** —— 没碰任何资产，硬写就得挑一台"代表资产"
+        # 点位变动**不写 asset_events** —— 没碰任何资产，硬写就得挑一台"代表资产"
         # 来挂，那是在为满足表结构而编造事实。
         if outcome.created or outcome.updated:
             record_audit(
@@ -153,8 +153,8 @@ def main() -> int:
                 AuditAction.WORKSTATION_CREATE,
                 target_type=AuditTarget.WORKSTATION,
                 target_id=None,
-                target_label=f"工位导入：{path.name}",
-                summary=f"（命令行）导入工位文件《{path.name}》："
+                target_label=f"点位导入：{path.name}",
+                summary=f"（命令行）导入点位文件《{path.name}》："
                         f"新增 {outcome.created} / 更新 {outcome.updated}"
                         f" / 无变化 {outcome.unchanged} / 失败 {outcome.failed}",
                 detail={
@@ -176,7 +176,7 @@ def main() -> int:
               f"/ 无变化 {outcome.unchanged} / 失败 {outcome.failed}")
 
         total = db.query(Workstation).filter(Workstation.active.is_(True)).count()
-        print(f"       当前有效工位：{total} 个")
+        print(f"       当前有效点位：{total} 个")
 
         # 判定性断言：JSON 里的假资产必须一台都没进库
         if after_assets != before_assets:

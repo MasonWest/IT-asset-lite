@@ -1,30 +1,30 @@
-"""工位（资产空间地图）。
+"""点位（资产空间地图）。
 
 ## 这个模块的地基：一条外键，不是一张绑定表
 
-「资产挂在哪个工位」这件事**只存一处**：`assets.workstation_id`。
+「资产挂在哪个点位」这件事**只存一处**：`assets.workstation_id`。
 
 没建 `asset_workstation_bindings` 之类的中间表，理由：
- 1. 关系是纯**多对一**（一台资产同一时刻只在一个工位上），一条外键就够；
- 2. 「资产在工位间流转」的历史由 `asset_events` 免费提供 ——
+ 1. 关系是纯**多对一**（一台资产同一时刻只在一个点位上），一条外键就够；
+ 2. 「资产在点位间流转」的历史由 `asset_events` 免费提供 ——
     改 `workstation_id` 时进 `_TRACKED_FIELDS`，时间线自动记一条。
     再造一张带 `active` 状态的绑定表，等于同一件事存两处，必然出现
     "绑定表说在 A、assets 说在 B"而没人知道该信哪个；
- 3. 工位下有几台资产是**派生查询**（`asset_count`），不落库。
+ 3. 点位下有几台资产是**派生查询**（`asset_count`），不落库。
 
 ## 删除：先拦、后确认、软删，绝不级联删资产
 
- - 数据库层 `ON DELETE RESTRICT`：资产还挂在工位上时，硬删会被拦住。
+ - 数据库层 `ON DELETE RESTRICT`：资产还挂在点位上时，硬删会被拦住。
    **它是最后一道网，不是面向用户的机制** —— 用户看到的是应用层的 409 + 人话。
    正常退役走软删除（`active=False`），那条路径根本不触发外键。
  - `reset.py` 不会被它卡住：那边按 `BUSINESS_TABLES` 的子表优先顺序删，
-   删 `assets` 时已经没有任何行引用工位。
+   删 `assets` 时已经没有任何行引用点位。
  - `force=true` 时也只是把资产的 `workstation_id` 置空（**资产留着**），
-   不是删资产。工位只是资产的位置标签，为了删标签而删掉被标记的东西，因果反了。
+   不是删资产。点位只是资产的位置标签，为了删标签而删掉被标记的东西，因果反了。
 
 ## 删除后 code 不释放
 
-软删除的工位仍占着它的 `code`，所以不能再建一个同名的。
+软删除的点位仍占着它的 `code`，所以不能再建一个同名的。
 这是有意的：审计里两条指向「W23」的记录必须永远说的是同一个位置。
 报错会给人话（见 `delete_workstation`），不让用户看到数据库约束错误。
 """
@@ -85,12 +85,12 @@ CANVAS = WorkstationMapCanvas()
 def _get_station_or_404(db: Session, station_id: int, *, include_inactive: bool = False) -> Workstation:
     station = db.get(Workstation, station_id)
     if station is None or (not include_inactive and not station.active):
-        raise HTTPException(status_code=404, detail=f"工位 #{station_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"点位 #{station_id} 不存在")
     return station
 
 
 def _asset_counts(db: Session, station_ids: list[int]) -> dict[int, int]:
-    """{工位 ID: 挂着几台资产}。一次查完，避免列表页 N+1。"""
+    """{点位 ID: 挂着几台资产}。一次查完，避免列表页 N+1。"""
     if not station_ids:
         return {}
     rows = db.execute(
@@ -104,7 +104,7 @@ def _asset_counts(db: Session, station_ids: list[int]) -> dict[int, int]:
 def _default_floor_map(db: Session) -> Optional[FloorMap]:
     """默认平面图。单图语义下这就是"那张图"，取不到返回 None。
 
-    这里**不做 404**：地图渲染接口本来就该在"图丢了"时还能返回工位，
+    这里**不做 404**：地图渲染接口本来就该在"图丢了"时还能返回点位，
     否则用户看到的是整页报错而不是"底图没画出来"。
     """
     stmt = (
@@ -142,7 +142,7 @@ def _station_label(station: Workstation) -> str:
 
 
 def _next_code(db: Session) -> str:
-    """生成下一个可用工位编码，形如 W63。
+    """生成下一个可用点位编码，形如 W63。
 
     在**后端**生成而不是让前端算：前端要"先看看最大的是多少"再 +1，
     两个人同时点新增就会撞出同一个编码。后端查一次最大值也一样有竞态，
@@ -163,7 +163,7 @@ def _allocate_codes(
     """给批量生成算 N 个编码。**冲突就地报 409，不跳号。**
 
     ## 为什么不跳号
-    用户看到的预览是「W63~W86」这种连续号段。如果发现 W70 被一个已软删除的工位占着
+    用户看到的预览是「W63~W86」这种连续号段。如果发现 W70 被一个已软删除的点位占着
     就静默跳到 W71，那界面显示的号段和实际落库的对不上 —— 用户拿这个号段去贴标签会贴错。
     编码曾经用过就永远占用（见 `_ensure_code_unique` 的说明），所以正确做法是
     报错让用户换起始号，而不是替他把账算平。
@@ -203,7 +203,7 @@ def _allocate_codes(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"编码「{candidate}」已被占用（可能是已删除的工位，编码不释放）。"
+                    f"编码「{candidate}」已被占用（可能是已删除的点位，编码不释放）。"
                     f"请把起始编码换成更大的号，或换一个前缀。"
                 ),
             )
@@ -221,14 +221,14 @@ def _ensure_code_unique(db: Session, code: str, *, exclude_id: Optional[int] = N
     if other is None:
         return
     if other.active:
-        raise HTTPException(status_code=409, detail=f"工位编码「{code}」已经被占用，换一个吧")
-    # 软删除的工位也占着编码 —— 这是有意的，报错要说清为什么，
+        raise HTTPException(status_code=409, detail=f"点位编码「{code}」已经被占用，换一个吧")
+    # 软删除的点位也占着编码 —— 这是有意的，报错要说清为什么，
     # 否则用户会以为系统坏了（"明明没有 W23，为什么不让我建"）
     raise HTTPException(
         status_code=409,
         detail=(
-            f"工位编码「{code}」曾经用过（{other.updated_at:%Y-%m-%d} 已删除）。"
-            f"为了让审计记录里两条「{code}」不产生歧义，已删除工位的编码不会释放。"
+            f"点位编码「{code}」曾经用过（{other.updated_at:%Y-%m-%d} 已删除）。"
+            f"为了让审计记录里两条「{code}」不产生歧义，已删除点位的编码不会释放。"
             f"请换一个编码，或把已删除的那个改成「{code}-旧」。"
         ),
     )
@@ -237,10 +237,10 @@ def _ensure_code_unique(db: Session, code: str, *, exclude_id: Optional[int] = N
 # --------------------------------------------------------------------------- #
 # 地图渲染
 # --------------------------------------------------------------------------- #
-@router.get("", response_model=WorkstationMap, summary="工位列表（地图渲染用）")
+@router.get("", response_model=WorkstationMap, summary="点位列表（地图渲染用）")
 def list_workstations(
     db: Session = Depends(get_db),
-    include_inactive: bool = Query(False, description="是否带上已删除的工位（排查历史用）"),
+    include_inactive: bool = Query(False, description="是否带上已删除的点位（排查历史用）"),
 ):
     stmt = select(Workstation)
     if not include_inactive:
@@ -251,7 +251,7 @@ def list_workstations(
     items = [_serialize(s, counts.get(s.id, 0)) for s in rows]
 
     # 画布尺寸 + 建筑图元都来自默认平面图（不再写死在前端模板里）。
-    # 取不到图时退回模块级 CANVAS 默认值，保证老库/被 reset 过的库也能渲染工位。
+    # 取不到图时退回模块级 CANVAS 默认值，保证老库/被 reset 过的库也能渲染点位。
     floor = _default_floor_map(db)
     canvas = (
         WorkstationMapCanvas(width=floor.width, height=floor.height, grid=floor.grid)
@@ -271,15 +271,15 @@ def list_workstations(
     )
 
 
-@router.post("/bulk", response_model=WorkstationBulkResult, summary="批量生成工位（行列排布）")
+@router.post("/bulk", response_model=WorkstationBulkResult, summary="批量生成点位（行列排布）")
 def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db)):
-    """一次生成 N 个工位，按行列排布。**1 次操作 = 1 条审计**。
+    """一次生成 N 个点位，按行列排布。**1 次操作 = 1 条审计**。
 
     排列规则：`i` 从 0 数，`row = i // cols`、`col = i % cols`，
     位置 = `(origin_x + col*step_x, origin_y + row*step_y)`。
 
     朝向：`alternate` 时按**列**交替（`col % 2`），这样一列朝下、一列朝上 ——
-    面对面工位的真实形态。按行交替会变成"一排里左右乱转"，不像工位图。
+    面对面点位的真实形态。按行交替会变成"一排里左右乱转"，不像点位图。
 
     编码：整批先算出来再落库（不能边插边算，`_next_code` 查的是库里已有的）。
     分配真相在后端，`start_code` 只是一个"从哪儿起"的建议。
@@ -324,9 +324,9 @@ def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db
         AuditAction.WORKSTATION_CREATE,
         target_type=AuditTarget.WORKSTATION,
         target_id=created[0].id if created else None,
-        target_label=f"批量生成 {len(created)} 个工位",
+        target_label=f"批量生成 {len(created)} 个点位",
         summary=(
-            f"批量生成 {len(created)} 个工位（{codes[0]}~{codes[-1]}），"
+            f"批量生成 {len(created)} 个点位（{codes[0]}~{codes[-1]}），"
             f"起点 ({payload.origin_x},{payload.origin_y})，"
             f"{payload.cols} 列 × 间距 ({payload.step_x},{payload.step_y})"
             + (f"，房间「{payload.room}」" if payload.room else "")
@@ -355,17 +355,17 @@ def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db
     )
 
 
-@router.get("/{station_id}", response_model=WorkstationOut, summary="单个工位")
+@router.get("/{station_id}", response_model=WorkstationOut, summary="单个点位")
 def get_workstation(station_id: int, db: Session = Depends(get_db)):
     station = _get_station_or_404(db, station_id)
     return _serialize(station, _asset_counts(db, [station.id]).get(station.id, 0))
 
 
-@router.get("/{station_id}/assets", response_model=list[AssetOut], summary="工位上挂着的资产")
+@router.get("/{station_id}/assets", response_model=list[AssetOut], summary="点位上挂着的资产")
 def list_station_assets(station_id: int, db: Session = Depends(get_db)):
     """侧边栏「资产清单」的数据源。
 
-    查的是 `assets.workstation_id`（走索引），**不是**工位表里存的列表 ——
+    查的是 `assets.workstation_id`（走索引），**不是**点位表里存的列表 ——
     资产归属只存这一处。
     """
     _get_station_or_404(db, station_id)
@@ -382,7 +382,7 @@ def list_station_assets(station_id: int, db: Session = Depends(get_db)):
 # --------------------------------------------------------------------------- #
 # 写操作
 # --------------------------------------------------------------------------- #
-@router.post("", response_model=WorkstationOut, status_code=status.HTTP_201_CREATED, summary="新增工位")
+@router.post("", response_model=WorkstationOut, status_code=status.HTTP_201_CREATED, summary="新增点位")
 def create_workstation(payload: WorkstationCreate, db: Session = Depends(get_db)):
     code = (payload.code or "").strip() or _next_code(db)
     _ensure_code_unique(db, code)
@@ -405,7 +405,7 @@ def create_workstation(payload: WorkstationCreate, db: Session = Depends(get_db)
         target_type=AuditTarget.WORKSTATION,
         target_id=station.id,
         target_label=_station_label(station),
-        summary=f"新增工位 {code}，位置 ({station.x},{station.y})",
+        summary=f"新增点位 {code}，位置 ({station.x},{station.y})",
         operator=payload.operator,
         detail={"workstation_id": station.id, "code": code, "x": station.x, "y": station.y,
                 "facing": station.facing},
@@ -416,7 +416,7 @@ def create_workstation(payload: WorkstationCreate, db: Session = Depends(get_db)
     return _serialize(station, 0)
 
 
-@router.patch("/layout", response_model=dict, summary="批量保存工位坐标（拖动后一次提交）")
+@router.patch("/layout", response_model=dict, summary="批量保存点位坐标（拖动后一次提交）")
 def save_layout(payload: WorkstationLayoutRequest, db: Session = Depends(get_db)):
     """一次布局调整 = **1 条审计**，不是 N 条。
 
@@ -434,7 +434,7 @@ def save_layout(payload: WorkstationLayoutRequest, db: Session = Depends(get_db)
 
     missing = [i for i in ids if i not in stations]
     if missing:
-        raise HTTPException(status_code=404, detail=f"工位不存在：{missing}")
+        raise HTTPException(status_code=404, detail=f"点位不存在：{missing}")
 
     changes: list[dict[str, object]] = []
     for item in payload.items:
@@ -461,8 +461,8 @@ def save_layout(payload: WorkstationLayoutRequest, db: Session = Depends(get_db)
             AuditAction.WORKSTATION_MOVE,
             target_type=AuditTarget.WORKSTATION,
             target_id=None,
-            target_label=f"工位布局（{len(changes)} 处）",
-            summary=f"调整工位布局：{head}{more}",
+            target_label=f"点位布局（{len(changes)} 处）",
+            summary=f"调整点位布局：{head}{more}",
             operator=payload.operator,
             detail={"changes": changes, "count": len(changes)},
         )
@@ -474,7 +474,7 @@ def save_layout(payload: WorkstationLayoutRequest, db: Session = Depends(get_db)
 @router.patch(
     "/{station_id}",
     response_model=WorkstationOut,
-    summary="编辑工位（改人 / 编码 / 备注 / 单改坐标）",
+    summary="编辑点位（改人 / 编码 / 备注 / 单改坐标）",
 )
 def update_workstation(station_id: int, payload: WorkstationUpdate, db: Session = Depends(get_db)):
     station = _get_station_or_404(db, station_id)
@@ -484,7 +484,7 @@ def update_workstation(station_id: int, payload: WorkstationUpdate, db: Session 
     if "code" in data:
         code = (data["code"] or "").strip()
         if not code:
-            raise HTTPException(status_code=400, detail="工位编码不能清空")
+            raise HTTPException(status_code=400, detail="点位编码不能清空")
         _ensure_code_unique(db, code, exclude_id=station_id)
         data["code"] = code
 
@@ -504,9 +504,9 @@ def update_workstation(station_id: int, payload: WorkstationUpdate, db: Session 
     }
 
     if changes:
-        # 只动了坐标 → 归到「调整布局」；动了归属/编码/备注 → 归到「编辑工位」。
+        # 只动了坐标 → 归到「调整布局」；动了归属/编码/备注 → 归到「编辑点位」。
         # 分开的理由和 ASSET_UPDATE / ASSET_OPERATE 分开一样：
-        # 用户在审计页按类型筛「谁改过工位归属」时，布局微调不该混进来。
+        # 用户在审计页按类型筛「谁改过点位归属」时，布局微调不该混进来。
         only_position = set(changes) <= {"x", "y"}
         action = AuditAction.WORKSTATION_MOVE if only_position else AuditAction.WORKSTATION_UPDATE
         labels = {**workstation_importer.FIELD_LABELS, "code": "编码"}
@@ -537,9 +537,9 @@ def _as_text(value: object) -> str:
     return str(value)
 
 
-@router.post("/{station_id}/assets", response_model=dict, summary="把资产挂到工位上")
+@router.post("/{station_id}/assets", response_model=dict, summary="把资产挂到点位上")
 def bind_assets(station_id: int, payload: WorkstationAssetsRequest, db: Session = Depends(get_db)):
-    """把一批资产挪到这个工位上。
+    """把一批资产挪到这个点位上。
 
     **每台资产各写 1 条 asset_events**（设备视角，履历要各自完整），
     但**只写 1 条审计**（一次用户操作 = 1 条）——
@@ -563,7 +563,7 @@ def bind_assets(station_id: int, payload: WorkstationAssetsRequest, db: Session 
             asset,
             AssetEventType.UPDATE,
             operator=payload.operator,
-            note=f"所在工位 {_station_code(db, before)} → {station.code}",
+            note=f"所在点位 {_station_code(db, before)} → {station.code}",
             detail={"changes": {"workstation_id": {
                 "from": _station_code(db, before), "to": station.code}}},
         )
@@ -575,7 +575,7 @@ def bind_assets(station_id: int, payload: WorkstationAssetsRequest, db: Session 
             target_type=AuditTarget.WORKSTATION,
             target_id=station.id,
             target_label=_station_label(station),
-            summary=f"把 {len(moved)} 台设备挂到工位 {station.code}：{'、'.join(moved[:3])}"
+            summary=f"把 {len(moved)} 台设备挂到点位 {station.code}：{'、'.join(moved[:3])}"
                     + (f" 等 {len(moved)} 台" if len(moved) > 3 else ""),
             operator=payload.operator,
             detail={"workstation_id": station.id, "code": station.code,
@@ -586,16 +586,16 @@ def bind_assets(station_id: int, payload: WorkstationAssetsRequest, db: Session 
     return {"moved": len(moved), "asset_codes": moved}
 
 
-@router.delete("/{station_id}/assets/{asset_id}", response_model=dict, summary="把资产从工位摘下来")
+@router.delete("/{station_id}/assets/{asset_id}", response_model=dict, summary="把资产从点位摘下来")
 def unbind_asset(
     station_id: int,
     asset_id: int,
     db: Session = Depends(get_db),
     operator: Optional[str] = Query(None),
 ):
-    """摘下来**不等于删掉资产** —— 资产留着，只是没有工位了。
+    """摘下来**不等于删掉资产** —— 资产留着，只是没有点位了。
 
-    它同时会写一条"所在工位 → 空"的时间线，这条履历正是
+    它同时会写一条"所在点位 → 空"的时间线，这条履历正是
     「这台机器现在放哪了」的答案。
     """
     station = _get_station_or_404(db, station_id)
@@ -605,7 +605,7 @@ def unbind_asset(
     if asset.workstation_id != station.id:
         raise HTTPException(
             status_code=409,
-            detail=f"「{asset.asset_code}」并不挂在工位 {station.code} 上",
+            detail=f"「{asset.asset_code}」并不挂在点位 {station.code} 上",
         )
 
     asset.workstation_id = None
@@ -614,7 +614,7 @@ def unbind_asset(
         asset,
         AssetEventType.UPDATE,
         operator=operator,
-        note=f"所在工位 {station.code} → 空",
+        note=f"所在点位 {station.code} → 空",
         detail={"changes": {"workstation_id": {"from": station.code, "to": ""}}},
     )
     record_audit(
@@ -623,7 +623,7 @@ def unbind_asset(
         target_type=AuditTarget.WORKSTATION,
         target_id=station.id,
         target_label=_station_label(station),
-        summary=f"把 {asset.asset_code} 从工位 {station.code} 摘下来",
+        summary=f"把 {asset.asset_code} 从点位 {station.code} 摘下来",
         operator=operator,
         detail={"workstation_id": station.id, "code": station.code, "asset_id": asset.id,
                 "asset_code": asset.asset_code},
@@ -639,16 +639,16 @@ def _station_code(db: Session, station_id: Optional[int]) -> str:
     return station.code if station else f"#{station_id}"
 
 
-@router.delete("/{station_id}", response_model=dict, summary="删除工位（软删除）")
+@router.delete("/{station_id}", response_model=dict, summary="删除点位（软删除）")
 def delete_workstation(
     station_id: int,
     db: Session = Depends(get_db),
     operator: Optional[str] = Query(None),
-    force: bool = Query(False, description="工位上还有资产时，是否一并清空这些资产的工位归属"),
+    force: bool = Query(False, description="点位上还有资产时，是否一并清空这些资产的点位归属"),
 ):
-    """删工位。**工位上还有资产时先拦住**，让调用方决定。
+    """删点位。**点位上还有资产时先拦住**，让调用方决定。
 
-    绝不级联删资产：工位只是资产的位置标签，为了删标签而删掉被标记的东西，
+    绝不级联删资产：点位只是资产的位置标签，为了删标签而删掉被标记的东西，
     因果是反的。（对比：删资产会自动解绑显示器，因为配对关系是从属于资产的 ——
     方向不同，处理就不能照抄。）
 
@@ -666,13 +666,13 @@ def delete_workstation(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"工位 {station.code} 上还挂着 {len(attached)} 台设备（{preview}{more}）。"
-                f"请先把它们移到别的工位；如果确定要删，就带上「同时清空这些资产的工位归属」，"
+                f"点位 {station.code} 上还挂着 {len(attached)} 台设备（{preview}{more}）。"
+                f"请先把它们移到别的点位；如果确定要删，就带上「同时清空这些资产的点位归属」，"
                 f"设备本身不会被删除。"
             ),
         )
 
-    # 先清归属（每台留一条时间线），再软删工位
+    # 先清归属（每台留一条时间线），再软删点位
     detached: list[str] = []
     for asset in attached:
         asset.workstation_id = None
@@ -682,7 +682,7 @@ def delete_workstation(
             asset,
             AssetEventType.UPDATE,
             operator=operator,
-            note=f"所在工位 {station.code} → 空（工位已删除）",
+            note=f"所在点位 {station.code} → 空（点位已删除）",
             detail={"changes": {"workstation_id": {"from": station.code, "to": ""}}},
         )
 
@@ -696,8 +696,8 @@ def delete_workstation(
         target_type=AuditTarget.WORKSTATION,
         target_id=station_id,
         target_label=label,
-        summary=f"删除工位 {code}"
-        + (f"，同时清空 {len(detached)} 台设备的工位归属（设备保留）" if detached else ""),
+        summary=f"删除点位 {code}"
+        + (f"，同时清空 {len(detached)} 台设备的点位归属（设备保留）" if detached else ""),
         operator=operator,
         detail={"workstation_id": station_id, "code": code,
                 "detached_assets": detached, "detached_count": len(detached)},
@@ -709,7 +709,7 @@ def delete_workstation(
         "deleted_id": station_id,
         "code": code,
         "detached_assets": detached,
-        "note": "工位是软删除；编码不会释放，避免审计里出现两个不同的位置都叫这个名字",
+        "note": "点位是软删除；编码不会释放，避免审计里出现两个不同的位置都叫这个名字",
     }
 
 
@@ -754,7 +754,7 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     return _plan_to_preview(plan)
 
 
-@router.post("/import", response_model=WorkstationImportResult, summary="导入工位（按 code upsert）")
+@router.post("/import", response_model=WorkstationImportResult, summary="导入点位（按 code upsert）")
 async def import_workstations(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -763,7 +763,7 @@ async def import_workstations(
     """落库。预览与落库跑**同一段** `build_plan` —— 不存在"预览说没事、确认就报错"。
 
     一次导入写 **1 条审计**（不是 62 条），与「批量导入 30 台设备 = 1 条」口径一致。
-    工位新增/变动**不写 asset_events** —— 没碰任何资产，硬写就得挑一台代表资产来挂，
+    点位新增/变动**不写 asset_events** —— 没碰任何资产，硬写就得挑一台代表资产来挂，
     那是在为满足表结构而编造事实。
     """
     content = await file.read()
@@ -773,7 +773,7 @@ async def import_workstations(
     if not plan.schema_ok:
         raise HTTPException(status_code=400, detail=plan.schema_note)
     if plan.empty:
-        raise HTTPException(status_code=400, detail="这份文件里一个工位都没有（workstations 为空）")
+        raise HTTPException(status_code=400, detail="这份文件里一个点位都没有（workstations 为空）")
 
     outcome = workstation_importer.apply_plan(db, plan)
 
@@ -783,8 +783,8 @@ async def import_workstations(
             AuditAction.WORKSTATION_CREATE,
             target_type=AuditTarget.WORKSTATION,
             target_id=None,
-            target_label=f"工位导入：{filename}",
-            summary=f"导入工位文件《{filename}》：新增 {outcome.created} / 更新 {outcome.updated}"
+            target_label=f"点位导入：{filename}",
+            summary=f"导入点位文件《{filename}》：新增 {outcome.created} / 更新 {outcome.updated}"
                     f" / 无变化 {outcome.unchanged} / 失败 {outcome.failed}",
             operator=operator,
             detail={

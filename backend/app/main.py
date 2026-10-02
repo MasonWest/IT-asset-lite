@@ -79,9 +79,9 @@ _FAILED_ROUTES: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"^/api/transfer/import$"), AuditAction.ASSET_IMPORT, AuditTarget.FILE),
     (re.compile(r"^/api/device-types/\d+$"), AuditAction.TYPE_UPDATE, AuditTarget.DEVICE_TYPE),
     (re.compile(r"^/api/device-types$"), AuditAction.TYPE_CREATE, AuditTarget.DEVICE_TYPE),
-    # 工位。注意 layout / import 这两条**必须排在 /\d+ 和 $ 之前**：
+    # 点位。注意 layout / import 这两条**必须排在 /\d+ 和 $ 之前**：
     # 它们是字面量路径，FastAPI 与这里的匹配都按先后顺序，落到兜底分支的话
-    # 失败的工位操作会被记成「编辑资产 / 操作对象：系统」—— 审计里多出一条根本不存在的操作。
+    # 失败的点位操作会被记成「编辑资产 / 操作对象：系统」—— 审计里多出一条根本不存在的操作。
     (re.compile(r"^/api/workstations/layout$"), AuditAction.WORKSTATION_MOVE, AuditTarget.WORKSTATION),
     (re.compile(r"^/api/workstations/bulk$"), AuditAction.WORKSTATION_CREATE, AuditTarget.WORKSTATION),
     (re.compile(r"^/api/workstations/import$"), AuditAction.WORKSTATION_CREATE, AuditTarget.WORKSTATION),
@@ -172,13 +172,13 @@ async def lifespan(_app: FastAPI):
     if migration.get("category_added"):
         print("  已升级：device_types 补上 category 列并回填设备类别")
     if migration.get("workstation_column_added"):
-        print("  已升级：assets 补上 workstation_id 列（资产 ↔ 工位关联）")
+        print("  已升级：assets 补上 workstation_id 列（资产 ↔ 点位关联）")
     if migration.get("floor_map_added"):
-        print("  已升级：workstations 补上 floor_map_id 列（工位 ↔ 平面图关联）")
+        print("  已升级：workstations 补上 floor_map_id 列（点位 ↔ 平面图关联）")
     if migration.get("default_floor_map_created"):
         print(f"  已建默认平面图 “{migration['default_floor_map_name']}”（含 19 个建筑图元）")
     if migration.get("workstations_attached"):
-        print(f"  已把 {migration['workstations_attached']} 个工位挂到默认图")
+        print(f"  已把 {migration['workstations_attached']} 个点位挂到默认图")
     if migration.get("timestamps_shifted"):
         print(
             f"  已升级：{migration['timestamps_shifted']} 个时间戳由 UTC 校正为本地时间"

@@ -11,7 +11,7 @@ AssetStatusLiteral = Literal["in_use", "idle", "repair", "scrapped"]
 DeviceCategoryLiteral = Literal["host", "display", "other"]
 OperationLiteral = Literal["checkout", "return", "repair", "repair_done", "scrap", "restore"]
 InventoryResultLiteral = Literal["pending", "checked", "abnormal"]
-#: 工位朝向（对应原型 facing）
+#: 点位朝向（对应原型 facing）
 FacingLiteral = Literal["up", "down"]
 
 
@@ -107,8 +107,8 @@ class AssetUpdate(BaseModel):
     status: Optional[AssetStatusLiteral] = None
     user_name: Optional[str] = Field(default=None, max_length=64)
     location: Optional[str] = Field(default=None, max_length=128)
-    #: 挂在哪个工位上。**这里必须区分「没传」和「传了 null」** ——
-    #: 没传 = 不动；传 null = 从工位上摘下来（这正是"资产挪走"的写法）。
+    #: 挂在哪个点位上。**这里必须区分「没传」和「传了 null」** ——
+    #: 没传 = 不动；传 null = 从点位上摘下来（这正是"资产挪走"的写法）。
     #: 所以 model_dump(exclude_unset=True) 是关键，别改成 exclude_none。
     workstation_id: Optional[int] = None
     purchase_date: Optional[date] = None
@@ -176,7 +176,7 @@ class AssetOut(BaseModel):
     status_label: str = ""
     user_name: Optional[str] = None
     location: Optional[str] = None
-    #: 所在工位（资产空间地图）。未指定工位的资产这里是 None。
+    #: 所在点位（资产空间地图）。未指定点位的资产这里是 None。
     workstation_id: Optional[int] = None
     workstation_code: Optional[str] = None
     purchase_date: Optional[date] = None
@@ -268,7 +268,7 @@ class FilterOptions(BaseModel):
     total: int
     status_counts: dict[str, int]
     device_type_counts: dict[str, int]
-    #: 没有落到任何工位点位的资产数（台账页「无点位资产」统计卡用）
+    #: 没有落到任何点位点位的资产数（台账页「无点位资产」统计卡用）
     no_workstation_count: int = 0
     #: 配对概况：主机数 / 显示器数 / 已配对显示器数
     pair_stats: dict[str, int] = {}

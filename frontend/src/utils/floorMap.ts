@@ -22,7 +22,7 @@ export const CURRENT_LAYOUT_VERSION = 1
  * 就是因为这个丢了 2 条分隔条。拆开之后，"墙还是隔断"一眼可辨。
  */
 export type ShapeKind =
-  | 'zone' // 地台（工位区的底板）
+  | 'zone' // 地台（点位区的底板）
   | 'corr' // 中央走道
   | 'corrtext' // 走道上的文字
   | 'room' // 房间（会议/办公/机房/前台）

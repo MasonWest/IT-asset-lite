@@ -30,7 +30,7 @@ FIELD_LABELS: dict[str, str] = {
     "status": "状态",
     "user_name": "使用人",
     "location": "存放位置",
-    "workstation_id": "所在工位",
+    "workstation_id": "所在点位",
     "purchase_date": "购入日期",
     "warranty_until": "保修到期日",
     "notes": "备注",

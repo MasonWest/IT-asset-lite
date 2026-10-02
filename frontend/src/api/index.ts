@@ -304,17 +304,17 @@ export const transferApi = {
 }
 
 // --------------------------------------------------------------------------- //
-// 工位（资产空间地图）
+// 点位（资产空间地图）
 // --------------------------------------------------------------------------- //
 /**
- * 工位相关的接口。
+ * 点位相关的接口。
  *
- * 注意「工位上挂的资产」走的是 `/workstations/{id}/assets`，
- * 那查的是 `assets.workstation_id`（单一真相），**不是**工位表里存的资产列表 ——
- * 工位表里根本不存资产列表。
+ * 注意「点位上挂的资产」走的是 `/workstations/{id}/assets`，
+ * 那查的是 `assets.workstation_id`（单一真相），**不是**点位表里存的资产列表 ——
+ * 点位表里根本不存资产列表。
  */
 export const workstationApi = {
-  /** 地图渲染用：工位列表 + 画布尺寸。画布尺寸由后端给，前端不再硬编码 */
+  /** 地图渲染用：点位列表 + 画布尺寸。画布尺寸由后端给，前端不再硬编码 */
   map: () => get<WorkstationMap>('/workstations'),
 
   detail: (id: number) => get<Workstation>(`/workstations/${id}`),
@@ -335,14 +335,14 @@ export const workstationApi = {
   saveLayout: (items: WorkstationLayoutItem[], operator?: string | null) =>
     patch<WorkstationLayoutResult>('/workstations/layout', { items, operator }),
 
-  /** 把一批资产挂到这个工位上 */
+  /** 把一批资产挂到这个点位上 */
   bindAssets: (id: number, assetIds: number[], operator?: string | null) =>
     post<{ moved: number; asset_codes: string[] }>(`/workstations/${id}/assets`, {
       asset_ids: assetIds,
       operator,
     }),
 
-  /** 从工位上摘下来（**资产留着**，只是没有工位了） */
+  /** 从点位上摘下来（**资产留着**，只是没有点位了） */
   unbindAsset: (id: number, assetId: number, operator?: string | null) =>
     del<{ ok: boolean; asset_code: string }>(
       `/workstations/${id}/assets/${assetId}`,
@@ -350,8 +350,8 @@ export const workstationApi = {
     ),
 
   /**
-   * 删除工位（软删除）。
-   * @param force 工位上还有资产时，是否一并清空这些资产的工位归属（**不删资产**）
+   * 删除点位（软删除）。
+   * @param force 点位上还有资产时，是否一并清空这些资产的点位归属（**不删资产**）
    */
   remove: (id: number, opts: { operator?: string | null; force?: boolean } = {}) =>
     del<{ ok: boolean; code: string; detached_assets: string[]; note: string }>(
@@ -360,7 +360,7 @@ export const workstationApi = {
     ),
 
   /**
-   * 批量生成工位（行列排布）。
+   * 批量生成点位（行列排布）。
    *
    * ⚠️ **必须走这个接口，不要循环调 `create()`** ——
    * 一次批量操作 = 1 条审计（全系统口径）。循环 24 次会往审计页灌 24 条，
@@ -399,7 +399,7 @@ export const mapInventoryApi = {
    *
    * 不复用 `/inventory/context/{asset_id}` —— 那个是单任务假设
    * （取"该设备所属的最近一个进行中任务"），在资产详情页合理，
-   * 但地图问的是"这一片工位整体盘到哪了"，必须明确聚合的是哪一次。
+   * 但地图问的是"这一片点位整体盘到哪了"，必须明确聚合的是哪一次。
    */
   view: (taskId: number) => get<MapInventoryView>(`/inventory/tasks/${taskId}/map-view`),
 }

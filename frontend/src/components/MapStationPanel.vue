@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 工位详情侧栏。
+ * 点位详情侧栏。
  *
  * 从地图视图里拆出来，因为它是**唯一会写数据的地方** ——
  * 改使用人、改编码、挂/摘资产、单台盘点都在这里。
@@ -8,14 +8,14 @@
  *
  * ## 三处必须说清的口径
  *
- * ### 1. 侧栏的资产清单是**真实资产**，不是工位自己存的列表
+ * ### 1. 侧栏的资产清单是**真实资产**，不是点位自己存的列表
  * 数据来自 `GET /api/workstations/{id}/assets`，查的是 `assets.workstation_id`。
- * 工位表里**不存资产列表** —— 那会变成同一件事存两处，迟早对不上。
+ * 点位表里**不存资产列表** —— 那会变成同一件事存两处，迟早对不上。
  *
- * ### 2. 「使用人」是工位归属，不是资产使用人的副本
+ * ### 2. 「使用人」是点位归属，不是资产使用人的副本
  * 「W23 这个位置归林晓薇」和「这台主机现在归林晓薇」是两个不同的事实，
  * 现实中**可以不一致**，而不一致本身正是现场盘点要找的信号。
- * 所以这里**不做**"改工位使用人就顺手改资产使用人" —— 那会把差异抹掉。
+ * 所以这里**不做**"改点位使用人就顺手改资产使用人" —— 那会把差异抹掉。
  *
  * ### 3. 空位 / 不在本次范围不是「已盘」
  * 它们显示为灰色「空位」「不在本次范围」，与绿色「已盘」明确区分。
@@ -34,7 +34,7 @@ import { brandModel, facingLabel, isNeutral, positionText, stateMeta } from '@/u
 
 const props = defineProps<{
   station: Workstation | null
-  /** 该工位在「当前选中的盘点任务」里的状态（没开盘点模式时为 null） */
+  /** 该点位在「当前选中的盘点任务」里的状态（没开盘点模式时为 null） */
   mapRow: MapInventoryWorkstation | null
   assets: Asset[]
   users: string[]
@@ -65,7 +65,7 @@ const codeInput = ref('')
 const roomInput = ref('')
 
 /**
- * 工位使用人下拉。
+ * 点位使用人下拉。
  *
  * ⚠️ 这里**曾经只写了一半**：注释写着"与资产表单同一套拼音筛选 + 新建项垫底"，
  * 实际只搬了拼音筛选、没搬那个"新建"候选项 —— 于是 `filterable` 让框里能打字，
@@ -149,9 +149,9 @@ async function saveBasics() {
 }
 
 /**
- * 改工位使用人。
+ * 改点位使用人。
  *
- * **只改工位，不动资产。** 工位归属与设备归属是两个事实，
+ * **只改点位，不动资产。** 点位归属与设备归属是两个事实，
  * 强行联动会把"这位置上写的是 A、但机器记在 B 名下"这种差异抹掉 ——
  * 而那正是盘点要找的东西。
  */
@@ -167,7 +167,7 @@ async function changeUser(value: string | null) {
       operator: appState.operator || null,
     })
     emit('saved', updated)
-    ElMessage.success(next ? `工位使用人已改为 ${next}` : '已清空工位使用人')
+    ElMessage.success(next ? `点位使用人已改为 ${next}` : '已清空点位使用人')
   } catch (error) {
     ElMessage.error(apiMessage(error))
   } finally {
@@ -175,13 +175,13 @@ async function changeUser(value: string | null) {
   }
 }
 
-/** 从工位上摘下一台设备（**资产留着**，只是不再属于这个工位） */
+/** 从点位上摘下一台设备（**资产留着**，只是不再属于这个点位） */
 async function unbind(asset: Asset) {
   const s = props.station
   if (!s) return
   try {
     await ElMessageBox.confirm(
-      `把 ${asset.asset_code} 从工位 ${s.code} 摘下来？设备仍保留在台账里。`,
+      `把 ${asset.asset_code} 从点位 ${s.code} 摘下来？设备仍保留在台账里。`,
       '摘除设备',
       { confirmButtonText: '摘下来', cancelButtonText: '取消', type: 'warning' },
     )
@@ -191,13 +191,13 @@ async function unbind(asset: Asset) {
   try {
     await workstationApi.unbindAsset(s.id, asset.id, appState.operator || null)
     emit('assets-changed', s.id)
-    ElMessage.success(`已把 ${asset.asset_code} 从工位摘下来`)
+    ElMessage.success(`已把 ${asset.asset_code} 从点位摘下来`)
   } catch (error) {
     ElMessage.error(apiMessage(error))
   }
 }
 
-/** 把这个工位上的设备全部标为「已盘」 */
+/** 把这个点位上的设备全部标为「已盘」 */
 function markAllPassed() {
   const s = props.station
   if (!s) return
@@ -205,11 +205,11 @@ function markAllPassed() {
 }
 
 /**
- * 跳去资产台账。**带上当前工位的使用人作为筛选** —— 这样从刘盼盼的工位点进去，
- * 看到的就是"刘盼盼的设备"，少一步手动筛选。
+ * 跳去资产台账。**带上当前点位的使用人作为筛选** —— 这样从某个使用人的点位点进去，
+ * 看到的就是"那个人的设备"，少一步手动筛选。
  *
  * 不带筛选的两种情况，都是有意的：
- *   - 工位**没有使用人**（空闲工位）：没有可筛的名字，只能给全量台账
+ *   - 点位**没有使用人**（空闲点位）：没有可筛的名字，只能给全量台账
  *   - 使用人写的是 `/`、`公用` 这类**占位符**：它出现在台账里会筛出一堆
  *     不属于任何人的设备，反而误导。用 `hasOwner()` 统一判断（`/` 和空值都算没归属）
  *
@@ -246,7 +246,7 @@ function dash(v: string | null | undefined): string {
   <aside class="sb">
     <div class="sb-head">
       <div>
-        <div class="t">{{ auditMode ? '现场工位盘点' : '工位详情' }}</div>
+        <div class="t">{{ auditMode ? '现场点位盘点' : '点位详情' }}</div>
         <div class="d">WORKSTATION</div>
       </div>
       <button class="sb-close" title="关闭" @click="emit('close')">×</button>
@@ -266,9 +266,9 @@ function dash(v: string | null | undefined): string {
           <path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3" />
         </svg>
       </div>
-      <div class="h">选择一个工位</div>
+      <div class="h">选择一个点位</div>
       <div class="p">
-        点击地图上的工位，查看这个位置上的<b>真实设备</b>，<br />
+        点击地图上的点位，查看这个位置上的<b>真实设备</b>，<br />
         并在图上直接完成盘点。
       </div>
     </div>
@@ -292,7 +292,7 @@ function dash(v: string | null | undefined): string {
       <div class="metrics">
         <div class="metric">
           <div class="v">{{ station!.user_name ? userLabel(station!.user_name) : '—' }}</div>
-          <div class="k">工位使用人</div>
+          <div class="k">点位使用人</div>
         </div>
         <div class="metric">
           <div class="v">{{ station!.asset_count }} 台</div>
@@ -323,11 +323,11 @@ function dash(v: string | null | undefined): string {
       <!-- 盘点快捷条 -->
       <div v-if="auditMode && station!.asset_count > 0 && !neutral" class="audit-box">
         <div class="audit-title">
-          <span>⚡ 工位快捷盘点</span>
+          <span>⚡ 点位快捷盘点</span>
           <span class="st">{{ state ? stateMeta(state).label : '' }}</span>
         </div>
         <button class="pass-all" :disabled="!mapRow?.assets.length" @click="markAllPassed">
-          🟢 把这个工位的设备全部标为已盘
+          🟢 把这个点位的设备全部标为已盘
         </button>
       </div>
 
@@ -389,13 +389,13 @@ function dash(v: string | null | undefined): string {
         </div>
 
         <!--
-          「挂设备到工位」走的是「新增一台设备并直接指定工位」这条路。
-          反过来做（给工位挑一台已有设备）就得在弹窗里塞一个带筛选分页的设备选择器，
+          「挂设备到点位」走的是「新增一台设备并直接指定点位」这条路。
+          反过来做（给点位挑一台已有设备）就得在弹窗里塞一个带筛选分页的设备选择器，
           等于把台账再写一遍 —— 所以宁可多一个按钮。
           已经有设备的人用不着它，去台账编辑那台设备即可。
         -->
         <button class="add-asset-btn" @click="emit('add-asset', station!.id)">
-          ＋ 给这个工位挂一台新设备
+          ＋ 给这个点位挂一台新设备
         </button>
 
         <div v-if="assets.length" class="asset-plain-list">
@@ -413,22 +413,22 @@ function dash(v: string | null | undefined): string {
                 本次盘点：{{ resultOf(asset.id) === 'checked' ? '已盘' : resultOf(asset.id) === 'abnormal' ? '异常' : '待盘' }}
               </div>
             </div>
-            <button class="mini" title="从工位摘下来（设备保留）" @click="unbind(asset)">摘下</button>
+            <button class="mini" title="从点位摘下来（设备保留）" @click="unbind(asset)">摘下</button>
           </div>
         </div>
 
         <div v-else-if="!assetsLoading" class="none">
-          该工位暂无绑定资产。<br />
-          到<a @click="openLedger">资产台账</a>里编辑设备，把「所在工位」选上它就会出现在这里。
+          该点位暂无绑定资产。<br />
+          到<a @click="openLedger">资产台账</a>里编辑设备，把「所在点位」选上它就会出现在这里。
         </div>
       </div>
 
       <!-- 编辑区 -->
       <div class="sect">
-        <div class="sh"><span>工位设置</span></div>
+        <div class="sh"><span>点位设置</span></div>
 
         <div class="field">
-          <label>工位使用人</label>
+          <label>点位使用人</label>
           <!--
             使用人**是自由文本**，不是从人员表里挑 —— 所以最后那一项 `createLabel` 必须有：
             有这个位置的人在座、但他用的是自己的笔记本（台账里没有他名下资产），
@@ -460,7 +460,7 @@ function dash(v: string | null | undefined): string {
         </div>
 
         <div class="field">
-          <label>工位编码</label>
+          <label>点位编码</label>
           <el-input v-model="codeInput" maxlength="32" placeholder="例如 W23" />
         </div>
 
@@ -475,7 +475,7 @@ function dash(v: string | null | undefined): string {
 
         <div class="acts">
           <el-button type="primary" :loading="saving" @click="saveBasics">保存编码 / 房间</el-button>
-          <el-button type="danger" plain @click="emit('removed', station!)">删除工位</el-button>
+          <el-button type="danger" plain @click="emit('removed', station!)">删除点位</el-button>
         </div>
       </div>
     </div>

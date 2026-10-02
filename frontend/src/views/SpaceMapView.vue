@@ -3,13 +3,13 @@
  * 资产空间地图。
  *
  * ## 它解决的问题
- * 台账是**按设备编号**查东西的，回答不了「这一片工位现在什么情况」。
- * 这一页把工位按真实平面图摆出来，点一下就能看到那个位置上有什么设备，
- * 并且能在图上直接盘点 —— 不用抱着平板在工位间来回跑。
+ * 台账是**按设备编号**查东西的，回答不了「这一片点位现在什么情况」。
+ * 这一页把点位按真实平面图摆出来，点一下就能看到那个位置上有什么设备，
+ * 并且能在图上直接盘点 —— 不用抱着平板在点位间来回跑。
  *
  * ## 一句话设计口径
  * **这页只是"看"的另一副眼镜，不是第二套数据。**
- *   · 工位来自 `workstations` 表（`assets.workstation_id` 反查资产）
+ *   · 点位来自 `workstations` 表（`assets.workstation_id` 反查资产）
  *   · 资产来自现有 `assets` 表 —— 一台都不另存
  *   · 盘点直接调现有 `inventory` 的标记接口，读现有 `inventory_items.result`
  * 所以在地图上标记一台设备，退出地图去原盘点页，看到的是**同一条记录**。
@@ -19,22 +19,22 @@
  * ### 1. 盘点任务选择器（不是装饰）
  * `/api/inventory/context/{asset_id}` 是**单任务假设**：取该设备所属的、
  * 最近一个进行中任务。这在资产详情页合理（问的是"这台设备归哪个盘点"），
- * 但地图问的是「**这一片工位整体盘到哪了**」—— 聚合视图必须明确聚合的是哪一次。
+ * 但地图问的是「**这一片点位整体盘到哪了**」—— 聚合视图必须明确聚合的是哪一次。
  * 两个盘点任务同时进行时（比如"整层盘点"和"采购部专项"），
  * 不做选择器就会拿其中一个的状态去渲染整张图，大部分格子显示"待盘"，
  * 而那批设备其实在另一个任务里早就盘完了 —— 这不是显示错，
  * 是**显示了一个用户没问过的任务的答案**。所以顶部永远显示当前任务名。
  *
- * ### 2. 五种工位状态，其中两种是中性态
- * `checked` / `abnormal` / `pending` 由该工位下**属于本次任务**的资产聚合
+ * ### 2. 五种点位状态，其中两种是中性态
+ * `checked` / `abnormal` / `pending` 由该点位下**属于本次任务**的资产聚合
  * （优先级 异常 > 待盘 > 已盘 —— 有一台异常就报异常，不能被"其他都正常"掩盖）。
  * `empty`（这位置没有资产）与 `not_in_scope`（有资产但本次不盘）是中性态：
  * **都不进盘点计数、都不进进度分母**，而且文案分开 ——
  * 把"本次不盘"误读成"漏盘"是盘点里最需要避免的错误结论。
  *
- * ### 3. 进度分母用**资产数**，不是工位数
- * 盘点的对象是资产：一个工位可能挂 2 台（主机 + 显示器），也可能 0 台。
- * 拿工位数当分母，在任何工位挂 2 台时百分比都会失准。
+ * ### 3. 进度分母用**资产数**，不是点位数
+ * 盘点的对象是资产：一个点位可能挂 2 台（主机 + 显示器），也可能 0 台。
+ * 拿点位数当分母，在任何点位挂 2 台时百分比都会失准。
  * 而 `task.total / checked` 本来就是后端按 `inventory_items` 数出来的资产维度，
  * **直接用同一份数字**，地图与原盘点页的进度天然相等。
  */
@@ -103,7 +103,7 @@ function shapeBox(shape: FloorShape): Record<string, string> {
 
 const selectedId = ref<number | null>(null)
 
-/** 侧栏资产。按工位缓存，避免来回点同一格反复请求 */
+/** 侧栏资产。按点位缓存，避免来回点同一格反复请求 */
 const assetCache = ref<Record<number, Asset[]>>({})
 const assetsLoading = ref(false)
 
@@ -111,7 +111,7 @@ const users = ref<string[]>([])
 
 /* ---- 视图状态（缩放 / 平移）---- */
 const vp = ref<HTMLElement | null>(null)
-/** 工位详情抽屉的外壳。窄屏下它浮在画布上，需要量它的高度来让位 */
+/** 点位详情抽屉的外壳。窄屏下它浮在画布上，需要量它的高度来让位 */
 const sheetEl = ref<HTMLElement | null>(null)
 const tx = ref(0)
 const ty = ref(0)
@@ -130,17 +130,18 @@ function clampScale(v: number) {
 
 /* ---- 模式 ---- */
 const editMode = ref(false) // 「调整位置」：可拖动
-const adding = ref(false) // 「新增」：点空白处放新工位
+const adding = ref(false) // 「新增」：点空白处放新点位
 const auditMode = ref(false) // 「盘点模式」
 
-/* ---- 批量生成工位 ----
+/* ---- 批量生成点位 ----
  *
  * ## 为什么它在地图页而不是「编辑底图」里
  * 用户的原话：「底图是底图呀，不一样呀，和工位不要在一起弄。」
- * 说得对 —— 人不会想到"要加一片工位，先去编辑底图"。
+ * （原话说的是「工位」；v2.1.0 起界面统一叫「点位」，下同。）
+ * 说得对 —— 人不会想到"要加一片点位，先去编辑底图"。
  * 而且那个按钮和「新增图元」并排、长得一样，语义却**相反**
- * （图元进草稿要保存，工位立刻写库），真实事故就是这么来的。
- * 工位的家就在这一页的「调整位置」模式里，单个增删也在这 —— 它当然也该在这。
+ * （图元进草稿要保存，点位立刻写库），真实事故就是这么来的。
+ * 点位的家就在这一页的「调整位置」模式里，单个增删也在这 —— 它当然也该在这。
  */
 const bulkOpen = ref(false)
 const bulkBusy = ref(false)
@@ -213,7 +214,7 @@ const selectedAssets = computed<Asset[]>(() =>
   selectedId.value === null ? [] : assetCache.value[selectedId.value] ?? [],
 )
 
-/** 按编码/使用人/房间过滤后仍然"亮"的工位 id。空集 = 有搜索词但一个都没命中 */
+/** 按编码/使用人/房间过滤后仍然"亮"的点位 id。空集 = 有搜索词但一个都没命中 */
 const matchedIds = computed<Set<number>>(() => {
   const q = searchQuery.value.trim()
   if (!q) return new Set<number>()
@@ -265,7 +266,7 @@ const progress = computed(() => {
   }
 })
 
-/** 各状态的**工位**计数（含两种中性态）。直接取后端算好的，不在前端重算 */
+/** 各状态的**点位**计数（含两种中性态）。直接取后端算好的，不在前端重算 */
 const stateCounts = computed<Record<string, number>>(() => {
   const base: Record<string, number> = {
     all: stations.value.length,
@@ -300,7 +301,7 @@ const canvasStyle = computed(() => ({
 /* 数据加载                                                                    */
 /* ========================================================================== */
 
-/** 去编辑底图（独立页）。工位位置在这页调，建筑图元在编辑器里调。 */
+/** 去编辑底图（独立页）。点位位置在这页调，建筑图元在编辑器里调。 */
 function openEditor() {
   router.push('/map/editor')
 }
@@ -314,7 +315,7 @@ async function loadMap() {
     // 建筑图元来自后端（默认平面图）。解析走 parseLayout —— 它是唯一入口，
     // 组件里不做结构判断（读坏数据退化成空图，不白屏）。
     floorShapes.value = parseLayout(data.layout).shapes
-    // 选中的工位被删掉了 → 清空侧栏，免得显示一个不存在的东西
+    // 选中的点位被删掉了 → 清空侧栏，免得显示一个不存在的东西
     if (selectedId.value !== null && !data.items.some((s) => s.id === selectedId.value)) {
       selectedId.value = null
     }
@@ -417,11 +418,11 @@ const compact = ref(false)
 let compactMq: MediaQueryList | null = null
 
 /**
- * 窄屏下"工位详情"抽屉**浮在画布上**，画布的可视高度没变、但下半截被盖住了。
+ * 窄屏下"点位详情"抽屉**浮在画布上**，画布的可视高度没变、但下半截被盖住了。
  * 取它的实际高度，让 fit() / 定位把这一截让出来，否则居中的画布有一半藏在抽屉后面，
  * 用户看着就是"地图没居中 / 被裁了"。
  *
- * 用 offsetParent 判可见（`display:none` 时它是 null）—— 没选中工位时抽屉不渲染，
+ * 用 offsetParent 判可见（`display:none` 时它是 null）—— 没选中点位时抽屉不渲染，
  * 这时候不应该让出任何高度。
  */
 function sheetInset(): number {
@@ -445,7 +446,7 @@ function fit() {
   const availableW = el.clientWidth - 40
   const availableH = el.clientHeight - inset - 40
   lastFitKey = `${el.clientWidth}x${el.clientHeight}x${inset}`
-  // 适应视图时最多放到 1.5 —— 再大就只剩几块工位，不如留点全局感
+  // 适应视图时最多放到 1.5 —— 再大就只剩几块点位，不如留点全局感
   scale.value = clampScale(
     Math.min(1.5, Math.min(availableW / canvas.value.width, availableH / canvas.value.height)),
   )
@@ -463,17 +464,17 @@ function onWindowResize() {
 }
 
 /**
- * 窄屏点击工位后：**保缩放、只平移**，把选中的工位挪到抽屉上方那块可见区的中央。
+ * 窄屏点击点位后：**保缩放、只平移**，把选中的点位挪到抽屉上方那块可见区的中央。
  *
  * 这里刻意**不调 fit()**。抽屉占掉近六成高度，按剩余高度去重新 fit 会把缩放压到
- * 0.2 上下，工位缩成十几像素、手指根本点不中 —— 恰好把"按空间点位盘点"这件事做废。
+ * 0.2 上下，点位缩成十几像素、手指根本点不中 —— 恰好把"按空间点位盘点"这件事做废。
  * 缩放保持不动、只把画布平移过去，用户手里的地图还是原来那个大小，指哪打哪。
  */
 function centerOnStation(s: Workstation) {
   const el = vp.value
   if (!el) return
   const visibleH = el.clientHeight - sheetInset()
-  // 工位左上角 → 中心（.ws 是 80×56）
+  // 点位左上角 → 中心（.ws 是 80×56）
   const cx = (s.x + 40) * scale.value
   const cy = (s.y + 28) * scale.value
   let nextTx = el.clientWidth / 2 - cx
@@ -517,7 +518,7 @@ function onWheel(event: WheelEvent) {
    平移这块之前是**空的** —— `spacePressed` 只换了个 `cursor: grab` 光标，没有任何
    真正移动画布的代码，等于"空格临时平移"只是句注释。桌面宽屏下画布本来就
    fit 得下、看不出问题；手机上一缩到 0.36 就非常致命：只能看，不能移，
-   而"按点位盘点"恰恰需要凑近那个工位去点。
+   而"按点位盘点"恰恰需要凑近那个点位去点。
 
    双指缩放是后补的：第一版只做了平移，手机上的表现就是"只能一根手指拖，捏不动"。
    想放大只能去点工具条上的 ± 按钮，一次 15%、还得连点七八下，纯残废。
@@ -530,7 +531,7 @@ function onWheel(event: WheelEvent) {
    - ≥3 根      → 抬起一根后重新取基准，不让中点瞬移
    用 pointer 事件而不是 mouse + touch 两套：一套代码同时吃鼠标 / 触摸 / 触控笔，
    配合 `.viewport { touch-action: none }` 才能把触摸手势从浏览器的滚动里抢过来。
-   配合 setPointerCapture，手指滑出视口边界也不会丢事件（和拖工位用 document
+   配合 setPointerCapture，手指滑出视口边界也不会丢事件（和拖点位用 document
    级 mouseup 是同一个理由，见 onMounted 里的注释）。
    -------------------------------------------------------------------------- */
 
@@ -541,7 +542,7 @@ const pointers = new Map<number, { x: number; y: number; pan: boolean }>()
 const pinch = { active: false, dist: 0, scale: 1, ax: 0, ay: 0, ox: 0, oy: 0 }
 
 /** 这一轮手势里发生过捏合。两个用途：挡掉抬手时浏览器补发的 click（新增模式下会凭空
- *  多一个工位），以及让"捏合后剩下的那根手指"照样能平移 —— 见 onPanEnd。
+ *  多一个点位），以及让"捏合后剩下的那根手指"照样能平移 —— 见 onPanEnd。
  *  一轮手势 = 从第一根手指落下到全部抬起，所以它在 onPanStart 里（size===0 时）清空。 */
 let gesturePinched = false
 
@@ -555,7 +556,7 @@ function pinchMetrics() {
   }
 }
 
-/** 这根指针是否被允许用来平移。工位上 / 编辑模式 / 新增模式都要让开（原逻辑不变） */
+/** 这根指针是否被允许用来平移。点位上 / 编辑模式 / 新增模式都要让开（原逻辑不变） */
 function canPan(event: PointerEvent) {
   if (adding.value) return false
   if (spacePressed.value) return true
@@ -666,10 +667,10 @@ function onPanEnd(event: PointerEvent) {
   // 双指变单指：剩下这根手指接着拖。
   //
   // 这里比单指起手**放宽**了：只要这一轮手势捏合过，剩下的手指一律能平移 ——
-  // 哪怕它起手时落在工位上。理由是工位几乎铺满画布，捏合放大地图后随手松一根
-  // 想接着拖的概率很高，按单指那套"落在工位上就不给平移"会让手指变成死的
+  // 哪怕它起手时落在点位上。理由是点位几乎铺满画布，捏合放大地图后随手松一根
+  // 想接着拖的概率很高，按单指那套"落在点位上就不给平移"会让手指变成死的
   // （实测第一版就是这样：26 个用例里唯独这条 FAIL）。
-  // 不会因此误拖工位：搬工位走的是 mousedown，触摸在移动过程中浏览器不会补发它。
+  // 不会因此误拖点位：搬点位走的是 mousedown，触摸在移动过程中浏览器不会补发它。
   const [id, rest] = [...pointers.entries()][0]
   if (rest.pan || gesturePinched) {
     panning.value = true
@@ -708,7 +709,7 @@ function onMouseMove(event: MouseEvent) {
   const rawX = (event.clientX - rect.left - tx.value - dragOff.dx * scale.value) / scale.value
   const rawY = (event.clientY - rect.top - ty.value - dragOff.dy * scale.value) / scale.value
 
-  // 对齐基准：其他工位的真实坐标（不是只吸网格 —— 用户要的是"和同一排/列对齐"）
+  // 对齐基准：其他点位的真实坐标（不是只吸网格 —— 用户要的是"和同一排/列对齐"）
   const anchorsX: number[] = []
   const anchorsY: number[] = []
   for (const s of stations.value) {
@@ -744,7 +745,7 @@ function onMouseUp() {
  * 保存布局。**一次提交 = 1 条审计**。
  *
  * 「调整位置」是拖着反复微调，一次排版几十次松手；逐次提交会让审计页被布局记录刷屏，
- * 真正的资产操作被淹掉。所以这里只提交**真的动过**的工位，且只在用户点保存时发一次请求。
+ * 真正的资产操作被淹掉。所以这里只提交**真的动过**的点位，且只在用户点保存时发一次请求。
  */
 async function saveLayout() {
   if (!dirtyIds.value.size) {
@@ -758,7 +759,7 @@ async function saveLayout() {
   try {
     const result = await workstationApi.saveLayout(items, appState.operator || null)
     dirtyIds.value = new Set()
-    ElMessage.success(`已保存 ${result.updated} 个工位的位置`)
+    ElMessage.success(`已保存 ${result.updated} 个点位的位置`)
   } catch (error) {
     ElMessage.error(apiMessage(error))
   } finally {
@@ -782,7 +783,7 @@ function setAdding(on: boolean) {
  * 手机端「更多」下拉的分发。
  *
  * 每一项都直接调**宽屏那几个按钮调的同一个函数**，没有第二套实现 ——
- * 否则"手机上加的工位和桌面加的工位行为不一样"这种 bug 迟早会出现。
+ * 否则"手机上加的点位和桌面加的点位行为不一样"这种 bug 迟早会出现。
  */
 function onTopbarCommand(cmd: string) {
   if (cmd === 'add') setAdding(!adding.value)
@@ -797,7 +798,7 @@ function onTopbarCommand(cmd: string) {
 
 function onStageClick(event: MouseEvent) {
   if (!adding.value) return
-  // 这一轮手势里捏合过：浏览器还会补一个 click，别让它凭空放出一个工位
+  // 这一轮手势里捏合过：浏览器还会补一个 click，别让它凭空放出一个点位
   if (gesturePinched) {
     gesturePinched = false
     return
@@ -814,7 +815,7 @@ function onStageClick(event: MouseEvent) {
 }
 
 /**
- * 新增工位。**编码由后端生成** —— 前端按数量+1 算会并发撞号。
+ * 新增点位。**编码由后端生成** —— 前端按数量+1 算会并发撞号。
  *
  * 提示里带一个「撤销」按钮：这一步是**立刻写库**的（没有草稿态 / 没有保存按钮），
  * 点歪了只能手动删回来，而"删回来"要过确认框、还可能撞上资产归属。
@@ -834,9 +835,9 @@ async function createStation(x: number, y: number) {
     ElMessage({
       type: 'success',
       duration: 6000,
-      // 刚建出来的工位必然没有资产，撤销就是干净地软删除 —— 不用再问一遍
+      // 刚建出来的点位必然没有资产，撤销就是干净地软删除 —— 不用再问一遍
       message: h('span', { class: 'undo-msg' }, [
-        `已新增工位 ${created.code}`,
+        `已新增点位 ${created.code}`,
         h(
           'button',
           {
@@ -858,11 +859,11 @@ async function createStation(x: number, y: number) {
 }
 
 /**
- * 删除工位。工位上还有资产时后端会 409 并列出设备 ——
+ * 删除点位。点位上还有资产时后端会 409 并列出设备 ——
  * 这里把那句话转达成人话，并给一个"同时清空归属"的选项。
  *
- * ⚠️ 「同时清空」也**不会删资产**，只是把那些设备的工位置空。
- * 工位只是资产的位置标签，为了删标签而删掉被标记的东西，因果是反的。
+ * ⚠️ 「同时清空」也**不会删资产**，只是把那些设备的点位置空。
+ * 点位只是资产的位置标签，为了删标签而删掉被标记的东西，因果是反的。
  */
 async function removeStation(station: Workstation) {
   const attached = station.asset_count
@@ -870,13 +871,13 @@ async function removeStation(station: Workstation) {
     if (attached > 0) {
       const label = hasOwner(station.user_name) ? userLabel(station.user_name) : ''
       await ElMessageBox.confirm(
-        `工位 ${station.code}${label ? `（${label}）` : ''} 上还挂着 ${attached} 台设备。` +
-          `清空归属后设备仍保留在台账里，只是不再属于任何工位。`,
-        '这个工位上有设备',
+        `点位 ${station.code}${label ? `（${label}）` : ''} 上还挂着 ${attached} 台设备。` +
+          `清空归属后设备仍保留在台账里，只是不再属于任何点位。`,
+        '这个点位上有设备',
         { confirmButtonText: '清空归属并删除', cancelButtonText: '取消', type: 'warning' },
       )
     } else {
-      await ElMessageBox.confirm(`删除工位 ${station.code}？`, '确认删除', {
+      await ElMessageBox.confirm(`删除点位 ${station.code}？`, '确认删除', {
         confirmButtonText: '删除',
         cancelButtonText: '取消',
         type: 'warning',
@@ -908,7 +909,7 @@ async function deleteStation(station: Workstation): Promise<boolean> {
     if (result.detached_assets?.length) {
       ElMessage.success(`已删除 ${station.code}，${result.detached_assets.length} 台设备保留在台账中`)
     } else {
-      ElMessage.success(`已删除工位 ${station.code}`)
+      ElMessage.success(`已删除点位 ${station.code}`)
     }
     if (auditMode.value) await loadMapView()
     return true
@@ -919,7 +920,7 @@ async function deleteStation(station: Workstation): Promise<boolean> {
 }
 
 /* ========================================================================== */
-/* 批量生成工位（在「调整位置」模式里）                                       */
+/* 批量生成点位（在「调整位置」模式里）                                       */
 /* ========================================================================== */
 
 /**
@@ -932,7 +933,7 @@ async function deleteStation(station: Workstation): Promise<boolean> {
  *
  * 为什么这么啰嗦：这个功能曾经在「编辑底图」页，紧挨着「新增图元」
  * （草稿语义、不保存就白搭），长得一样但语义相反。用户"就点了试试"，
- * 24 个工位直接落库、退出时连确认框都没弹（layout 没变 → 不算脏）。
+ * 24 个点位直接落库、退出时连确认框都没弹（layout 没变 → 不算脏）。
  * 那次的教训见 CURRENT_STATE 决策 67。
  */
 async function runBulk() {
@@ -942,11 +943,11 @@ async function runBulk() {
   const rows = Math.ceil(bulk.value.count / bulk.value.cols)
   try {
     await ElMessageBox.confirm(
-      `将立刻往数据库里写入 ${bulk.value.count} 个工位（${range}）。\n\n` +
+      `将立刻往数据库里写入 ${bulk.value.count} 个点位（${range}）。\n\n` +
         `排布：${rows} 行 × ${bulk.value.cols} 列，起点 (${bulk.value.origin_x}, ${bulk.value.origin_y})，` +
         `横距 ${bulk.value.step_x} / 纵距 ${bulk.value.step_y}。\n\n` +
         '生成后可以在面板里点「撤销生成」撤回。',
-      '批量生成工位',
+      '批量生成点位',
       { confirmButtonText: `生成 ${bulk.value.count} 个`, cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -963,8 +964,8 @@ async function runBulk() {
     })
     stations.value = [...stations.value, ...result.items]
     lastBulk.value = { codes: result.codes, items: result.items.map((i) => ({ id: i.id })) }
-    ElMessage.success(`已生成 ${result.created} 个工位（${result.first_code} ~ ${result.last_code}）`)
-    // 新工位可能落在当前视野外，重新 fit 一次让用户直接看到
+    ElMessage.success(`已生成 ${result.created} 个点位（${result.first_code} ~ ${result.last_code}）`)
+    // 新点位可能落在当前视野外，重新 fit 一次让用户直接看到
     await nextTick()
     fit()
   } catch (error) {
@@ -981,7 +982,7 @@ async function undoBulk() {
   const batch = lastBulk.value
   try {
     await ElMessageBox.confirm(
-      `把刚生成的 ${batch.codes.length} 个工位（${batch.codes[0]} ~ ${batch.codes[batch.codes.length - 1]}）删掉？\n` +
+      `把刚生成的 ${batch.codes.length} 个点位（${batch.codes[0]} ~ ${batch.codes[batch.codes.length - 1]}）删掉？\n` +
         '是软删除：编码会被它们继续占用，不会释放给别人。',
       '撤销生成',
       { confirmButtonText: '撤销生成', cancelButtonText: '算了', type: 'warning' },
@@ -1006,7 +1007,7 @@ async function undoBulk() {
 
   if (failed.length === 0) {
     lastBulk.value = null
-    ElMessage.success(`已撤销 ${removed.size} 个工位`)
+    ElMessage.success(`已撤销 ${removed.size} 个点位`)
   } else {
     lastBulk.value = {
       codes: batch.codes.slice(batch.codes.length - failed.length),
@@ -1024,7 +1025,7 @@ function toggleBulkPanel() {
 }
 
 /**
- * 「给这个工位挂一台新设备」→ 跳到台账并打开新增表单，预选好这个工位。
+ * 「给这个点位挂一台新设备」→ 跳到台账并打开新增表单，预选好这个点位。
  *
  * 为什么不是地图弹一个"挑设备"的窗：那需要在弹窗里塞一个设备选择器，
  * 而设备有一百多台、带筛选和分页，等于把台账再写一遍。
@@ -1074,7 +1075,7 @@ async function markAsset(assetId: number, result: 'checked' | 'abnormal' | 'pend
   }
 }
 
-/** 一个工位上"属于本次任务"的设备全部标为同一状态（逐台调同一个 mark 接口） */
+/** 一个点位上"属于本次任务"的设备全部标为同一状态（逐台调同一个 mark 接口） */
 async function markStation(workstationId: number, result: 'checked' | 'abnormal') {
   const row = mapView.value?.workstations.find((w) => w.workstation_id === workstationId)
   if (!row?.assets.length) return
@@ -1089,7 +1090,7 @@ function setAuditFilter(key: 'all' | MapState) {
   auditFilter.value = key
 }
 
-/** 某个工位在当前筛选下是否应该变暗 */
+/** 某个点位在当前筛选下是否应该变暗 */
 function isDimmed(stationId: number): boolean {
   if (!auditMode.value) return false
   if (auditFilter.value !== 'all') {
@@ -1102,7 +1103,7 @@ function isDimmed(stationId: number): boolean {
 }
 
 /**
- * 某个工位是否该变暗（搜索维度）。
+ * 某个点位是否该变暗（搜索维度）。
  *
  * 与 `isDimmed` 分开：那个管**盘点筛选**（只在盘点模式下生效），
  * 这个管**搜索**（任何时候都生效）。
@@ -1121,11 +1122,11 @@ function isSearchDimmed(stationId: number): boolean {
 /* ========================================================================== */
 
 /**
- * 导出工位 JSON。
+ * 导出点位 JSON。
  *
  * 格式仍是 `asset-space-map/workstations@1`（后端导入按这个 schema 卡闸门），
- * 且**刻意不带 assets** —— 工位文件只描述工位本身，
- * 真实资产归属由 `assets.workstation_id` 反着指向工位。详见 `utils/workstationMap.ts`。
+ * 且**刻意不带 assets** —— 点位文件只描述点位本身，
+ * 真实资产归属由 `assets.workstation_id` 反着指向点位。详见 `utils/workstationMap.ts`。
  */
 function exportJson() {
   const payload = buildExportPayload(stations.value, canvas.value)
@@ -1144,7 +1145,7 @@ function exportJson() {
   link.click()
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
-  ElMessage.success(`已导出 ${stations.value.length} 个工位（不含资产，资产归属以系统为准）`)
+  ElMessage.success(`已导出 ${stations.value.length} 个点位（不含资产，资产归属以系统为准）`)
 }
 
 /* ========================================================================== */
@@ -1215,8 +1216,8 @@ onMounted(async () => {
   /**
    * mouseup 挂在 **document** 上，不是视口上。
    *
-   * 挂视口的话，用户把工位拖到视口边缘之外松手（拖到侧栏上方、或拖出窗口），
-   * 拖动就永远不结束 —— `dragId` 一直是那个工位，位置变更也不会被记进待保存集合。
+   * 挂视口的话，用户把点位拖到视口边缘之外松手（拖到侧栏上方、或拖出窗口），
+   * 拖动就永远不结束 —— `dragId` 一直是那个点位，位置变更也不会被记进待保存集合。
    * 原型踩过同一类坑（它自己的注释里写着"此前缺少 mousemove/mouseup 监听"），
    * 这里跟着用 document 才符合拖拽的常规做法。
    */
@@ -1239,12 +1240,12 @@ function onCompactChange(event: MediaQueryListEvent) {
 }
 
 /**
- * 选中工位变化时做两件事：
+ * 选中点位变化时做两件事：
  *
  * 1. **窄屏**：把画布挪到它身上（保缩放）—— 抽屉是浮层，选中后会被它盖住；
  *    点关闭（`id === null`）时也走一遍，但**不重算缩放**，用户只是收起了详情，
  *    不该把它的视图重置回适应大小。
- * 2. 侧栏要显示这个工位上的资产，没缓存过就去拉。
+ * 2. 侧栏要显示这个点位上的资产，没缓存过就去拉。
  */
 watch(selectedId, (id) => {
   if (id !== null && !assetCache.value[id]) void loadAssets(id)
@@ -1264,7 +1265,7 @@ watch(selectedId, (id) => {
       <div class="stats">
         <div class="stat">
           <div class="v">{{ stats.total }}</div>
-          <div class="k">总工位</div>
+          <div class="k">总点位</div>
         </div>
         <div class="stat used">
           <div class="v">{{ stats.assigned }}</div>
@@ -1272,14 +1273,14 @@ watch(selectedId, (id) => {
         </div>
         <div class="stat free">
           <div class="v">{{ stats.free }}</div>
-          <div class="k">空闲工位</div>
+          <div class="k">空闲点位</div>
         </div>
       </div>
 
       <div class="vline" />
 
       <div class="search-box">
-        <input v-model="searchQuery" type="text" placeholder="搜索姓名 / 工位 / 房间..." spellcheck="false" />
+        <input v-model="searchQuery" type="text" placeholder="搜索姓名 / 点位 / 房间..." spellcheck="false" />
         <button v-if="searchQuery" class="clear" @click="searchQuery = ''">×</button>
       </div>
 
@@ -1302,8 +1303,8 @@ watch(selectedId, (id) => {
             删除
           </button>
           <!--
-            批量生成工位。**放在这里而不是「编辑底图」里** —— 见 runBulk 的注释。
-            只在「调整位置」模式里出现：它属于"摆工位"，不属于"看地图"。
+            批量生成点位。**放在这里而不是「编辑底图」里** —— 见 runBulk 的注释。
+            只在「调整位置」模式里出现：它属于"摆点位"，不属于"看地图"。
           -->
           <button v-if="editMode" class="btn teal" :class="{ on: bulkOpen }" @click="toggleBulkPanel">
             批量生成
@@ -1324,10 +1325,10 @@ watch(selectedId, (id) => {
           </button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="add">{{ adding ? '取消新增' : '新增工位' }}</el-dropdown-item>
-              <el-dropdown-item command="remove" :disabled="!selected">删除选中工位</el-dropdown-item>
+              <el-dropdown-item command="add">{{ adding ? '取消新增' : '新增点位' }}</el-dropdown-item>
+              <el-dropdown-item command="remove" :disabled="!selected">删除选中点位</el-dropdown-item>
               <el-dropdown-item v-if="editMode" command="bulk">
-                {{ bulkOpen ? '收起批量生成' : '批量生成工位' }}
+                {{ bulkOpen ? '收起批量生成' : '批量生成点位' }}
               </el-dropdown-item>
               <el-dropdown-item command="export">导出 JSON</el-dropdown-item>
               <el-dropdown-item command="editor">编辑底图</el-dropdown-item>
@@ -1377,7 +1378,7 @@ watch(selectedId, (id) => {
           </div>
           <!--
             口径与原盘点页**完全一致**：已盘 / 应盘，异常单独标出来。
-            分母是**资产数**（task.total），不是工位数：一个工位可能挂 2 台，也可能 0 台。
+            分母是**资产数**（task.total），不是点位数：一个点位可能挂 2 台，也可能 0 台。
             异常不计入进度 —— 原盘点页就是这么算的，两页数字必须能对上。
           -->
           <!--
@@ -1428,12 +1429,12 @@ watch(selectedId, (id) => {
     <!-- ───────────────────────── 地图 + 侧栏 ───────────────────────── -->
     <div class="map-body">
       <!--
-        批量生成工位面板。浮在画布左上角，只在「调整位置」模式下由按钮唤出。
-        它**不在编辑器里** —— 「底图是底图，工位是工位」（见 runBulk 的注释）。
+        批量生成点位面板。浮在画布左上角，只在「调整位置」模式下由按钮唤出。
+        它**不在编辑器里** —— 「底图是底图，点位是点位」（见 runBulk 的注释）。
       -->
       <div v-if="bulkOpen && editMode" class="bulk-panel">
         <div class="bulk-panel-head">
-          <span>批量生成工位</span>
+          <span>批量生成点位</span>
           <button class="bulk-close" title="收起" @click="toggleBulkPanel">×</button>
         </div>
         <p class="bulk-warn">⚠ 会<span>立刻写进数据库</span>，不用点保存。生成后可撤销。</p>
@@ -1474,7 +1475,7 @@ watch(selectedId, (id) => {
           </div>
 
           <button class="bulk-go" :disabled="bulkBusy || !bulkValid" @click="runBulk">
-            {{ bulkBusy ? '生成中…' : '生成工位' }}
+            {{ bulkBusy ? '生成中…' : '生成点位' }}
           </button>
 
           <div v-if="lastBulk" class="bulk-undo">
@@ -1592,7 +1593,7 @@ watch(selectedId, (id) => {
             />
           </template>
 
-          <!-- 工位 -->
+          <!-- 点位 -->
           <div
             v-for="station in stations"
             :key="station.id"
@@ -1634,9 +1635,9 @@ watch(selectedId, (id) => {
             </div>
           </template>
           <div class="it hint">
-            <template v-if="hasQuery && !matchedIds.size">没有匹配的工位</template>
-            <template v-else-if="auditMode">点击工位可对单台设备盘点</template>
-            <template v-else>点「调整位置」后可拖动工位</template>
+            <template v-if="hasQuery && !matchedIds.size">没有匹配的点位</template>
+            <template v-else-if="auditMode">点击点位可对单台设备盘点</template>
+            <template v-else>点「调整位置」后可拖动点位</template>
           </div>
         </div>
 
@@ -1644,11 +1645,11 @@ watch(selectedId, (id) => {
       </div>
 
       <!--
-        工位详情抽屉。
+        点位详情抽屉。
         宽屏：`.sheet-host` 是 `display: contents`，这份包装完全不参与布局，
               侧栏还是老老实实一列 390px 的右栏（和之前一模一样）。
-        窄屏：它变成浮在画布上的底部抽屉，且**没选中工位时整个不渲染** ——
-              手机上那块"选择一个工位"的空态占满整屏，等于把地图废掉了。
+        窄屏：它变成浮在画布上的底部抽屉，且**没选中点位时整个不渲染** ——
+              手机上那块"选择一个点位"的空态占满整屏，等于把地图废掉了。
 
         ref 是给 fit() / centerOnStation() 量高度用的：抽屉盖住的这截要让出来。
       -->
@@ -1883,7 +1884,7 @@ watch(selectedId, (id) => {
 .map-body { flex: 1; display: flex; min-height: 0; position: relative; }
 
 /**
- * 工位详情抽屉的外壳。
+ * 点位详情抽屉的外壳。
  *
  * 宽屏下用 `display: contents` —— 它自己不生成盒子，里面的 `<aside class="sb">`
  * 直接当 `.map-body` 的 flex 子项，和"没有这层包装"时完全一样（不动原有布局）。
@@ -1900,7 +1901,7 @@ watch(selectedId, (id) => {
   /* 触摸手势不给浏览器：不写这条的话手指一划页面就开始滚，
      我们收不到 pointermove，平移在手机上直接失效。
      （touch-action 不是继承属性，但浏览器取的是从命中元素到根这条链上的**交集**，
-     所以落在工位上的手指一样被这条镇住 —— 双指缩放能生效也靠它。） */
+     所以落在点位上的手指一样被这条镇住 —— 双指缩放能生效也靠它。） */
   touch-action: none;
 }
 .viewport.space-hold { cursor: grab; }
@@ -1924,8 +1925,8 @@ watch(selectedId, (id) => {
 }
 .map-page.edit-on .grid-backdrop { opacity: 1; }
 
-/* ── 批量生成工位面板（浮在画布左上角，仅「调整位置」模式下出现）──────
-   它从「编辑底图」页搬过来的：底图与工位分属两页，别再混在一起。
+/* ── 批量生成点位面板（浮在画布左上角，仅「调整位置」模式下出现）──────
+   它从「编辑底图」页搬过来的：底图与点位分属两页，别再混在一起。
    面板本身是**覆盖层**，不占画布布局 —— 否则会让 fit() 算出的可用面积变小。 */
 .bulk-panel {
   position: absolute;
@@ -2000,7 +2001,7 @@ watch(selectedId, (id) => {
 .bulk-undo-btn:hover:not(:disabled) { background: #fef2f2; border-color: #fca5a5; }
 .bulk-undo-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* ElMessage 里的行内「撤销」（单个新增工位时用）。
+/* ElMessage 里的行内「撤销」（单个新增点位时用）。
    挂在消息体里而不是做全局 action，避免和其它消息抢位置。 */
 .undo-msg { display: inline-flex; align-items: center; gap: 10px; }
 .undo-inline {
@@ -2068,7 +2069,7 @@ watch(selectedId, (id) => {
 .guides .g-v,
 .guides .g-h { stroke: #0d9488; stroke-width: 1; stroke-dasharray: 6 4; opacity: 0.9; }
 
-/* ───────────────────────── 工位卡片 ───────────────────────── */
+/* ───────────────────────── 点位卡片 ───────────────────────── */
 .ws {
   position: absolute; width: 80px; height: 56px; z-index: 5;
   transition: opacity 0.2s var(--ease);
@@ -2252,7 +2253,7 @@ watch(selectedId, (id) => {
   .zgroup { margin-left: auto; }
 
   /* ── 盘点模式：把全局统计也收掉 ──
-     这时候要看的是"盘到哪了"，不是"总工位 / 已分配 / 空闲"；而它一占就是一行。
+     这时候要看的是"盘到哪了"，不是"总点位 / 已分配 / 空闲"；而它一占就是一行。
      小屏上这一行直接决定画布还剩多大 —— 用户的诉求就是"上面固定不动的占太多了"。
      退出盘点自动回来。 */
   .map-page.audit-on .stats { display: none; }
@@ -2307,8 +2308,8 @@ watch(selectedId, (id) => {
     overflow: hidden;
   }
 
-  /* 没选中工位时整块不渲染。
-     原来那份"选择一个工位"的空态在手机上占满整屏 —— 恰好把地图废掉了，
+  /* 没选中点位时整块不渲染。
+     原来那份"选择一个点位"的空态在手机上占满整屏 —— 恰好把地图废掉了，
      而手机点进来第一眼最该看到的就是地图。 */
   .sheet-host--hidden { display: none; }
 

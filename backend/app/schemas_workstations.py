@@ -1,4 +1,4 @@
-"""工位（资产空间地图）的请求 / 响应结构。
+"""点位（资产空间地图）的请求 / 响应结构。
 
 单独一个文件而不是往 schemas.py 里塞：schemas.py 已经 590 多行，
 再插 200 行会让那个文件继续膨胀。这里只依赖 schemas.py 的公共件，
@@ -19,7 +19,7 @@ from .schemas import FacingLiteral, InventoryTaskOut, _blank_to_none
 # 地图渲染
 # --------------------------------------------------------------------------- #
 class WorkstationCreate(BaseModel):
-    """新增工位。code 留空则由后端生成 —— 不要交给前端算，并发会撞。"""
+    """新增点位。code 留空则由后端生成 —— 不要交给前端算，并发会撞。"""
 
     code: Optional[str] = Field(default=None, max_length=32)
     x: int
@@ -33,7 +33,7 @@ class WorkstationCreate(BaseModel):
 
 
 class WorkstationUpdate(BaseModel):
-    """编辑工位。只传要改的字段；未传的保持原值。
+    """编辑点位。只传要改的字段；未传的保持原值。
 
     x / y 也能从这儿单改，但界面上的拖动应当走 `/layout` 攒批提交 ——
     逐次提交会让审计被几十次布局微调刷屏。
@@ -64,23 +64,23 @@ class WorkstationLayoutRequest(BaseModel):
 
 
 class WorkstationBulkGenerate(BaseModel):
-    """批量生成工位（画一片区域 → 行列排布）。
+    """批量生成点位（画一片区域 → 行列排布）。
 
     **为什么必须是独立接口而不是循环调 `POST /api/workstations`**：
     「一次批量操作 = 1 条审计」是全系统口径（批量导入 30 台设备也是 1 条）。
-    循环 24 次会往审计页灌 24 条「新增工位」，把真正的资产操作淹掉。
+    循环 24 次会往审计页灌 24 条「新增点位」，把真正的资产操作淹掉。
 
     ## 参数语义
     - `count` 是**总数**，不是"列数 × 行数"（前端算好了再传，避免两边各算一遍还同意不了）。
-    - `cols` 只影响排布（一行几个），`facing` 支持 `alternate` —— 现实里面对面的工位
+    - `cols` 只影响排布（一行几个），`facing` 支持 `alternate` —— 现实里面对面的点位
       朝向是反的，一个"全部朝下"的批量工具做出来的图会假得刺眼。
     - `start_code` / `code_prefix`：**编码建议是给用户的，真相在后端**。
       前端面板显示"将生成 W63~W86"只是预览；真分配时后端在事务里查全量 code 兜底，
-      撞了就 409，**绝不静默跳号**（因为已删工位的编码不释放，跳号会让用户对不上账）。
+      撞了就 409，**绝不静默跳号**（因为已删点位的编码不释放，跳号会让用户对不上账）。
     """
 
     count: int = Field(ge=1, le=200, description="生成总数量")
-    origin_x: int = Field(description="起始 X（左上角第一个工位）")
+    origin_x: int = Field(description="起始 X（左上角第一个点位）")
     origin_y: int = Field(description="起始 Y")
     step_x: int = Field(default=90, ge=20, le=400, description="横向间距")
     step_y: int = Field(default=66, ge=20, le=400, description="纵向间距")
@@ -90,7 +90,7 @@ class WorkstationBulkGenerate(BaseModel):
     start_code: Optional[str] = Field(
         default=None, max_length=32, description="起始编码（如 W63）。不传则由后端按现有最大值续号"
     )
-    room: Optional[str] = Field(default=None, max_length=64, description="房间标签，传给每个工位")
+    room: Optional[str] = Field(default=None, max_length=64, description="房间标签，传给每个点位")
     operator: Optional[str] = Field(default=None, max_length=64)
 
     _clean = field_validator("code_prefix", "start_code", "room", "operator", mode="before")(_blank_to_none)
@@ -120,7 +120,7 @@ class WorkstationBulkResult(BaseModel):
     #: 第一个 / 最后一个编码，给 toast 用
     first_code: Optional[str] = None
     last_code: Optional[str] = None
-    #: 落库后的工位，供前端直接画上去（省一次全量拉取）
+    #: 落库后的点位，供前端直接画上去（省一次全量拉取）
     items: list["WorkstationOut"] = []
 
 
@@ -137,7 +137,7 @@ class WorkstationOut(BaseModel):
     active: bool = True
     created_at: datetime
     updated_at: datetime
-    #: 工位上挂了几台资产 —— 派生查询，不落库（红线 2）
+    #: 点位上挂了几台资产 —— 派生查询，不落库（红线 2）
     asset_count: int = 0
 
 
@@ -156,7 +156,7 @@ class WorkstationMap(BaseModel):
 
     `layout` 是平面图的建筑图元（地台/走廊/房间/墙体/前厅），
     由后端从默认平面图带出来 —— 前端不再写死。没有图时是空 layout，
-    画布上只剩工位（这是有意的降级，好过整页报错）。
+    画布上只剩点位（这是有意的降级，好过整页报错）。
     """
 
     canvas: WorkstationMapCanvas = WorkstationMapCanvas()
@@ -169,9 +169,9 @@ class WorkstationMap(BaseModel):
 
 
 class WorkstationAssetsRequest(BaseModel):
-    """把一批资产挪到工位上 / 从工位摘下来。
+    """把一批资产挪到点位上 / 从点位摘下来。
 
-    **落库方向永远是 assets.workstation_id**，工位表里不存资产列表 ——
+    **落库方向永远是 assets.workstation_id**，点位表里不存资产列表 ——
     存两处必然对不上。
     """
 
@@ -204,16 +204,16 @@ class MapInventoryAsset(BaseModel):
 
 
 class MapInventoryWorkstation(BaseModel):
-    """一个工位在这次盘点里的状态。
+    """一个点位在这次盘点里的状态。
 
     state 五种取值：
-      checked / abnormal / pending —— 由该工位下**属于本次任务**的资产 result 聚合，不落库
+      checked / abnormal / pending —— 由该点位下**属于本次任务**的资产 result 聚合，不落库
       empty                        —— 这位置一台资产都没有
       not_in_scope                 —— 有资产，但不属于当前选中的这次盘点（本次不盘）
 
     **empty / not_in_scope 两种中性态只存在于这个视图层**，不会写进 inventory_items ——
     它们是"查不到对应行"推出来的，不是盘点结果。给 InventoryResult 加第四态会污染
-    导出、筛选和统计，因为那是**资产**的盘点结果，而空工位不是资产。
+    导出、筛选和统计，因为那是**资产**的盘点结果，而空点位不是资产。
     """
 
     workstation_id: int
@@ -226,34 +226,34 @@ class MapInventoryWorkstation(BaseModel):
     #: checked / abnormal / pending / empty / not_in_scope
     state: str
     state_label: str = ""
-    #: 该工位下**属于本次任务**的资产明细（empty / not_in_scope 时为空）
+    #: 该点位下**属于本次任务**的资产明细（empty / not_in_scope 时为空）
     assets: list[MapInventoryAsset] = []
-    #: 该工位下资产总数（含不属于本次任务的）—— 用来区分 empty 与 not_in_scope
+    #: 该点位下资产总数（含不属于本次任务的）—— 用来区分 empty 与 not_in_scope
     asset_count: int = 0
 
 
 class MapInventoryView(BaseModel):
-    """地图盘点视图。一次拿全图状态，避免前端为 62 个工位发 62 次请求。"""
+    """地图盘点视图。一次拿全图状态，避免前端为 62 个点位发 62 次请求。"""
 
     task: InventoryTaskOut
     canvas: WorkstationMapCanvas = WorkstationMapCanvas()
     workstations: list[MapInventoryWorkstation] = []
-    #: 各状态的**工位**计数（含 empty / not_in_scope）
+    #: 各状态的**点位**计数（含 empty / not_in_scope）
     counts: dict[str, int] = {}
     #: 进度分母用 task.total / task.checked —— 那是**资产**维度。
-    #: 盘点的对象是资产：一个工位可能挂 2 台，也可能 0 台，
-    #: 拿工位数当分母在任何工位挂 2 台资产时都会失准。
-    #: 「没有被任何工位认领」的资产数 —— 盘点时最该被看见的一批（没位置 = 没人管）
+    #: 盘点的对象是资产：一个点位可能挂 2 台，也可能 0 台，
+    #: 拿点位数当分母在任何点位挂 2 台资产时都会失准。
+    #: 「没有被任何点位认领」的资产数 —— 盘点时最该被看见的一批（没位置 = 没人管）
     unassigned: int = 0
-    #: 有工位、但不属于本次任务的资产数（这些设备本次不盘）
+    #: 有点位、但不属于本次任务的资产数（这些设备本次不盘）
     out_of_scope: int = 0
 
 
 # --------------------------------------------------------------------------- #
-# 工位导入
+# 点位导入
 # --------------------------------------------------------------------------- #
 class WorkstationImportRow(BaseModel):
-    """一条工位的判定结果 —— 预览与落库结果共用同一份结构。"""
+    """一条点位的判定结果 —— 预览与落库结果共用同一份结构。"""
 
     row: int
     code: str = ""

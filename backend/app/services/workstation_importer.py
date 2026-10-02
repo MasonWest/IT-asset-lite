@@ -1,4 +1,4 @@
-"""工位批量导入（`workstations-*.json`）。
+"""点位批量导入（`workstations-*.json`）。
 
 ## 与资产导入的关系
 
@@ -15,19 +15,19 @@
 
 ## ⚠️ 本文件最重要的一条：必须显式忽略 `workstations[].assets`
 
-原型导出的 JSON 里，几乎每个工位带一个 `assets` 数组，内容是这样的：
+原型导出的 JSON 里，几乎每个点位带一个 `assets` 数组，内容是这样的：
 
     {"id": "a1-W07", "type": "host",    "name": "ThinkPad X1 Carbon (主机)", "sn": "TP-W07-8842"}
     {"id": "a2-W07", "type": "monitor", "name": "Dell 27\\" 4K (显示器)",     "sn": "DL-W07-9018"}
 
 **那是原型侧的假资产**，本系统已有 142 台真实资产的 `asset_code` 形如 `A100-01-00002`，
 且真实库里 `serial_number` 全部为空 —— 两边**没有任何可对齐的键**。
-（顺带它自己也不自洽：`summary.assigned = 45`，却有 47 个工位带资产。）
+（顺带它自己也不自洽：`summary.assigned = 45`，却有 47 个点位带资产。）
 
 所以这里 **`row.pop("assets", None)` 并留注释**，而不是"顺手没读"：
 图省事把它写进去，会凭空造出 94 台假设备混进台账、参与统计、被导出读到。
 
-真实资产挂在哪个工位，由 `assets.workstation_id` 决定（方向是反的），
+真实资产挂在哪个点位，由 `assets.workstation_id` 决定（方向是反的），
 不是由这份 JSON 决定。
 
 ## 幂等
@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Facing, Workstation
 
-#: 认得出是工位导出文件的 schema。升级格式时这里是明确的分岔点，
+#: 认得出是点位导出文件的 schema。升级格式时这里是明确的分岔点，
 #: 而不是靠字段名瞎猜。
 EXPECTED_SCHEMA = "asset-space-map/workstations@1"
 
@@ -101,7 +101,7 @@ class ImportPlan:
     schema_ok: bool = True
     schema_note: str = ""
     empty: bool = False
-    #: 坐标与库里另一个工位完全重合（疑似"改名后重导"）
+    #: 坐标与库里另一个点位完全重合（疑似"改名后重导"）
     duplicate_positions: list[str] = field(default_factory=list)
 
     @property
@@ -195,7 +195,7 @@ def build_plan(
         plan.schema_note = (
             f"文件 schema 是「{schema or '（缺失）'}」，"
             f"本接口只认「{EXPECTED_SCHEMA}」。"
-            f"请确认导出的是工位文件，而不是别的 JSON。"
+            f"请确认导出的是点位文件，而不是别的 JSON。"
         )
         return plan
 
@@ -204,12 +204,12 @@ def build_plan(
         plan.empty = True
         return plan
 
-    # 一次查完库里已有的工位，避免每行一次查询
+    # 一次查完库里已有的点位，避免每行一次查询
     existing: dict[str, Workstation] = {}
     for station in db.execute(select(Workstation)).scalars().all():
         existing[station.code] = station
 
-    # 坐标 → 现有工位代号，用来发现"改了名又重导"造成的重叠
+    # 坐标 → 现有点位代号，用来发现"改了名又重导"造成的重叠
     occupied: dict[tuple[int, int], str] = {
         (int(s.x), int(s.y)): s.code for s in existing.values() if s.active
     }
@@ -276,14 +276,14 @@ def _plan_row(
     # --- code：匹配键，必填且唯一 ---
     code, _ = _clean_text(item.get("code"))
     if not code:
-        errors.append("工位编码不能为空（它是判断新增还是更新的依据）")
+        errors.append("点位编码不能为空（它是判断新增还是更新的依据）")
         row.action = ACTION_ERROR
         return row
     row.code = code
     if len(code) > MAX_LENGTHS["code"]:
-        errors.append(f"工位编码太长（最多 {MAX_LENGTHS['code']} 个字符）")
+        errors.append(f"点位编码太长（最多 {MAX_LENGTHS['code']} 个字符）")
     if duplicate_of is not None:
-        errors.append(f"工位编码「{code}」在文件里重复了（第 {duplicate_of} 条已经用过）")
+        errors.append(f"点位编码「{code}」在文件里重复了（第 {duplicate_of} 条已经用过）")
 
     # --- 坐标：必填 ---
     x = _parse_int(item.get("x"), "x", errors)
@@ -325,13 +325,13 @@ def _plan_row(
                 row.action = ACTION_UNCHANGED
     else:
         row.action = ACTION_CREATE if not errors else ACTION_ERROR
-        # 坐标与另一个工位完全重合 → 提示"是不是同一个工位改了名"
+        # 坐标与另一个点位完全重合 → 提示"是不是同一个点位改了名"
         if x is not None and y is not None:
             other = occupied.get((x, y))
             if other and other != code:
                 row.warnings.append(
-                    f"坐标 ({x},{y}) 与现有工位「{other}」完全相同。"
-                    f"如果这是同一个工位改了名，请不要导入这一条。"
+                    f"坐标 ({x},{y}) 与现有点位「{other}」完全相同。"
+                    f"如果这是同一个点位改了名，请不要导入这一条。"
                 )
 
     if errors:
@@ -427,7 +427,7 @@ def apply_plan(db: Session, plan: ImportPlan) -> ImportOutcome:
         # 更新
         station = db.get(Workstation, row.workstation_id) if row.workstation_id else None
         if station is None:
-            row.errors.append("要更新的工位在提交时已经不存在了（可能被同时删掉了）")
+            row.errors.append("要更新的点位在提交时已经不存在了（可能被同时删掉了）")
             row.action = ACTION_ERROR
             outcome.failed += 1
             continue

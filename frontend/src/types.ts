@@ -62,9 +62,9 @@ export interface Asset {
   status_label: string
   user_name: string | null
   location: string | null
-  /** 挂在哪个工位上。绝大多数资产为 null（不在工位上） */
+  /** 挂在哪个点位上。绝大多数资产为 null（不在点位上） */
   workstation_id: number | null
-  /** 工位编码，便于列表直接显示，不用再查一次 */
+  /** 点位编码，便于列表直接显示，不用再查一次 */
   workstation_code: string | null
   purchase_date: string | null
   warranty_until: string | null
@@ -147,7 +147,7 @@ export interface FilterOptions {
   total: number
   status_counts: Record<string, number>
   device_type_counts: Record<string, number>
-  /** 没有落到任何工位点位的资产数（台账页「无点位资产」统计卡） */
+  /** 没有落到任何点位点位的资产数（台账页「无点位资产」统计卡） */
   no_workstation_count: number
   pair_stats: Record<string, number>
 }
@@ -163,9 +163,9 @@ export interface AssetPayload {
   user_name?: string | null
   location?: string | null
   /**
-   * 所在工位。
+   * 所在点位。
    *
-   * **`null` 与"不传"在语义上不同**：不传 = 不动；传 null = 从工位上摘下来。
+   * **`null` 与"不传"在语义上不同**：不传 = 不动；传 null = 从点位上摘下来。
    * 后端靠 `model_dump(exclude_unset=True)` 区分这两者，所以表单提交时
    * 这个键**必须显式带上**，不能因为是 null 就省略。
    */
@@ -197,7 +197,7 @@ export interface AssetQuery {
   location?: string
   paired?: 'paired' | 'unpaired'
   /**
-   * 点位轴：`none` = 只看没落到任何工位点位的资产。
+   * 点位轴：`none` = 只看没落到任何点位点位的资产。
    *
    * 与 `status` **正交**（一台设备可以既「在用」又「没点位」），所以不是枚举选择，
    * 而是"要不要加这个条件" —— 传别的值等于不筛。
@@ -482,13 +482,13 @@ export interface AuditQuery {
 }
 
 // --------------------------------------------------------------------------- //
-// 工位（资产空间地图）
+// 点位（资产空间地图）
 // --------------------------------------------------------------------------- //
-/** 工位朝向。桌子朝哪边摆 —— 是家具属性，与它在画布第几行无关 */
+/** 点位朝向。桌子朝哪边摆 —— 是家具属性，与它在画布第几行无关 */
 export type Facing = 'up' | 'down'
 
 /**
- * 工位级盘点状态。前三种来自后端 `inventory_items.result` 的聚合，
+ * 点位级盘点状态。前三种来自后端 `inventory_items.result` 的聚合，
  * 后两种是**视图层专有**的中性态（后端也算好了，只是不落库）：
  *   - `empty`        这位置一台资产都没有 —— 不是"盘过了"，也不是"漏盘"
  *   - `not_in_scope` 有资产，但不属于当前选中的这次盘点（本次不盘）
@@ -506,7 +506,7 @@ export interface Workstation {
   active: boolean
   created_at: string
   updated_at: string
-  /** 工位上挂了几台资产 —— 后端派生，不落库 */
+  /** 点位上挂了几台资产 —— 后端派生，不落库 */
   asset_count: number
 }
 
@@ -542,7 +542,7 @@ export interface FloorMapSavePayload {
   operator?: string | null
 }
 
-/** 批量生成工位的参数。与后端 `WorkstationBulkGenerate` 一一对应。 */
+/** 批量生成点位的参数。与后端 `WorkstationBulkGenerate` 一一对应。 */
 export interface WorkstationBulkPayload {
   /** 生成总数（不是列数） */
   count: number
@@ -649,7 +649,7 @@ export interface MapInventoryWorkstation {
   state_label: string
   /** 属于本次任务的资产明细（empty / not_in_scope 时为空） */
   assets: MapInventoryAsset[]
-  /** 该工位下资产总数（含不属于本次任务的）—— 用来区分 empty 与 not_in_scope */
+  /** 该点位下资产总数（含不属于本次任务的）—— 用来区分 empty 与 not_in_scope */
   asset_count: number
 }
 
@@ -658,8 +658,8 @@ export interface MapInventoryView {
   canvas: WorkstationMapCanvas
   workstations: MapInventoryWorkstation[]
   counts: Record<string, number>
-  /** 没有被任何工位认领的资产数（没位置 = 没人管） */
+  /** 没有被任何点位认领的资产数（没位置 = 没人管） */
   unassigned: number
-  /** 有工位、但不属于本次任务的资产数（这些设备本次不盘） */
+  /** 有点位、但不属于本次任务的资产数（这些设备本次不盘） */
   out_of_scope: number
 }

@@ -102,7 +102,7 @@ def build_conditions(
     elif paired == "unpaired":
         conditions.append(~or_(Asset.id.in_(active_host_ids()), Asset.id.in_(active_monitor_ids())))
 
-    # 「没落到工位」= workstation_id 为空。只判 NULL 不判空串 ——
+    # 「没落到点位」= workstation_id 为空。只判 NULL 不判空串 ——
     # 这一列是外键，能写进去的只有整数或 NULL，不存在空串这种脏值。
     if workstation == "none":
         conditions.append(Asset.workstation_id.is_(None))

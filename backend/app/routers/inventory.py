@@ -525,8 +525,8 @@ def delete_task(
 # --------------------------------------------------------------------------- #
 # 地图盘点视图
 # --------------------------------------------------------------------------- #
-#: 工位级状态的聚合优先级：**异常 > 待盘 > 已盘**。
-#: 只要有一台异常，工位就报异常 —— 异常必须能被一眼看见，
+#: 点位级状态的聚合优先级：**异常 > 待盘 > 已盘**。
+#: 只要有一台异常，点位就报异常 —— 异常必须能被一眼看见，
 #: 不能被"其他都正常"掩盖。
 _STATE_LABELS: dict[str, str] = {
     InventoryResult.CHECKED: "已盘",
@@ -535,7 +535,7 @@ _STATE_LABELS: dict[str, str] = {
     # 这两个状态**只存在于地图视图层**，不会写进 inventory_items：
     # 它们是"查不到对应行"推出来的，不是盘点结果。给 InventoryResult 加第四态
     # 会污染导出、筛选和统计 —— 那个枚举描述的是**资产**的盘点结果，
-    # 而"空工位"和"不在本次范围"都不是资产。
+    # 而"空点位"和"不在本次范围"都不是资产。
     "empty": "空位",
     "not_in_scope": "不在本次范围",
 }
@@ -552,7 +552,7 @@ def map_view(task_id: int, db: Session = Depends(get_db)):
     **为什么不能复用 `/context/{asset_id}`**：那个接口是「单任务假设」——
     取该设备所属的、最近一个进行中任务，返回一个答案就够了。
     这在资产详情页合理（用户问的是"这台设备归哪个盘点"），
-    但地图问的是「**这一片工位整体盘到哪了**」—— 聚合视图必须明确
+    但地图问的是「**这一片点位整体盘到哪了**」—— 聚合视图必须明确
     "聚合的是哪一次"。否则两个盘点任务同时进行时，地图会显示一个
     用户没问过的任务的答案：大部分格子看似"待盘"，实际上那批设备
     在另一个任务里早就盘完了。所以这里**按 task_id 显式取**，
@@ -579,7 +579,7 @@ def map_view(task_id: int, db: Session = Depends(get_db)):
     )
     item_by_asset: dict[int, InventoryItem] = {int(i.asset_id): i for i in items}
 
-    # 所有挂在工位上的资产（含不属于本次任务的）
+    # 所有挂在点位上的资产（含不属于本次任务的）
     assets = list(db.execute(select(Asset).where(Asset.workstation_id.is_not(None))).scalars().all())
     assets_by_station: dict[int, list[Asset]] = {}
     for asset in assets:
@@ -651,7 +651,7 @@ def map_view(task_id: int, db: Session = Depends(get_db)):
             )
         )
 
-    # 没有被任何工位认领的资产数 —— 盘点时最该被看见的一批（没位置 = 没人管）
+    # 没有被任何点位认领的资产数 —— 盘点时最该被看见的一批（没位置 = 没人管）
     unassigned = int(
         db.execute(
             select(func.count(Asset.id)).where(Asset.workstation_id.is_(None))

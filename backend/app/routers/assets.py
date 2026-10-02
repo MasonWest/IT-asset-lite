@@ -67,7 +67,7 @@ _TRACKED_FIELDS = (
     "status",
     "user_name",
     "location",
-    #: 资产换工位必须进这个名单，否则「这台机器搬到哪去了」在时间线上毫无痕迹 ——
+    #: 资产换点位必须进这个名单，否则「这台机器搬到哪去了」在时间线上毫无痕迹 ——
     #: 而那正是下次盘点要找的答案。
     "workstation_id",
     "purchase_date",
@@ -167,7 +167,7 @@ def list_assets(
     user_name: Optional[str] = Query(None, description="使用人，多个用逗号分隔"),
     location: Optional[str] = Query(None, description="存放位置，多个用逗号分隔"),
     paired: Optional[str] = Query(None, description="配对筛选：paired 已配对 / unpaired 未配对"),
-    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有工位点位的资产"),
+    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有点位点位的资产"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
 ):
@@ -227,7 +227,7 @@ def list_assets_grouped(
     user_name: Optional[str] = Query(None, description="使用人，多个用逗号分隔"),
     location: Optional[str] = Query(None, description="存放位置，多个用逗号分隔"),
     paired: Optional[str] = Query(None, description="配对筛选：paired 已配对 / unpaired 未配对"),
-    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有工位点位的资产"),
+    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有点位点位的资产"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
 ):
@@ -426,7 +426,7 @@ def _humanize_changes(db: Session, changes: dict[str, dict[str, str]]) -> dict[s
     """把变更里的外键 ID 换成人能看懂的名字。
 
     差异比较拿的是原始列值，所以 `workstation_id` 会算出「3 → 10」这种
-    ——时间线上写「所在工位 3 → 10」等于没说，用户得回地图里数第 3 个格子是谁。
+    ——时间线上写「所在点位 3 → 10」等于没说，用户得回地图里数第 3 个格子是谁。
     这里只改**展示用**的 from / to，`diff_changes` 的比较逻辑不动。
 
     注意：`changes` 的键保持原样（`workstation_id`），因为

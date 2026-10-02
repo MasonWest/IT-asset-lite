@@ -183,14 +183,14 @@ def _add_category_column(conn) -> bool:
 
 
 def _add_workstation_id_column(conn) -> bool:
-    """第四阶段：给 assets 补 workstation_id 列（工位关联）。返回是否真的补了。
+    """第四阶段：给 assets 补 workstation_id 列（点位关联）。返回是否真的补了。
 
     **为什么必须写这段代码**：`Base.metadata.create_all()` 只建缺的**表**，
     绝不会给一个已存在的表补**列**。新库走 create_all 时列就是齐的、这里直接跳过，
     但已经跑起来的老库（142 台资产那个）必须靠这个函数才能拿到新列。
 
     与第一阶段补 device_types.category 的区别：这一列**不需要回填** ——
-    补上之后就是全 NULL，而 NULL 的语义正好是正确的（现有资产都还没指定工位）。
+    补上之后就是全 NULL，而 NULL 的语义正好是正确的（现有资产都还没指定点位）。
     所以这里没有 UPDATE，也不用记账（ALTER 本身幂等：列已存在就返回 False）。
 
     SQLite 的 ALTER TABLE ADD COLUMN 支持 REFERENCES（可空列可用），
@@ -204,7 +204,7 @@ def _add_workstation_id_column(conn) -> bool:
         "ALTER TABLE assets ADD COLUMN workstation_id INTEGER "
         "REFERENCES workstations(id) ON DELETE RESTRICT"
     )
-    # 地图要按工位反查资产清单，这个索引是必须的。
+    # 地图要按点位反查资产清单，这个索引是必须的。
     # 注意：模型里的 index=True 只对 create_all 新建的表生效，
     # 对已存在的 assets 表得在这里显式建。
     conn.exec_driver_sql(
@@ -217,7 +217,7 @@ def _add_floor_map_id_column(conn) -> bool:
     """第五阶段：给 workstations 补 floor_map_id 列（属于哪张平面图）。返回是否真的补了。
 
     与 `_add_workstation_id_column` 的关键区别：**这一列必须回填** ——
-    补上之后是 NULL，但 NULL 不是正确语义（每个工位都该属于某张图）。
+    补上之后是 NULL，但 NULL 不是正确语义（每个点位都该属于某张图）。
     回填在 `_recognize_default_floor_map()` 里做，所以**顺序不能反**：
     先补列 → 再建默认图 → 最后回填。
     """
@@ -228,7 +228,7 @@ def _add_floor_map_id_column(conn) -> bool:
         "ALTER TABLE workstations ADD COLUMN floor_map_id INTEGER "
         "REFERENCES floor_maps(id) ON DELETE RESTRICT"
     )
-    # 按图查工位会走这个索引（单图阶段用不上，但它是"以后会痛"的那类遗漏）。
+    # 按图查点位会走这个索引（单图阶段用不上，但它是"以后会痛"的那类遗漏）。
     # 模型里的 index=True 只对 create_all 新建的表生效，老库得在这里显式建。
     conn.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_workstations_floor_map_id ON workstations (floor_map_id)"
@@ -295,13 +295,13 @@ DEFAULT_FLOOR_HEIGHT = 1320
 
 
 def _recognize_default_floor_map(conn) -> dict[str, object]:
-    """第五阶段：建默认平面图，并把现有工位挂上去。
+    """第五阶段：建默认平面图，并把现有点位挂上去。
 
     返回 `{"id": int|None, "created": bool, "attached": int}`：
     - `created` 为 True 表示这次真的插了新图（幂等性靠它区分）
-    - `attached` 是这次挂到默认图上的工位数（无图时为 0）
+    - `attached` 是这次挂到默认图上的点位数（无图时为 0）
 
-    **这一步漏了会怎样**：升级后 floor_maps 空表、工位 floor_map_id 全是 NULL，
+    **这一步漏了会怎样**：升级后 floor_maps 空表、点位 floor_map_id 全是 NULL，
     /map 找不到图 → 画布上只剩 62 个孤零零的格子，走廊和房间全没了。
     用户看到的是"我的地图被清空了"，而且他会以为是升级弄丢了数据。
 
@@ -350,8 +350,8 @@ def _recognize_default_floor_map(conn) -> dict[str, object]:
     )
     map_id = conn.exec_driver_sql("SELECT last_insert_rowid()").scalar_one()
 
-    # 回填：所有还没挂图的工位都挂到默认图上。
-    # 用 IS NULL 而不是无条件 UPDATE —— 万一将来有多图，这里不会把别的图上的工位抢过来。
+    # 回填：所有还没挂图的点位都挂到默认图上。
+    # 用 IS NULL 而不是无条件 UPDATE —— 万一将来有多图，这里不会把别的图上的点位抢过来。
     attached = conn.exec_driver_sql(
         "UPDATE workstations SET floor_map_id = ? WHERE floor_map_id IS NULL", (map_id,)
     ).rowcount or 0
@@ -407,7 +407,7 @@ def ensure_schema() -> dict[str, object]:
       2. 给第二阶段之前的老库补 device_types.category 列；
       3. 给第四阶段之前的老库补 assets.workstation_id 列；
       4. 给第五阶段之前的老库补 workstations.floor_map_id 列，
-         并建默认平面图、把现有工位回填上去；
+         并建默认平面图、把现有点位回填上去；
       5. 给第三阶段之前的老库把 UTC 时间戳校正成本地时间。
     不引入 Alembic —— 约束里明确要求不提前引依赖，这几处改动不值得把迁移框架搬进来。
     新库走 create_all 时列就齐了，前几步会自动跳过。

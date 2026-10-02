@@ -1,10 +1,10 @@
 """平面图（floor map）的读写契约。
 
-## 为什么图元走 JSON，而工位走表
+## 为什么图元走 JSON，而点位走表
 
-工位与图元长得像，形态却不同：
+点位与图元长得像，形态却不同：
 
-- 工位有 `code` 唯一约束、被 `assets.workstation_id` 引用、能单独增删改 →
+- 点位有 `code` 唯一约束、被 `assets.workstation_id` 引用、能单独增删改 →
   必须是一张表，否则约束和引用都没地方放。
 - 图元（地台/走廊/房间/墙体/前厅）**没有任何东西引用它们**，永远是"整张图
   一起编辑一起保存" → 存成一个 JSON 文档就够了，建 `map_shapes` 表只会
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 
 class FloorMapCanvas(BaseModel):
-    """画布基准尺寸。与工位地图共用同一套坐标语义（960×1320，网格 20）。"""
+    """画布基准尺寸。与点位地图共用同一套坐标语义（960×1320，网格 20）。"""
 
     width: int = 960
     height: int = 1320

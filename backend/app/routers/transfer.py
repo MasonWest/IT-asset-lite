@@ -332,7 +332,7 @@ def export_assets(
     user_name: Optional[str] = Query(None, description="使用人，多个用逗号分隔"),
     location: Optional[str] = Query(None, description="存放位置，多个用逗号分隔"),
     paired: Optional[str] = Query(None),
-    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有工位点位的资产"),
+    workstation: Optional[str] = Query(None, description="点位筛选：none 只看没有点位点位的资产"),
     operator: Optional[str] = Query(None, description="操作人，写进审计日志"),
 ):
     """导出走的是列表页那套筛选（build_conditions），所以「导出当前筛选结果」是准的。"""
