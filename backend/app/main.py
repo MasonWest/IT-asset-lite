@@ -194,7 +194,19 @@ async def lifespan(_app: FastAPI):
         )
     elif not counts.get("assets"):
         print(f"  当前为空库（设备类型 {counts.get('device_types', 0)} 个，资产 0 台）")
-        print("  要灌演示数据：python seed.py        （清空数据：python reset.py）")
+        print()
+        print("  ▸ 想先看看它长什么样")
+        print("      python seed.py    灌 10 台演示设备（不碰已有数据，随时 python reset.py 清掉）")
+        print()
+        print("  ▸ 想建自己的地图（推荐，10 分钟内能完成）")
+        print("      浏览器打开上面的地址 → 顶栏点「空间地图」")
+        print("      点「调整位置」→ 点「新增」，再点画布空白处，就加了一个点位")
+        print("      要排一片就点「批量生成」（能实时预览编号范围）")
+        print("      想画房间走廊就点「编辑底图」，从零画地台 / 走道 / 房间 / 墙体")
+        print("      资产在「资产台账」逐台填「所在点位」，或用「批量导入」")
+        print()
+        print("  ▸ 已经有点位文件了")
+        print("      python backend\\import_workstations.py --file 你的.json")
     if detect_lan_ip() == "127.0.0.1":
         print("  [!] 未探测到局域网 IP，手机可能访问不了，请用 IT_ASSET_PUBLIC_BASE_URL 手动指定")
     if not FRONTEND_DIST.is_dir():

@@ -163,8 +163,19 @@ class WorkstationMap(BaseModel):
     layout: dict = Field(default_factory=dict)
     floor_map_id: Optional[int] = None
     total: int = 0
+    #: **有人**的点位数。斜杠 `/` 不算有人（与前端 `format.ts::hasOwner()` 同口径，
+    #: 见 `services/ownership.py`）。它和下面的 `without_asset` 是**两个正交轴**。
     assigned: int = 0
-    empty: int = 0
+    #: **一台设备都没挂**的点位数 —— 资产轴，**不是**"没人用"。
+    #:
+    #: ⚠️ **这个字段名字曾经叫 `empty`，是个陷阱**（2026-10-08 改名）：
+    #: 它算的是「无资产」，而**前端的「空闲点位」算的是「无人」**（`total - assigned`）——
+    #: **两个字段都叫"空闲"，指的是完全不同的事**，同一页上两个数字对不上，
+    #: 而且没有任何报错（跟斜杠那个 bug 同一类病）。
+    #:
+    #: 改成 `without_asset` 之后名字自己说清是什么，不再依赖读文档：
+    #: "没有人"要减一下算（`total - assigned`），"没设备"直接就是这个字段。
+    without_asset: int = 0
     items: list[WorkstationOut] = []
 
 
@@ -196,6 +207,10 @@ class MapInventoryAsset(BaseModel):
     result: str
     result_label: str = ""
     operator: Optional[str] = None
+    #: 盘点备注。**必须带上** —— 地图侧栏的「标记异常」会采集备注，
+    #: 不带回来就变成"填了看不见"；反过来，从盘点列表填的备注也要能在地图上回显。
+    #: 与 InventoryItemOut.note 是同一列（inventory_items.note），不是副本。
+    note: Optional[str] = None
     checked_at: Optional[datetime] = None
     #: 盘点之后账面又被改过（inventory_items 存了盘点时刻的快照，可比）
     changed_since: bool = False

@@ -579,8 +579,17 @@ export interface WorkstationMap {
   layout: FloorLayout
   floor_map_id: number | null
   total: number
+  /** **有人**的点位数。斜杠 `/` 不算有人（与后端 `services/ownership.py` 同口径）。 */
   assigned: number
-  empty: number
+  /**
+   * **一台设备都没挂**的点位数 —— 资产轴。
+   *
+   * ⚠️ 2026-10-08 由后端的 `empty` 改名而来：那个名字**看起来**像"空闲点位"，
+   * 而本文件里另有一个 `stats.free` 才是"没人用"（`total - assigned`）——
+   * **两个都叫"空闲"，指的却是两件事**，同一页上对不上且不报错。
+   * 现在名字自己说清是什么，不用再靠读文档区分。
+   */
+  without_asset: number
   items: Workstation[]
 }
 
@@ -630,6 +639,8 @@ export interface MapInventoryAsset {
   result: InventoryResult
   result_label: string
   operator: string | null
+  /** 盘点备注。与列表页/导出的 note 是同一列，地图侧栏「标记异常」采集后回显同一份 */
+  note: string | null
   checked_at: string | null
   /** 盘点之后账面又被改过 —— 后端拿「盘点时刻快照」比出来的 */
   changed_since: boolean

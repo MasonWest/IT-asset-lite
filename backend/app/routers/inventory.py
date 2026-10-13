@@ -626,6 +626,9 @@ def map_view(task_id: int, db: Session = Depends(get_db)):
                     result=item.result,
                     result_label=InventoryResult.LABELS.get(item.result, item.result),
                     operator=item.operator,
+                    # 备注要一起带出来：地图侧栏的「标记异常」会采集它，
+                    # 从盘点列表填的备注也要能在地图上回显（同一列，不是副本）
+                    note=item.note,
                     checked_at=item.checked_at,
                     # 盘点之后账面又被改过 —— 这是盘点最有价值的信号，
                     # snapshot_* 里存着盘点时刻的账面值，直接比出来

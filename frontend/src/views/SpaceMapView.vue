@@ -69,8 +69,12 @@ import {
   FALLBACK_CANVAS,
   GRID,
   isNeutral,
+  RELATION_META,
+  RELATION_ORDER,
+  relationOf,
   snapAxis,
   stateMeta,
+  type RelationKey,
 } from '@/utils/workstationMap'
 import MapStationPanel from '@/components/MapStationPanel.vue'
 
@@ -127,6 +131,23 @@ const MAX_SCALE = 3
 function clampScale(v: number) {
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, v))
 }
+
+/**
+ * 缩放步长。**故意是两个不同的值，别"统一"成一个**（2026-10-08）。
+ *
+ * 步长大小取决于**输入设备的物理特性**，不是取决于代码整洁：
+ * - 滚轮一格一格地"滚"，是**离散且要连续滚动**的操作 → 步长小（10%）才够细腻；
+ *   太大一点滚轮就"啪"一下放大到头，找不回来。
+ * - 工具条 ± 是**点一下就完事**，用户盯着结果 → 步长大（15%）才不让人连点七八下。
+ *
+ * 这两个值以前散在模板两处 + `onWheel` 一处，改的时候要改三处 —— 正是决策 75
+ * 里说的那种"同一口径散在多处"的典型漂移风险，所以收成具名常量。
+ *
+ * ⚠️ 双指捏合**不用这个** —— 它按两指距离的实时比例算，天然是连续的
+ * （见 `pinchMetrics`）。
+ */
+const ZOOM_STEP_BUTTON = 1.15 // 工具条 ±
+const ZOOM_STEP_WHEEL = 1.1 // 滚轮一格
 
 /* ---- 模式 ---- */
 const editMode = ref(false) // 「调整位置」：可拖动
@@ -189,6 +210,75 @@ const bulkPreview = computed(() => {
 
 /* ---- 搜索 ---- */
 const searchQuery = ref('')
+
+/* ---- 点位关系层（有人 × 有资产）---- */
+
+/**
+ * 关系层开关。
+ *
+ * **宽屏默认开着**：它就是这页的默认视角（管理员进来第一眼就该看到"哪片区域空着"），
+ * 而不是藏在某个开关后面。留这个开关是因为它确实会让格子变花 ——
+ * 用户看腻了想回到"只看有人/没人"的清爽两态时，得有路可退。
+ *
+ * ⚠️ **窄屏默认关着**，在 onMounted 里按断点改，不是在这里。
+ * 四个关系格（开关 + 全部 + 四态）在 390px 上必然折两行，工具条实测被撑到 117px、
+ * 固定区占比破 20%（验收 C1/C2 卡的就是这两条）。
+ * 手机上这一页的主要用途本来就是"拿着走到点位盘点"，格局统计是次要的；
+ * 开关仍然留着，想看格局的人点一下就能开（代价是多占一行，知情可选）。
+ * ⚠️ 别把这句写回 `ref(true)` —— 那样又会被无脑改成常开。
+ */
+const relLayer = ref(true)
+
+/** 关系筛选：'all' 或四选一。点了就只亮那一类 */
+const relFilter = ref<'all' | RelationKey>('all')
+
+/**
+ * 四种关系的**点位计数**。
+ *
+ * 前端现算，不走后端 —— `stations` 里已经有 `asset_count`（后端派生下发的），
+ * 两个布尔值一次遍历就够。为此再加一个接口就等于把同一份数据第二次端出来。
+ */
+const relCounts = computed<Record<RelationKey, number>>(() => {
+  const out: Record<RelationKey, number> = {
+    person_asset: 0,
+    person_none: 0,
+    none_asset: 0,
+    none_none: 0,
+  }
+  for (const s of stations.value) out[relationOf(s)] += 1
+  return out
+})
+
+/** 工作位 id → 关系。模板里逐个格子查，省得每次渲染重算 */
+const relById = computed<Record<number, RelationKey>>(() => {
+  const out: Record<number, RelationKey> = {}
+  for (const s of stations.value) out[s.id] = relationOf(s)
+  return out
+})
+
+/**
+ * 某个点位在关系筛选下是否该变暗。
+ *
+ * 与搜索筛选（`isSearchDimmed`）、盘点筛选（`isDimmed`）是**三个独立的轴**，
+ * 可以叠加：搜一个人 + 选"有人·无资产"，就是要看"这个人名下还没配设备的点位"。
+ *
+ * ⚠️ 盘点模式下**不让关系筛选生效**：那时的颜色是盘点结论，
+ * 再叠一层筛选只会让人分不清是被筛掉的还是没盘过的。两个维度各管各的。
+ */
+function isRelDimmed(stationId: number): boolean {
+  if (!relLayer.value || auditMode.value) return false
+  if (relFilter.value === 'all') return false
+  return relById.value[stationId] !== relFilter.value
+}
+
+/** 顶栏四格统计：数字直接取 relCounts，别在前端重数一遍 */
+const relStats = computed(() =>
+  RELATION_ORDER.map((key) => ({
+    key,
+    ...RELATION_META[key],
+    count: relCounts.value[key],
+  })),
+)
 
 /* ---- 盘点 ---- */
 const openTasks = ref<InventoryTask[]>([])
@@ -285,10 +375,50 @@ const stateCounts = computed<Record<string, number>>(() => {
   return base
 })
 
+/**
+ * 顶栏那三个数字（**关系层关掉时**才显示）。
+ *
+ * ⚠️ **`free` 是「没有人」，不是「没有设备」** —— 它 = `total - assigned`，人员轴。
+ * 后端那个"一台设备都没挂"的计数曾经叫 `empty`（2026-10-08 改名 `without_asset`），
+ * **两个都叫"空闲"，指的却是两件事**，同一页上对不上且不报错。
+ * 现在后端那个名字自带语义，这里这个也写清楚了，两边不会再互相串。
+ *
+ * 前端自己算而不是抄接口：`hasOwner()` 就在手边，而它才是这套口径的权威。
+ */
 const stats = computed(() => {
   const total = stations.value.length
   const assigned = stations.value.filter((s) => hasOwner(s.user_name)).length
   return { total, assigned, free: total - assigned }
+})
+
+/**
+ * 是不是「全新用户」：底图一个图元都没有 **且** 一个点位都没有。
+ *
+ * 这两个条件缺一不可：
+ *   - 只看图元 → 用户画了底图但还没加点位时，引导会一直杵在那儿，挡着画布；
+ *   - 只看点位 → 用户没画底图但已经从别处导入了点位，此时该说的是"还没画底图"。
+ * 所以分成两层文案（见 `blankHint`），别用一条万能提示糊过去。
+ *
+ * ⚠️ **刻意不把 `editMode` / `auditMode` 掺进条件。** 引导说的是"这里还什么都没有"，
+ * 不是"你现在没在做什么模式"。用户点「开始建点位」进了调整位置模式、
+ * 但一个点位都还没建 —— 引导**应该留着**（他才刚开始，正是最需要指引的时候），
+ * 等落下第一个点位它自然消失。
+ * 这样"引导何时消失"只有一个判据：**他有没有真的建出东西**。
+ * 掺进模式会带来"一点就消失"这种反直觉行为（我第一版就写错了，还写进了注释）。
+ */
+const isBrandNew = computed(
+  () => floorShapes.value.length === 0 && stations.value.length === 0,
+)
+
+/** 只有底图、没点位（反之亦然）：给更贴切的半句提示 */
+const blankHint = computed(() => {
+  if (!isBrandNew.value) return null
+  const noShape = floorShapes.value.length === 0
+  const noStation = stations.value.length === 0
+  if (noShape && noStation) return { title: '这里还是一张空白画布', steps: '建点位 · 画底图' }
+  if (noStation) return { title: '底图画好了，还没有点位', steps: '加点位' }
+  if (noShape) return { title: '这些点位还没有底图', steps: '画底图' }
+  return null
 })
 
 const canvasStyle = computed(() => ({
@@ -304,6 +434,16 @@ const canvasStyle = computed(() => ({
 /** 去编辑底图（独立页）。点位位置在这页调，建筑图元在编辑器里调。 */
 function openEditor() {
   router.push('/map/editor')
+}
+
+/**
+ * 空画布引导的「开始建点位」：**一步到位**。
+ *
+ * 只调 `toggleEditMode()` 是不够的 —— 那样用户进到调整位置模式，
+ * 但点画布不会加东西，还得自己再点一次「新增」。**两个按钮就够问了**。
+ */
+function startFromBlank() {
+  editMode.value = true
 }
 
 async function loadMap() {
@@ -397,6 +537,13 @@ function invalidateAssets(stationId: number) {
 async function select(station: Workstation) {
   selectedId.value = station.id
   await loadAssets(station.id)
+  // 新增模式下点已有点位：**这个位置已经有主了**。说出来 ——
+  // 否则用户"想在这儿加一个"点下去只看到侧栏变了，会以为新增又失败了
+  // （2026-10-12 真实用户踩坑，`.ws` 上有 `@click.stop`，
+  //  所以在 `onStageClick` 里加提示是无效的 —— 事件根本冒泡不上来）。
+  if (adding.value) {
+    ElMessage.info(`这个位置已经有点位 ${station.code} 了。想加新的，请点空白处`)
+  }
 }
 
 function closeSidebar() {
@@ -502,7 +649,7 @@ function onWheel(event: WheelEvent) {
   const el = vp.value
   if (!el) return
   const old = scale.value
-  const next = clampScale(old * (event.deltaY < 0 ? 1.1 : 1 / 1.1))
+  const next = clampScale(old * (event.deltaY < 0 ? ZOOM_STEP_WHEEL : 1 / ZOOM_STEP_WHEEL))
   const rect = el.getBoundingClientRect()
   const cx = event.clientX - rect.left
   const cy = event.clientY - rect.top
@@ -556,11 +703,38 @@ function pinchMetrics() {
   }
 }
 
-/** 这根指针是否被允许用来平移。点位上 / 编辑模式 / 新增模式都要让开（原逻辑不变） */
+/**
+ * 这一轮手势里指针**真的移动过**（超过阈值就算）。
+ *
+ * 存在的唯一理由：新增模式现在允许平移（见 `canPan`），而"拖一下松手"
+ * 浏览器可能补一个 click —— 那一下会把点位建在松手位置，用户却只是想挪视野。
+ * 所以这里记账，`onStageClick` 见到它就当这轮不是"想加点位"。
+ *
+ * **阈值 6px**：低于它算"手抖的轻点"（仍算新增，用户就是要点），
+ * 高于它就是"我在拖地图"。和 `dragId` 那个拖动阈值同一个量级。
+ */
+let movedDuringPan = false
+/** 超过这个位移就当"在拖"，不再是"点" */
+const PAN_MOVE_THRESHOLD = 6
+
+/**
+ * 这根指针是否被允许用来平移。
+ *
+ * ⚠️ **新增模式下也允许平移**（2026-10-12 修，真实用户踩坑）：
+ * 以前这里是 `if (adding.value) return false` 一刀切，结果**新增模式下地图完全拖不动** ——
+ * 用户想加一个**视野外**的点位，必须先退出新增、把地图拖过去、再进新增、再点，
+ * 三四步才能加一个点位。这就是"新增很困难"的另一半原因（另一半是 `.room` 拦截）。
+ *
+ * 允许平移不会误加点位：拖动距离大时浏览器**不补发 click**
+ * （见 MEMORY 里那条双击坑：实测 0ms 必吞、200ms 起恢复），
+ * 真正还会触发 click 的只有"几乎没动"的轻点 —— 而那正是用户想要的。
+ *
+ * 落在已有点位上依旧不给平移：那是选中 / 拖点位的事（`onStationMouseDown`）。
+ */
 function canPan(event: PointerEvent) {
-  if (adding.value) return false
   if (spacePressed.value) return true
   if ((event.target as HTMLElement).closest('.ws')) return false
+  if (adding.value) return true
   return !editMode.value
 }
 
@@ -602,7 +776,10 @@ function onPanStart(event: PointerEvent) {
 
   const el = event.currentTarget as HTMLElement
   // 全部手指都抬起了 = 上一轮手势结束，把标记清掉
-  if (pointers.size === 0) gesturePinched = false
+  if (pointers.size === 0) {
+    gesturePinched = false
+    movedDuringPan = false
+  }
 
   pointers.set(event.pointerId, {
     x: event.clientX,
@@ -632,6 +809,14 @@ function onPanMove(event: PointerEvent) {
   if (current) {
     current.x = event.clientX
     current.y = event.clientY
+  }
+
+  // 单指平移时记账"这一轮真的移动过"—— 给 onStageClick 用来区分
+  // "用户想加点位"和"用户只是想挪一下视野"（见 movedDuringPan 的注释）
+  if (panning.value && pointers.size === 1) {
+    const dx = event.clientX - panStart.x
+    const dy = event.clientY - panStart.y
+    if (Math.hypot(dx, dy) > PAN_MOVE_THRESHOLD) movedDuringPan = true
   }
 
   // 双指（或更多）：缩放优先，不再平移
@@ -803,8 +988,26 @@ function onStageClick(event: MouseEvent) {
     gesturePinched = false
     return
   }
+  // ⚠️ 这一轮**平移过**就不当它是新增（2026-10-12 加）。
+  // 新增模式现在允许平移了（见 canPan 注释），所以"拖一下地图松手"这类操作
+  // 也可能被浏览器补一个 click 过来 —— 那一下会把点位建在**松手的位置**，
+  // 而用户明明只是想挪个视野。用"这一轮 pointer 有没有真的移动过"挡掉。
+  if (movedDuringPan) {
+    movedDuringPan = false
+    return
+  }
   const target = event.target as HTMLElement
-  if (target.closest('.ws') || target.closest('.room')) return
+
+  // ⚠️ **房间不再拦截新增**（2026-10-12 修，真实用户踩坑）：
+  // 以前这里是 `if (target.closest('.ws') || target.closest('.room')) return`，
+  // 而 `.room` 是纯装饰的房间矩形 —— 它没有任何点击行为，排除它**没有任何好处**。
+  // 坏处却极大：真实库 8 个房间盖住画布一大半，**用户在房间里点新增 = 什么都没发生、
+  // 连个提示都没有**。实测采样 40 个点，20 个（正好一半）落在这两类元素上，
+  // 用户连点三五次以为系统坏了，其实他只是点在房间里。
+  // **房间就是桌子所在的地方** —— 那里恰恰是最该加点位的位置。
+  //
+  // ⚠️ 这里**不再判断 `.ws`**：点位自己有 `@click.stop="select(station)"`，
+  // 事件压根冒泡不到这里（提示挪到 `select()` 里去了）。
   const el = vp.value
   if (!el) return
   const rect = el.getBoundingClientRect()
@@ -1057,8 +1260,16 @@ function toggleAuditMode() {
  * 标记一台设备。**走的是现有 inventory 的 mark 接口**，不是地图自己的接口 ——
  * 所以这一步产生的 `inventory_items.result`、`asset_events`、审计记录
  * 与原盘点页标记完全一样。这正是"两页结果一致"的根据。
+ *
+ * `note` 是「标记异常」时采集的备注：**必须透传**，否则地图这条路写进
+ * `inventory_items.note` 的永远是空值，导出的「盘点备注」列自然也就空着。
+ * 备注的采集在 `MapStationPanel.markAbnormal`（点按钮那一步），这里只负责送出去。
  */
-async function markAsset(assetId: number, result: 'checked' | 'abnormal' | 'pending') {
+async function markAsset(
+  assetId: number,
+  result: 'checked' | 'abnormal' | 'pending',
+  note?: string | null,
+) {
   if (taskId.value === null) return
   markingIds.value = [...markingIds.value, assetId]
   try {
@@ -1066,6 +1277,7 @@ async function markAsset(assetId: number, result: 'checked' | 'abnormal' | 'pend
       asset_id: assetId,
       result,
       operator: appState.operator || null,
+      note: note ?? null,
     })
     await loadMapView()
   } catch (error) {
@@ -1075,7 +1287,12 @@ async function markAsset(assetId: number, result: 'checked' | 'abnormal' | 'pend
   }
 }
 
-/** 一个点位上"属于本次任务"的设备全部标为同一状态（逐台调同一个 mark 接口） */
+/**
+ * 一个点位上"属于本次任务"的设备全部标为同一状态（逐台调同一个 mark 接口）。
+ *
+ * 这条路径**不采集备注**（一键标「已盘」没有可写的东西）；「标记异常」不走这里，
+ * 它由面板逐台弹框采集备注。所以这里的 `note` 永远是空 —— 语义上是对的。
+ */
 async function markStation(workstationId: number, result: 'checked' | 'abnormal') {
   const row = mapView.value?.workstations.find((w) => w.workstation_id === workstationId)
   if (!row?.assets.length) return
@@ -1088,6 +1305,11 @@ async function markStation(workstationId: number, result: 'checked' | 'abnormal'
 
 function setAuditFilter(key: 'all' | MapState) {
   auditFilter.value = key
+}
+
+/** 关系筛选。再点同一格 = 取消筛选（"全部"是显式项，但取消更符合直觉） */
+function setRelFilter(key: 'all' | RelationKey) {
+  relFilter.value = relFilter.value === key && key !== 'all' ? 'all' : key
 }
 
 /** 某个点位在当前筛选下是否应该变暗 */
@@ -1205,6 +1427,9 @@ onMounted(async () => {
    */
   compactMq = window.matchMedia('(max-width: 900px)')
   compact.value = compactMq.matches
+  // 关系层在窄屏默认关（见 relLayer 的注释）。必须在这里做、且在第一次 fit() 之前 ——
+  // 关系格会改变顶栏高度，晚一步会先按旧高度 fit 出画布再被顶栏挤掉一截。
+  if (compact.value) relLayer.value = false
   compactMq.addEventListener('change', onCompactChange)
 
   await nextTick()
@@ -1262,19 +1487,58 @@ watch(selectedId, (id) => {
   <div class="map-page" :class="{ 'audit-on': auditMode, 'edit-on': editMode }">
     <!-- ───────────────────────── 顶部工具条 ───────────────────────── -->
     <div class="map-topbar">
-      <div class="stats">
-        <div class="stat">
-          <div class="v">{{ stats.total }}</div>
-          <div class="k">总点位</div>
-        </div>
-        <div class="stat used">
-          <div class="v">{{ stats.assigned }}</div>
-          <div class="k">已分配</div>
-        </div>
-        <div class="stat free">
-          <div class="v">{{ stats.free }}</div>
-          <div class="k">空闲点位</div>
-        </div>
+      <!--
+        点位关系层：**图例与筛选是同一个东西**。
+        四个格子既是"这一片现在什么情况"的答案，也是筛选器 ——
+        管理员一眼看到 45 / 1 / 1 / 15，再点其中一格把不关心的变暗，不用去别处找开关。
+        关掉开关就回到原来的"有人 / 空闲"两态（原来的三个统计卡）。
+      -->
+      <div class="stats rel-stats">
+        <button
+          class="rel-toggle"
+          :class="{ on: relLayer }"
+          title="点位关系层：按「有人 × 有资产」两个维度给点位着色（只是概况，不是状态）"
+          @click="relLayer = !relLayer"
+        >
+          关系层
+        </button>
+
+        <template v-if="relLayer">
+          <button
+            class="rstat all"
+            :class="{ active: relFilter === 'all' }"
+            @click="setRelFilter('all')"
+          >
+            全部 {{ stats.total }}
+          </button>
+          <button
+            v-for="r in relStats"
+            :key="r.key"
+            class="rstat"
+            :class="[r.key, { active: relFilter === r.key }]"
+            :title="`${r.label} —— ${r.hint}`"
+            @click="setRelFilter(r.key)"
+          >
+            <span class="rg">{{ r.glyph }}</span>
+            <span class="rk">{{ r.short }}</span>
+            <span class="rv">{{ r.count }}</span>
+          </button>
+        </template>
+
+        <template v-else>
+          <div class="stat">
+            <div class="v">{{ stats.total }}</div>
+            <div class="k">总点位</div>
+          </div>
+          <div class="stat used">
+            <div class="v">{{ stats.assigned }}</div>
+            <div class="k">已分配</div>
+          </div>
+          <div class="stat free">
+            <div class="v">{{ stats.free }}</div>
+            <div class="k">空闲点位</div>
+          </div>
+        </template>
       </div>
 
       <div class="vline" />
@@ -1346,8 +1610,8 @@ watch(selectedId, (id) => {
       <div class="vline" />
 
       <div class="zgroup">
-        <button class="zbtn" title="缩小" @click="zoomBy(1 / 1.15)">−</button>
-        <button class="zbtn" title="放大" @click="zoomBy(1.15)">＋</button>
+        <button class="zbtn" title="缩小" @click="zoomBy(1 / ZOOM_STEP_BUTTON)">−</button>
+        <button class="zbtn" title="放大" @click="zoomBy(ZOOM_STEP_BUTTON)">＋</button>
         <button class="zbtn wide" title="适应视图" @click="fit()">适应</button>
       </div>
     </div>
@@ -1510,7 +1774,7 @@ watch(selectedId, (id) => {
       >
         <div class="canvas" :style="canvasStyle">
           <div class="grid-backdrop" :style="{ backgroundSize: `${GRID}px ${GRID}px`, inset: '24px' }" />
-          <div class="plate" />
+          <div class="plate" :class="{ blank: !floorShapes.length }" />
 
           <!-- 对齐参考线：拖到某列/某排时画出来，让"吸附"看得见 -->
           <svg class="guides" :width="canvas.width" :height="canvas.height">
@@ -1604,8 +1868,11 @@ watch(selectedId, (id) => {
               {
                 selected: selectedId === station.id,
                 dragging: dragId === station.id,
-                dimmed: isDimmed(station.id) || isSearchDimmed(station.id),
+                dimmed: isDimmed(station.id) || isSearchDimmed(station.id) || isRelDimmed(station.id),
                 highlighted: matchedIds.has(station.id),
+                // 关系层配色。盘点模式下**不加**这个类：那时的颜色是盘点结论，
+                // 两个维度各管各的，混在一起会让人分不清格子到底在说什么。
+                [`rel-${relById[station.id]}`]: relLayer && !auditMode,
                 [`state-${stateById[station.id]}`]: auditMode && stateById[station.id],
               },
             ]"
@@ -1624,9 +1891,54 @@ watch(selectedId, (id) => {
           </div>
         </div>
 
+        <!--
+          空画布引导（v2.3.0）。**只有全新用户的库才会出现** ——
+          有图有点的老用户永远看不到它。
+          它是浮层且 `pointer-events: none`（只有两个按钮可点），
+          不挡底下的画布：万一用户已经开始操作了，引导不会拦住他。
+        -->
+          <div v-if="blankHint" class="blank-hint" :class="{ 'is-editing': editMode }">
+            <div class="bh-in">
+            <div class="bh-t">{{ blankHint.title }}</div>
+            <p class="bh-p">
+              这套系统不会替你猜办公室长什么样 —— 底图、点位都是你自己的。
+            </p>
+            <ol class="bh-steps">
+              <li>
+                <b>建点位</b>：顶栏「调整位置」→ 点「新增」，再点画布空白处；
+                想排一片就用「批量生成」（能实时预览编号范围）
+              </li>
+              <li><b>画底图</b>：顶栏「编辑底图」→ 从零画地台 / 走道 / 房间 / 墙体</li>
+              <li><b>挂资产</b>：台账里逐台填「所在点位」，或用「批量导入」</li>
+            </ol>
+            <div class="bh-btns">
+              <button class="bh-btn primary" @click="startFromBlank()">开始建点位</button>
+              <button class="bh-btn" @click="openEditor()">先画底图</button>
+            </div>
+            <div class="bh-foot">
+              已经有点位文件了？用
+              <code>python backend\import_workstations.py --file 你的.json</code> 导入
+            </div>
+          </div>
+        </div>
+
         <div class="legend">
-          <div class="it"><span class="sw occ" />已分配</div>
-          <div class="it"><span class="sw emp" />空闲</div>
+          <!--
+            图例与顶栏那四个格子是同一份数据的两种呈现：
+            顶栏管"筛选 + 数字"，这里管"这个符号长什么样"。
+            两处都走 `relStats`，不各写一份文案 —— 否则改了标签忘了改这里，
+            图上就会出现一种颜色配一句对不上的说明。
+          -->
+          <template v-if="relLayer && !auditMode">
+            <div v-for="r in relStats" :key="r.key" class="it" :title="`${r.label} —— ${r.hint}`">
+              <span class="sw" :class="`rel-${r.key}`" />
+              <span class="lg">{{ r.glyph }} {{ r.short }}</span>
+            </div>
+          </template>
+          <template v-else-if="stations.length">
+            <div class="it"><span class="sw occ" />已分配</div>
+            <div class="it"><span class="sw emp" />空闲</div>
+          </template>
           <template v-if="auditMode">
             <div class="it"><span class="sw aud-ok" />已盘</div>
             <div class="it"><span class="sw aud-bad" />异常</div>
@@ -1636,6 +1948,7 @@ watch(selectedId, (id) => {
           </template>
           <div class="it hint">
             <template v-if="hasQuery && !matchedIds.size">没有匹配的点位</template>
+            <template v-else-if="relFilter !== 'all' && relLayer && !auditMode">点顶栏「全部」取消筛选</template>
             <template v-else-if="auditMode">点击点位可对单台设备盘点</template>
             <template v-else>点「调整位置」后可拖动点位</template>
           </div>
@@ -1760,6 +2073,58 @@ watch(selectedId, (id) => {
 .stat .k { font-size: 10.5px; color: var(--ink-muted); font-weight: 600; letter-spacing: 0.2px; }
 .stat.used .v { color: var(--accent); }
 .stat.free .v { color: var(--warning); }
+
+/* ───────────────── 关系层：图例 + 筛选（同一个东西）─────────────────
+   一格 = 一个符号 + 名字 + 数字，点它就是把不关心的变暗。
+   配色刻意只有蓝（有人）和灰（无人）两个色系，"有没有资产"用
+   边框虚实与底色深浅表达 —— 四种一屏全是主色系才不会变成"彩色地图"。
+   ------------------------------------------------------------------- */
+.rel-stats { gap: 6px; }
+.rel-toggle {
+  height: 30px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  font-size: 11.5px; font-weight: 700; white-space: nowrap;
+  border: 1px dashed var(--line-strong); background: #fff; color: var(--ink-muted);
+  transition: all 0.16s var(--ease); user-select: none; flex: none;
+}
+.rel-toggle:hover { border-color: #94a3b8; color: var(--ink-secondary); }
+.rel-toggle.on {
+  border-style: solid; border-color: var(--accent); background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+.rstat {
+  display: flex; align-items: center; gap: 5px; flex: none;
+  height: 30px; padding: 0 9px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: #fff;
+  font-size: 11.5px; font-weight: 600; color: var(--ink-secondary); white-space: nowrap;
+  transition: all 0.14s var(--ease); user-select: none;
+}
+.rstat:hover { border-color: #94a3b8; background: #f8fafc; }
+.rstat .rg { font-size: 11px; line-height: 1; }
+.rstat .rk { color: var(--ink-secondary); }
+.rstat .rv {
+  font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink);
+  min-width: 14px; text-align: right;
+}
+.rstat.all { color: var(--ink-secondary); }
+.rstat.all .rv { color: var(--ink); }
+.rstat.active { border-color: currentColor; }
+.rstat.active .rk, .rstat.active .rv { color: inherit; }
+
+/* 四态的"色"（选中态底色 + 文字色）。虚实线在 .ws 那边，这里只管色。 */
+.rstat.person_asset { color: #1d4ed8; }
+.rstat.person_none { color: #b45309; }
+.rstat.none_asset { color: #475569; }
+.rstat.none_none { color: #94a3b8; }
+.rstat.person_asset .rv { color: #1d4ed8; }
+.rstat.person_none .rv { color: #b45309; }
+.rstat.none_asset .rv { color: #475569; }
+.rstat.none_none .rv { color: #94a3b8; }
+.rstat.all { color: var(--ink-secondary); }
+.rstat.active { background: #f1f5f9; }
+.rstat.person_asset.active { background: #eff6ff; border-color: #93c5fd; }
+.rstat.person_none.active { background: #fffbeb; border-color: #fcd34d; }
+.rstat.none_asset.active { background: #f1f5f9; border-color: #cbd5e1; }
+.rstat.none_none.active { background: #fafafa; border-color: #e5e7eb; }
 
 .vline { width: 1px; height: 28px; background: var(--line); margin: 0 2px; flex: none; }
 
@@ -2021,6 +2386,15 @@ watch(selectedId, (id) => {
   content: ''; position: absolute; inset: 0; border-radius: 16px;
   box-shadow: inset 0 0 0 8px #ffffff; pointer-events: none;
 }
+/* 空白画布。**没有图元时它不该长得像"画坏了"** ——
+   满屏的实线边框 + 阴影会让人以为渲染出错。改成虚线 + 极浅的底，
+   一眼看出"这里待填"，而不是"这里炸了"。 */
+.plate.blank {
+  background: #fcfdfe;
+  border: 1px dashed #dbe3ec;
+  box-shadow: none;
+}
+.plate.blank::after { display: none; }
 
 /* 建筑图元 */
 .zone { position: absolute; border-radius: 14px; background: #fff; box-shadow: inset 0 0 0 1px #e2e8f0; }
@@ -2109,6 +2483,62 @@ watch(selectedId, (id) => {
 .ws.occupied .chair::after { background: #3b82f6; opacity: 0.8; }
 .ws.empty .desk { background: #fafafa; border-style: dashed; border-color: #cbd5e1; box-shadow: none; }
 
+/* ==========================================================================
+   点位关系层（有人 × 有资产）的视觉
+   --------------------------------------------------------------------------
+   **只有蓝（有人）和灰（无人）两个色系**，"有没有资产"用边框虚实 + 底色深浅表达。
+   这么定的理由：四个色相铺满一屏就是"彩色地图"，而这页的主角是**平面图**，
+   点位只是叠在上面的记号。四个都抢眼的结果是没人看得出格局，只觉得花。
+
+   与 `.occupied/.empty` 的关系：那两条规则是**关系层关掉时**的老样子，
+   这里的四条是打开时的样子。两者互斥（模板里 rel-* 只在非盘点模式加），
+   但仍然要放在它们**之后** —— 同特异度下后来者才赢。
+   ========================================================================== */
+
+/* ● 有人 · 有资产 —— 正常使用中。唯一"实心"的一态，主色蓝 */
+.ws.rel-person_asset .desk {
+  background: linear-gradient(180deg, #fff 0%, #eff6ff 100%);
+  border-color: #60a5fa; border-style: solid;
+  box-shadow: 0 1px 3px -1px rgba(37, 99, 235, 0.25);
+}
+.ws.rel-person_asset .nm { color: #1d4ed8; }
+.ws.rel-person_asset .cd { color: #60a5fa; }
+.ws.rel-person_asset .chair { background: #dbeafe; border-color: #93c5fd; }
+.ws.rel-person_asset .chair::after { background: #3b82f6; opacity: 0.8; }
+
+/* ◐ 有人 · 无资产 —— 人来了设备还没到。蓝色但**虚线**：颜色说"有人"，
+   虚线说"这格还没落实"。⚠️ 不用红色：它绝大多数是"还没配"而不是"坏了"，
+   刷一片红会让管理员以为出了事故。 */
+.ws.rel-person_none .desk {
+  background: #fff; border-color: #f59e0b; border-style: dashed;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+.ws.rel-person_none .nm { color: #b45309; }
+.ws.rel-person_none .cd { color: #d97706; }
+.ws.rel-person_none .chair { background: #fef3c7; border-color: #fcd34d; border-style: dashed; }
+.ws.rel-person_none .chair::after { background: #f59e0b; opacity: 0.7; }
+
+/* ○ 无人 · 有资产 —— 公共设备 / 备用机 / 机房。**这是正常态**，
+   所以给"实线 + 浅灰"而不是警告色：一个没人坐但摆着机的位置是常态。 */
+.ws.rel-none_asset .desk {
+  background: #f8fafc; border-color: #cbd5e1; border-style: solid; box-shadow: none;
+}
+.ws.rel-none_asset .nm { color: #64748b; }
+.ws.rel-none_asset .cd { color: #94a3b8; }
+
+/* · 无人 · 无资产 —— 空置 / 预留。**合法现状，不是异常**：
+   预先规划的办公桌、备用位、以后要放设备的位置都是它。
+   所以给最轻的点线，不渲染成任何"该处理"的语气。
+   ⚠️ "不刺眼"不等于"看不见"：`.nm` 用 #94a3b8 而不是跟着边框一起淡到 #cbd5e1 ——
+   后者在 #fafafa 上对比度约 1.2:1，编码和人名基本读不出来，
+   而这个页面的核心动作恰恰是"看清哪个位置空着"。 */
+.ws.rel-none_none .desk {
+  background: #fafafa; border-color: #e2e8f0; border-style: dotted; box-shadow: none;
+}
+.ws.rel-none_none .nm { color: #94a3b8; }
+.ws.rel-none_none .cd { color: #cbd5e1; }
+.ws.rel-none_none .chair { background: #f8fafc; border-color: #e2e8f0; }
+
 .ws:hover { z-index: 30; }
 .ws.selected { z-index: 40; }
 .ws.selected .desk {
@@ -2179,8 +2609,74 @@ watch(selectedId, (id) => {
 .legend .sw.aud-ok { background: #ecfdf5; border: 1px solid #10b981; }
 .legend .sw.aud-bad { background: #fef2f2; border: 1px solid #ef4444; }
 .legend .sw.aud-empty { background: #f8fafc; border: 1px dotted #cbd5e1; }
+
+/* 关系层图例色块。**必须与 .ws.rel-* 的四条一模一样**，
+   否则图例上写着"空置"、图上是另一种灰，管理员只能靠猜。 */
+.legend .sw.rel-person_asset { background: linear-gradient(180deg, #fff 0%, #eff6ff 100%); border: 1px solid #60a5fa; }
+.legend .sw.rel-person_none { background: #fff; border: 1px dashed #f59e0b; }
+.legend .sw.rel-none_asset { background: #f8fafc; border: 1px solid #cbd5e1; }
+.legend .sw.rel-none_none { background: #fafafa; border: 1px dotted #e2e8f0; }
+.legend .lg { white-space: nowrap; }
 .legend .it.hint {
   margin-left: 4px; padding-left: 14px; border-left: 1px solid var(--line); color: var(--ink-muted);
+}
+
+/* ───────────────────────── 空画布引导（v2.3.0）─────────────────────────
+   浮层 + `pointer-events: none`，只有里面两个按钮恢复点击 ——
+   理由：它是"提示"，不是"必须先关掉的弹窗"。用户如果已经自己动手了
+   （比如直接点了批量生成），引导不许挡他的路。
+   ─────────────────────────────────────────────────────────────────────── */
+.blank-hint {
+  position: absolute; inset: 0; z-index: 45;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none; padding: 20px;
+}
+.bh-in {
+  pointer-events: auto;
+  width: min(460px, 100%); background: #fff; border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: var(--sh-lg);
+  padding: 20px 22px; text-align: left;
+}
+.bh-t { font-size: 16px; font-weight: 700; color: var(--ink); }
+.bh-p { margin: 7px 0 0; font-size: 12.5px; color: var(--ink-secondary); line-height: 1.75; }
+.bh-steps {
+  margin: 13px 0 0; padding: 0 0 0 20px;
+  font-size: 12.5px; color: var(--ink-secondary); line-height: 1.85;
+}
+.bh-steps li { margin-bottom: 4px; }
+.bh-steps b { color: var(--ink); }
+.bh-btns { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.bh-btn {
+  height: 32px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+  font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--line-strong); background: #fff; color: var(--ink-secondary);
+  transition: all 0.14s var(--ease);
+}
+.bh-btn:hover { border-color: #94a3b8; background: #f8fafc; }
+.bh-btn.primary {
+  border-color: var(--accent); background: var(--accent); color: #fff;
+}
+.bh-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+/* 进了「调整位置」模式：让到画布上方去，别压着用户要点的地方。
+   缩到一半宽、字号收一档 —— 这时候他是"在干活"，引导该退居二线而不是占据 C位。 */
+.blank-hint.is-editing { align-items: flex-start; padding-top: 18px; }
+.blank-hint.is-editing .bh-in {
+  width: min(380px, 100%); padding: 14px 16px; opacity: 0.94;
+  box-shadow: var(--sh-md);
+}
+.blank-hint.is-editing .bh-t { font-size: 14px; }
+.blank-hint.is-editing .bh-p { display: none; }
+.blank-hint.is-editing .bh-steps { font-size: 12px; margin-top: 8px; }
+.blank-hint.is-editing .bh-foot { display: none; }
+.bh-foot {
+  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--line);
+  font-size: 11.5px; color: var(--ink-muted); line-height: 1.8;
+}
+.bh-foot code {
+  background: #f1f5f9; border-radius: 4px; padding: 1px 5px;
+  font-size: 11px; color: #475569;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
 .map-loading {
@@ -2239,6 +2735,15 @@ watch(selectedId, (id) => {
   .stat .v { font-size: 15px; }
   .stat .k { font-size: 10px; }
 
+  /* 关系层：自己占满一行、允许折行。四个格子在 390px 里横排必然超宽，
+     与其让它们被裁（用户根本不知道还有「无人·有资产」这一类），
+     不如让这一行诚实地折成两行 —— 与盘点 chips 当初同一个理由。 */
+  .rel-stats { flex: 1 1 100%; flex-wrap: wrap; gap: 4px; }
+  .rel-toggle { height: 26px; padding: 0 8px; font-size: 11px; }
+  .rstat { height: 26px; padding: 0 7px; font-size: 10.5px; gap: 4px; }
+  .rstat .rg { font-size: 10px; }
+  .rstat .rv { min-width: 10px; }
+
   /* 搜索：与统计同行。窄屏下它是唯一的自由项，所以给 min-width 兜底别被压没 */
   .search-box { flex: 1 1 108px; width: auto; min-width: 88px; }
   .search-box:focus-within { width: auto; flex-basis: 150px; }
@@ -2253,9 +2758,11 @@ watch(selectedId, (id) => {
   .zgroup { margin-left: auto; }
 
   /* ── 盘点模式：把全局统计也收掉 ──
-     这时候要看的是"盘到哪了"，不是"总点位 / 已分配 / 空闲"；而它一占就是一行。
+     这时候要看的是"盘到哪了"，不是"总点位 / 有人 / 无人"；而它一占就是一行。
      小屏上这一行直接决定画布还剩多大 —— 用户的诉求就是"上面固定不动的占太多了"。
-     退出盘点自动回来。 */
+     退出盘点自动回来。
+     ⚠️ 关系层在盘点模式下本来就不参与着色与筛选（`rel-*` 类不加、`isRelDimmed` 恒 false），
+     所以这里连开关一起收掉不会留下"看不见的筛选还在生效"。 */
   .map-page.audit-on .stats { display: none; }
 
   /* ── 盘点条：从 128px 压到 ~70px ──

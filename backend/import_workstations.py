@@ -94,11 +94,57 @@ def _describe(plan: workstation_importer.ImportPlan, *, verbose: bool) -> None:
         print()
 
 
+def _explain_missing_file(path: Path, used_default: bool) -> None:
+    """缺文件时说人话，并且**分清两种缺法**（v2.3.0）。
+
+    为什么不能只打一句「找不到文件」：
+    - `--file` 显式指定的文件不存在 = **用户自己搞错了路径**，该告诉他怎么改；
+    - 默认那个示例文件不存在 = **绝大多数情况**（仓库是公开的，而那份点位 JSON
+      含真实姓名所以被 .gitignore 排除了，见 CS 决策 69 / 红线 10）。
+      全新 clone 的人**必然**撞这一条，而这不是他的错，是文档没说清。
+    """
+    if not used_default:
+        print(f"[错误] 找不到你指定的文件：{path}")
+        print()
+        print("这个路径是命令行给的，检查一下有没有打错、或者文件真的在那个位置。")
+        print("要导入本项目自带的示例点位，可以去掉 --file 直接跑：")
+        print(f"    python import_workstations.py")
+        return
+
+    print("[提示] 没有找到示例点位文件（这在全新 clone 时是正常的）")
+    print()
+    print(f"  缺的是：{path}")
+    print()
+    print("为什么没有：那份文件是**某间办公室的真实布局**，含真实员工姓名，")
+    print("所以它不在公开仓库里（仓库有隐私红线，见 CURRENT_STATE 决策 69）。")
+    print("它是给你自己恢复数据用的，不是给别人套用的模板。")
+    print()
+    print("▸ 建自己的地图（推荐，10 分钟内能完成）")
+    print("  1. 启动服务，浏览器打开「空间地图」")
+    print("  2. 顶栏点「调整位置」→ 点画布空白处可单个加点位")
+    print("  3. 想排一片？点「批量生成」：填总数 / 起点 / 行列间距，能实时预览编码范围")
+    print("  4. 想画房间走廊？点「编辑底图」，从零画地台 / 走道 / 房间 / 墙体")
+    print("  5. 资产在台账里逐台填「所在点位」，或用「批量导入」")
+    print()
+    print("▸ 已经有自己的点位文件")
+    print(f"    python import_workstations.py --file 你的文件.json")
+    print()
+    print("  文件格式见 README「资产空间地图怎么用」，或跑一次本命令看 --help。")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="把点位导出 JSON 灌进数据库（默认干跑，--yes 才写）"
     )
-    parser.add_argument("--file", default=None, help=f"点位 JSON，默认 {DEFAULT_FILE}")
+    parser.add_argument(
+        "--file",
+        default=None,
+        help=(
+            "点位 JSON。不给就用示例文件（全新 clone 时通常不存在，因为那是"
+            "本机真实布局、含真实姓名所以没进仓库）；"
+            "建自己的地图用界面上的「调整位置」/「批量生成」更省事"
+        ),
+    )
     parser.add_argument("--yes", action="store_true", help="真的写入（不加就是干跑）")
     parser.add_argument("--no-backup", action="store_true", help="跳过自动备份（不推荐）")
     parser.add_argument("--quiet", action="store_true", help="不打印逐条明细")
@@ -106,7 +152,7 @@ def main() -> int:
 
     path = _resolve(args.file)
     if not path.is_file():
-        print(f"[错误] 找不到文件：{path}")
+        _explain_missing_file(path, used_default=args.file is None)
         return 1
 
     ensure_schema()

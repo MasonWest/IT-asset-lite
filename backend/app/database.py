@@ -294,6 +294,25 @@ DEFAULT_FLOOR_WIDTH = 960
 DEFAULT_FLOOR_HEIGHT = 1320
 
 
+def _database_is_completely_empty(conn) -> bool:
+    """这个库是不是**一张业务数据都没有**（所有业务表 + 字典表全空）。
+
+    为什么单独抽一个函数：v2.3.0 起"空库不塞默认底图"要判断的就是这件事，
+    而**它不能看 floor_maps 空不空** —— 那是结果不是原因，见 `_recognize_default_floor_map`
+    里的注释。判据必须是"整个库没有一条用户数据"。
+
+    `floor_maps` / `workstations` / `assets` 全空时返回 True。
+    查不到表（老库还没升到那一步）一律当"不空" —— 宁可多建一张图，
+    也不能在"其实有数据只是表名对不上"的库上跳过回填（那会让老用户的点位丢掉 floor_map_id）。
+    """
+    for table in ("workstations", "assets", "floor_maps"):
+        if not _table_exists(conn, table):
+            return False
+        if (conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar_one() or 0) > 0:
+            return False
+    return True
+
+
 def _recognize_default_floor_map(conn) -> dict[str, object]:
     """第五阶段：建默认平面图，并把现有点位挂上去。
 
@@ -310,7 +329,33 @@ def _recognize_default_floor_map(conn) -> dict[str, object]:
     ALTER 本身幂等可以不管，但 INSERT 一条没有唯一键约束的行是不幂等的。
 
     三步的顺序不能反：先补列 → 再插图 → 最后回填（回填要有目标 id 才能填）。
+
+    ## v2.3.0：真·空库不再塞默认底图
+
+    **判据是「整个库一条业务数据都没有」，不是「floor_maps 没有图」。**
+    这个区别很要紧 —— `floor_maps` 空是**结果**，而我们真正想问的是**原因**：
+    是"老库升级该补图"（要补）还是"新用户刚起步"（不该塞）？
+    两种情况在 `floor_maps` 这一行上长得**一模一样**。
+
+    **所以这个函数绝不能删**，它同时是老库 `floor_map_id` 回填的唯一路径 ——
+    删了老用户升级后会掉进"点位还在、但不属于任何图"的状态。
+    只能在这里加一个前置短路：真·空库 → 什么都不做，把空白画布留给用户。
+
+    为什么不让新用户看到一张别人的地图：`DEFAULT_FLOOR_LAYOUT` 里
+    「总经理办公室 / 直播间 / 大会议室 / 中央走道」是**本项目办公室的布局**，
+    包含本项目真实的组织结构。塞给每个新用户 = 假装知道对方公司长什么样，
+    而 `floor_maps` **没有删除接口**（只有 `PUT`）——
+    新人唯一出路是进编辑器把 19 个图元逐个 Delete 掉再重画。
+    空白画布 + 一句"还没画底图"是**诚实的空态**，也是唯一不出错的默认。
     """
+    # v2.3.0：真·空库 → 不建图。这是"别往新用户库里塞别人办公室"的那道闸。
+    # 判空放在最前面，连 floor_maps 表都不去查 —— 反正没有数据可回填。
+    if _database_is_completely_empty(conn):
+        # ⚠️ 刻意**不写** DEFAULT_FLOOR_MAP_KEY 记账：那把钥匙的意思是
+        # "默认图已认领"，而这里的事实是"从未建过图"。写了它，将来用户
+        # 自己建了图之后会被这段的记账分支误判成"被 reset 清过"而不再认领。
+        return {"id": None, "created": False, "attached": 0}
+
     # 已经有图了 → 认领过，直接返回默认图（或最早那张）
     if _table_exists(conn, "floor_maps"):
         row = conn.exec_driver_sql(

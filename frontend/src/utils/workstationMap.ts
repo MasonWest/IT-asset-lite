@@ -6,6 +6,7 @@
  */
 
 import type { Facing, MapState, Workstation } from '@/types'
+import { hasOwner } from '@/utils/format'
 
 /** 点位格子尺寸，与原型一致 */
 export const DESK_W = 80
@@ -61,6 +62,97 @@ export const NEUTRAL_STATES: MapState[] = ['empty', 'not_in_scope']
 
 export function isNeutral(state: string): boolean {
   return NEUTRAL_STATES.includes(state as MapState)
+}
+
+/* -------------------------------------------------------------------------
+   点位关系层：有人 × 有资产 两个正交维度派生出来的**概况**（v2.2.0 落地）
+   -------------------------------------------------------------------------
+   ⚠️ **它不是"点位状态"，是"点位关系概况"。** 区别不是文字游戏：
+   - 状态是**存在表里的一列**，要人维护、会过期；
+   - 概况是**每次渲染时现算**的两个布尔值的组合。
+   一旦把它当状态落库，资产一挂上来/一摘走，库里那列就成了过期信息
+   （本项目红线 2：一份数据两处存，迟早对不上）。所以这里**只有函数，没有字段**。
+   与盘点状态（checked/abnormal/pending）是**两个独立维度**，不要合成一个状态。
+   ------------------------------------------------------------------------- */
+
+/** 四种关系。键名就是两个维度的组合，读代码不用回头查表 */
+export type RelationKey = 'person_asset' | 'person_none' | 'none_asset' | 'none_none'
+
+export interface RelationMeta {
+  /** 短标签，用于筛选条（要窄，手机上四个都放得下） */
+  short: string
+  /** 完整标签，用于图例与提示 */
+  label: string
+  /** 一句话说清它意味着什么 —— 这是"概况"而不是"状态"的关键 */
+  hint: string
+  /** 图例符号。与 CSS 里的四种视觉一一对应 */
+  glyph: string
+}
+
+/**
+ * 视觉刻意**克制**：只有蓝（有人）和灰（无人）两个色系，
+ * "有没有资产"用**边框虚实 + 底色深浅**表达，不再加第三、第四个颜色。
+ *
+ * 四种一屏都是主色系就不会变成"彩色地图"，
+ * 而实心 / 虚线 / 实心浅 / 点线 的差别在 80×56 的格子上也看得清。
+ */
+export const RELATION_META: Record<RelationKey, RelationMeta> = {
+  person_asset: {
+    short: '有人·有资产',
+    label: '有人 · 有资产',
+    hint: '正常使用中的点位',
+    glyph: '●',
+  },
+  person_none: {
+    short: '有人·无资产',
+    label: '有人 · 无资产',
+    hint: '人来了设备还没到，值得关注',
+    glyph: '◐',
+  },
+  none_asset: {
+    short: '无人·有资产',
+    label: '无人 · 有资产',
+    hint: '公共设备 / 备用机，很正常',
+    glyph: '○',
+  },
+  none_none: {
+    short: '无人·无资产',
+    label: '无人 · 无资产',
+    hint: '空置点位 / 预留点位',
+    glyph: '·',
+  },
+}
+
+/** 展示顺序：从"最正常"到"最空"。图例、筛选条、统计都按这个顺序 */
+export const RELATION_ORDER: RelationKey[] = [
+  'person_asset',
+  'person_none',
+  'none_asset',
+  'none_none',
+]
+
+/** 只要点位上最小的那部分信息：有没有归属的人、有没有挂着设备 */
+export interface RelationInput {
+  user_name: string | null
+  asset_count: number
+}
+
+/**
+ * 派生这个点位属于哪种关系。
+ *
+ * 「有人」的口径与地图现有的 `occupied` 完全一致（`hasOwner()`：空值和 `/` 都算没归属）——
+ * 派生函数与渲染类如果用两套判据，同一个格子会既"有人"又"空闲"。
+ *
+ * ⚠️ CS 里写过"有人 = room 或 user_name 有值"，这里**只取 user_name**：
+ * `room` 填的是「总经理办公室 / 前台」这类**地点**，不是"这个位置归谁"；
+ * 真实库里两条 room 全都同时有 user_name，加进来不改变结果，只会让语义变浑。
+ * 真要用 room 表达"这位置已被预留给某个部门"，那应该是第三个维度，不是这一层。
+ */
+export function relationOf(station: RelationInput): RelationKey {
+  const occupied = hasOwner(station.user_name)
+  const hasAsset = (station.asset_count ?? 0) > 0
+  if (occupied) return hasAsset ? 'person_asset' : 'person_none'
+  return hasAsset ? 'none_asset' : 'none_none'
 }
 
 /**

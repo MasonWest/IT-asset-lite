@@ -65,7 +65,7 @@ from ..schemas_workstations import (
     WorkstationOut,
     WorkstationUpdate,
 )
-from ..services import floor_map_layout, workstation_importer
+from ..services import floor_map_layout, ownership, workstation_importer
 from ..services.audit import record_audit
 from ..services.events import record_event
 from ..services.serialize import to_asset_out
@@ -265,8 +265,14 @@ def list_workstations(
         layout=layout,
         floor_map_id=floor.id if floor is not None else None,
         total=len(items),
-        assigned=sum(1 for i in items if (i.user_name or "").strip()),
-        empty=sum(1 for i in items if i.asset_count == 0),
+        # 「已分配」走 `ownership.count_assigned` 而不是 `sum(... if user_name.strip())`：
+        # 后者会把「/」这种"没填"的占位符算成已分配，而前端把它显示成「未填使用人」——
+        # 同一页上两个数字打架且不报错。口径见 services/ownership.py 模块头。
+        assigned=ownership.count_assigned([i.user_name for i in items]),
+        # ⚠️ 这是**资产轴**（一台设备都没挂），**不是**"没人用"——
+        # 前端的「空闲点位」是 `total - assigned`（人员轴）。两个词都叫"空闲"，
+        # 指的却是两件事。别拿它们互相对账。字段已由 `empty` 改名为 `without_asset`。
+        without_asset=sum(1 for i in items if i.asset_count == 0),
         items=items,
     )
 

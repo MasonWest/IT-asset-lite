@@ -28,9 +28,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiMessage, assetApi, workstationApi } from '@/api'
 import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState } from '@/stores/app'
-import type { Asset, MapInventoryWorkstation, Workstation } from '@/types'
+import type { Asset, MapInventoryAsset, MapInventoryWorkstation, Workstation } from '@/types'
 import { hasOwner, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
-import { brandModel, facingLabel, isNeutral, positionText, stateMeta } from '@/utils/workstationMap'
+import {
+  brandModel,
+  facingLabel,
+  isNeutral,
+  positionText,
+  RELATION_META,
+  relationOf,
+  stateMeta,
+} from '@/utils/workstationMap'
 
 const props = defineProps<{
   station: Workstation | null
@@ -49,7 +57,7 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'saved', station: Workstation): void
   (e: 'removed', station: Workstation): void
-  (e: 'mark', assetId: number, result: 'checked' | 'abnormal' | 'pending'): void
+  (e: 'mark', assetId: number, result: 'checked' | 'abnormal' | 'pending', note?: string | null): void
   (e: 'mark-station', workstationId: number, result: 'checked' | 'abnormal'): void
   (e: 'assets-changed', stationId: number): void
   (e: 'add-asset', stationId: number): void
@@ -98,6 +106,17 @@ watch(
 /** 盘点模式下的状态（没开盘点时为 null） */
 const state = computed(() => props.mapRow?.state ?? null)
 const neutral = computed(() => (state.value ? isNeutral(state.value) : false))
+
+/**
+ * 这个点位属于哪种关系（有人 × 有资产）。
+ *
+ * 与地图上是**同一个函数**（`utils/workstationMap.ts::relationOf`）——
+ * 图上染成琥珀虚线、侧栏却写"正常"，那是两套事实，比不做还糟。
+ * 盘点模式下不显示：那时的重点是盘点结论，不是空间使用情况。
+ */
+const relation = computed(() =>
+  props.station ? RELATION_META[relationOf(props.station)] : null,
+)
 
 /**
  * 打包成一句人话的资产规格。走公共的 `brandModel`（含品牌去重）。
@@ -205,6 +224,32 @@ function markAllPassed() {
 }
 
 /**
+ * 标记单台设备异常。**必须采集备注** —— 与盘点列表页（`InventoryDetailView.markAbnormal`）
+ * 用的是同一句话术和同一个字段，两处口径不许漂。
+ *
+ * 这个入口曾经是**唯一一个不采集备注的**：地图上点「标记缺失」直接就把 result 写进库，
+ * `inventory_items.note` 永远为空 → 导出的「盘点备注」列有列无值。
+ * 备注是异常里最有用的那一半信息（"位置不对 / SN 对不上 / 外壳破损"），丢了等于白盘。
+ *
+ * 已经标过异常时把上次的备注带出来：重标是**在改**，不是从零写。
+ */
+async function markAbnormal(row: MapInventoryAsset) {
+  let note: string | null = null
+  try {
+    const res = await ElMessageBox.prompt(`${row.asset_code}：哪里不对？`, '标记异常', {
+      confirmButtonText: '确认异常',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如「位置不对，实际在 4F」「SN 对不上」「外壳破损」',
+      inputValue: row.note ?? '',
+    })
+    note = res.value?.trim() || null
+  } catch {
+    return // 用户取消
+  }
+  emit('mark', row.asset_id, 'abnormal', note)
+}
+
+/**
  * 跳去资产台账。**带上当前点位的使用人作为筛选** —— 这样从某个使用人的点位点进去，
  * 看到的就是"那个人的设备"，少一步手动筛选。
  *
@@ -285,6 +330,15 @@ function dash(v: string | null | undefined): string {
             {{ station!.room ? station!.room + ' · ' : '' }}坐标
             {{ positionText(station!.x, station!.y) }}
           </div>
+          <!--
+            点位关系概况。**是概况不是状态** —— 它由「有没有归属的人」和
+            「挂了几台设备」现算出来，资产一挂一摘就变，所以没有落库字段（红线 2）。
+            盘点模式下不显示：那时候用户要的是盘点的结论。
+          -->
+          <div v-if="!auditMode && relation" class="rel-chip" :class="relationOf(station!)">
+            <b>{{ relation.glyph }} {{ relation.label }}</b>
+            <span>{{ relation.hint }}</span>
+          </div>
         </div>
       </div>
 
@@ -351,6 +405,8 @@ function dash(v: string | null | undefined): string {
                 账面：{{ row.result_label }}
                 <template v-if="row.operator"> · {{ row.operator }}</template>
               </div>
+              <!-- 备注要回显出来：地图上填的、列表里填的，都是同一份 -->
+              <div v-if="row.note" class="asset-note">备注：{{ row.note }}</div>
               <!--
                 盘点之后账面又被改过 —— 这是盘点最有价值的信号，后端已经算好了。
                 「账上写着是谁用的」和「现在是谁用的」不一致，正是要找的东西。
@@ -373,9 +429,9 @@ function dash(v: string | null | undefined): string {
               class="abtn danger"
               :class="{ active: row.result === 'abnormal' }"
               :disabled="isMarking(row.asset_id)"
-              @click="emit('mark', row.asset_id, 'abnormal')"
+              @click="markAbnormal(row)"
             >
-              🔴 标记缺失
+              🔴 标记异常
             </button>
           </div>
         </div>
@@ -544,6 +600,23 @@ function dash(v: string | null | undefined): string {
 .dw-head .c { font-size: 22px; font-weight: 800; color: #0f172a; }
 .dw-head .m { font-size: 11.5px; color: #94a3b8; margin-top: 4px; font-weight: 500; }
 
+/* 点位关系概况标签。配色与地图上的 .ws.rel-* 一一对应 —— 两处不同色
+   就等于给了两条互相矛盾的信息。 */
+.rel-chip {
+  display: inline-flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  margin-top: 8px; padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; line-height: 1.5;
+  border: 1px solid var(--rel-bd, #e2e8f0);
+  background: var(--rel-bg, #f8fafc);
+  color: var(--rel-fg, #475569);
+}
+.rel-chip b { font-weight: 700; color: var(--rel-fg, #475569); }
+.rel-chip span { color: #94a3b8; }
+.rel-chip.person_asset { --rel-bg: #eff6ff; --rel-bd: #bfdbfe; --rel-fg: #1d4ed8; }
+.rel-chip.person_none { --rel-bg: #fffbeb; --rel-bd: #fde68a; --rel-fg: #b45309; }
+.rel-chip.none_asset { --rel-bg: #f1f5f9; --rel-bd: #cbd5e1; --rel-fg: #475569; }
+.rel-chip.none_none { --rel-bg: #fafafa; --rel-bd: #e5e7eb; --rel-fg: #94a3b8; }
+
 .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0 18px; }
 .metric { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; }
 .metric .v {
@@ -598,6 +671,11 @@ function dash(v: string | null | undefined): string {
 .asset-info { flex: 1; min-width: 0; }
 .asset-title { font-size: 12px; font-weight: 700; color: #0f172a; }
 .asset-sub { font-size: 10.5px; color: #94a3b8; margin-top: 2px; }
+/* 备注：比"账面"重一点，因为它是人写的信息，不是系统字段 */
+.asset-note {
+  font-size: 10.5px; color: #475569; margin-top: 3px; line-height: 1.6;
+  word-break: break-word;
+}
 .changed { font-size: 10.5px; color: #b45309; margin-top: 4px; font-weight: 600; }
 .asset-btns { display: flex; gap: 6px; }
 .abtn {
