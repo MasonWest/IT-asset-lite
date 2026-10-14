@@ -77,6 +77,7 @@ BUSINESS_TABLES: tuple[str, ...] = (
     "asset_events",
     "inventory_tasks",
     "assets",
+    "relation_exceptions",  # 引用 workstations，必须排在 workstations 前面
     "workstations",  # 被 assets 引用，必须排在 assets 后面
     "floor_maps",  # 被 workstations 引用，必须排在 workstations 后面
     "audit_logs",  # 无外键，但同属业务数据（审计日志只追加，只有 reset 能清）

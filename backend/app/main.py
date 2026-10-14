@@ -45,7 +45,9 @@ from .routers import (
     floor_maps,
     inventory,
     meta,
+    relation_check,
     relations,
+    relocation,
     system,
     transfer,
     workstations,
@@ -77,6 +79,13 @@ _FAILED_ROUTES: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"^/api/inventory/tasks/\d+$"), AuditAction.INVENTORY_DELETE, AuditTarget.INVENTORY),
     (re.compile(r"^/api/inventory/tasks$"), AuditAction.INVENTORY_CREATE, AuditTarget.INVENTORY),
     (re.compile(r"^/api/transfer/import$"), AuditAction.ASSET_IMPORT, AuditTarget.FILE),
+    # 关系核对 / 点位迁移。字面量与 /{id} 的先后同样有讲究：
+    # 先列「带子路径的」，再列「集合」与「带 id 的」。
+    (re.compile(r"^/api/relation-checks/workstation/\d+/exceptions$"),
+     AuditAction.RELATION_EXCEPTION_CONFIRM, AuditTarget.WORKSTATION),
+    (re.compile(r"^/api/relation-checks/exceptions/\d+$"),
+     AuditAction.RELATION_EXCEPTION_REVOKE, AuditTarget.WORKSTATION),
+    (re.compile(r"^/api/relocations/apply$"), AuditAction.RELOCATION_APPLY, AuditTarget.WORKSTATION),
     (re.compile(r"^/api/device-types/\d+$"), AuditAction.TYPE_UPDATE, AuditTarget.DEVICE_TYPE),
     (re.compile(r"^/api/device-types$"), AuditAction.TYPE_CREATE, AuditTarget.DEVICE_TYPE),
     # 点位。注意 layout / import 这两条**必须排在 /\d+ 和 $ 之前**：
@@ -269,6 +278,8 @@ app.include_router(inventory.router)
 app.include_router(transfer.router)
 app.include_router(workstations.router)
 app.include_router(floor_maps.router)
+app.include_router(relation_check.router)
+app.include_router(relocation.router)
 app.include_router(audit.router)
 
 

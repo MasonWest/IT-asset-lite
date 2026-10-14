@@ -28,8 +28,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiMessage, assetApi, workstationApi } from '@/api'
 import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState } from '@/stores/app'
-import type { Asset, MapInventoryAsset, MapInventoryWorkstation, Workstation } from '@/types'
+import type {
+  Asset,
+  MapInventoryAsset,
+  MapInventoryWorkstation,
+  StationRelationCheck,
+  Workstation,
+} from '@/types'
 import { hasOwner, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
+import RelationCheckCard from '@/components/RelationCheckCard.vue'
 import {
   brandModel,
   facingLabel,
@@ -51,6 +58,9 @@ const props = defineProps<{
   markingIds: number[]
   /** 当前选中的盘点任务 id。用于「去资产详情」时把回程地址带全 */
   taskId: number | null
+  /** 关系核对结果。**现算的派生结果，不落库**（每次选中点位时拉一次） */
+  relationCheck: StationRelationCheck | null
+  relationLoading: boolean
 }>()
 
 const emit = defineEmits<{
@@ -61,6 +71,12 @@ const emit = defineEmits<{
   (e: 'mark-station', workstationId: number, result: 'checked' | 'abnormal'): void
   (e: 'assets-changed', stationId: number): void
   (e: 'add-asset', stationId: number): void
+  /** 关系核对结果变了（确认 / 撤销例外后后端返回的新结果） */
+  (e: 'relation-updated', check: StationRelationCheck): void
+  /** 让父组件重新拉一次核对结果（令牌过期等） */
+  (e: 'relation-refresh'): void
+  /** 打开迁移对话框。assetId 有值 = 单台资产换点位，无值 = 整个点位迁移 */
+  (e: 'relocate', payload: { mode: 'assets' | 'station'; assetId?: number }): void
 }>()
 
 const router = useRouter()
@@ -136,6 +152,24 @@ function resultOf(assetId: number): 'pending' | 'checked' | 'abnormal' | null {
 
 function isMarking(assetId: number): boolean {
   return props.markingIds.includes(assetId)
+}
+
+/** 关系核对的四种结论 → 短文案。与后端 `CheckStatus.LABELS` 同口径 */
+const CHECK_LABELS: Record<string, string> = {
+  mismatch: '待核对',
+  unregistered: '未登记',
+  undetermined: '无法判断',
+}
+
+/**
+ * 某台设备的关系核对结论 —— **只返回需要看一眼的**。
+ *
+ * 一致的不加任何装饰：每个资产行都挂一个绿色「一致」标签，等于给界面加噪，
+ * 用户会很快学会无视这些标签（那时真正的「待核对」也一起被无视了）。
+ */
+function relStateOf(assetId: number): string | null {
+  const state = props.relationCheck?.asset_checks.find((a) => a.asset_id === assetId)?.state
+  return state && state !== 'consistent' ? state : null
 }
 
 /* ---- 写操作 ---- */
@@ -361,6 +395,21 @@ function dash(v: string | null | undefined): string {
       </div>
 
       <!--
+        关系核对（点位使用人 ↔ 设备使用人）。
+        **放在资产清单之前** —— 先说"这个点位的人/设备对不对得上"，
+        再往下才是"具体挂了哪几台"，读起来是自顶向下的。
+        结论是派生结果（后端每次现算），所以这里不存任何状态。
+      -->
+      <RelationCheckCard
+        :check="relationCheck"
+        :loading="relationLoading"
+        :relocation-enabled="!auditMode"
+        @updated="(c) => emit('relation-updated', c)"
+        @refresh="emit('relation-refresh')"
+        @relocate="(p) => emit('relocate', p)"
+      />
+
+      <!--
         两种中性态要在这里说清楚，因为它们的"看起来像没盘"最容易引起误解。
         空位是"没有东西可盘"，不在范围是"本次不盘" —— 都不是"漏盘"。
       -->
@@ -468,7 +517,33 @@ function dash(v: string | null | undefined): string {
               <div v-if="auditMode && resultOf(asset.id)" class="sub">
                 本次盘点：{{ resultOf(asset.id) === 'checked' ? '已盘' : resultOf(asset.id) === 'abnormal' ? '异常' : '待盘' }}
               </div>
+              <!--
+                关系核对在**资产行上就地呈现**（要求：不要求用户跳转到别的模块）。
+                只标出需要看一眼的，一致的不加装饰。
+              -->
+              <div v-if="relStateOf(asset.id)" class="rel-inline">
+                <span class="rel-chip-mini" :class="relStateOf(asset.id)">
+                  {{ CHECK_LABELS[relStateOf(asset.id) as string] }}
+                </span>
+                <span class="rel-inline-txt">
+                  与点位使用人
+                  {{ relStateOf(asset.id) === 'mismatch' ? '不一致' : '无法对照' }}
+                </span>
+              </div>
             </div>
+            <!--
+              两个按钮职责必须分得清（这个项目在"混淆操作语义"上吃过事故）：
+                · 换点位 = 改这台设备的**归属**（搬去别的点位）
+                · 摘下   = 让它**没有点位**（仍在台账里）
+              都不是"挪桌子"—— 那属于地图上的「调整位置」。
+            -->
+            <button
+              class="mini"
+              title="把这台设备迁到另一个点位（改归属，不动地图坐标）"
+              @click="emit('relocate', { mode: 'assets', assetId: asset.id })"
+            >
+              换点位
+            </button>
             <button class="mini" title="从点位摘下来（设备保留）" @click="unbind(asset)">摘下</button>
           </div>
         </div>
@@ -708,6 +783,16 @@ function dash(v: string | null | undefined): string {
 .plain-row .code:hover { text-decoration: underline; }
 .plain-row .sub { font-size: 10.5px; color: #94a3b8; margin-top: 2px; }
 .plain-row .tag { font-weight: 700; margin-left: 4px; }
+/* 关系核对在资产行上的就地标记。只用琥珀（待核对）与灰（无法对照）两档 —— */
+/* 与卡片配色一致，且刻意不用红：差异是"待核对"，不是"错误"。 */
+.rel-inline { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.rel-chip-mini {
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; line-height: 1.6;
+}
+.rel-chip-mini.mismatch { background: #fef3c7; color: #b45309; }
+.rel-chip-mini.unregistered,
+.rel-chip-mini.undetermined { background: #f1f5f9; color: #64748b; }
+.rel-inline-txt { font-size: 10.5px; color: #94a3b8; }
 .mini {
   flex: none; height: 24px; padding: 0 9px; border-radius: 6px; font-size: 11px;
   border: 1px solid #cbd5e1; background: #fff; color: #475569; cursor: pointer;

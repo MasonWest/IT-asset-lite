@@ -674,3 +674,169 @@ export interface MapInventoryView {
   /** 有点位、但不属于本次任务的资产数（这些设备本次不盘） */
   out_of_scope: number
 }
+
+// --------------------------------------------------------------------------- //
+// 关系核对（点位使用人 ↔ 设备使用人）
+// --------------------------------------------------------------------------- //
+/**
+ * 核对结论的四态。
+ *
+ * ⚠️ `mismatch` 是**待核对**，不是错误：它只说明"两边写的人不一样"，
+ * 至于哪边对、要不要改，由人判断。系统永远不会自己改一边。
+ */
+export type RelationCheckStatus = 'consistent' | 'mismatch' | 'unregistered' | 'undetermined'
+/** 展示权重：`review` 只是"值得看一眼"，没有任何 error 语义 */
+export type RelationSeverity = 'ok' | 'info' | 'review'
+/** 问题挂靠粒度：单台设备可以单独确认例外 */
+export type RelationScope = 'station' | 'asset'
+
+export interface RelationSubject {
+  kind: 'workstation' | 'asset'
+  id: number
+  code: string
+  user_name: string | null
+  label: string
+}
+
+/**
+ * 一条**例外确认** —— 业务决定，不是问题状态。
+ *
+ * `valid=false` 表示确认之后关系又变了，这条确认**已经失效**
+ * （核对结果会重新冒出来）。判断依据是后端存下的关系指纹。
+ */
+export interface RelationException {
+  id: number
+  rule: string
+  workstation_id: number
+  /** 0 表示点位级例外 */
+  asset_id: number
+  asset_scope: boolean
+  reason: string
+  valid: boolean
+  created_by: string | null
+  created_at: string
+  checked_at: string | null
+}
+
+export interface RelationIssue {
+  rule: string
+  rule_label: string
+  status: RelationCheckStatus
+  status_label: string
+  severity: RelationSeverity
+  severity_label: string
+  scope: RelationScope
+  asset_id: number | null
+  title: string
+  detail: string
+  suggestion: string
+  /** 关系指纹。确认例外时原样回传，后端据此判断"你确认的是不是当前这条"。 */
+  fingerprint: string
+  subjects: RelationSubject[]
+  exception: RelationException | null
+  /** 因有效例外被压住 —— 不必再提示，但用户看得到是被谁确认掉的 */
+  suppressed: boolean
+}
+
+export interface RelationAssetCheck {
+  asset_id: number
+  asset_code: string
+  asset_user: string | null
+  state: RelationCheckStatus
+  state_label: string
+}
+
+/** 一个点位的关系核对结果。**每次现算，不落库。** */
+export interface StationRelationCheck {
+  workstation_id: number
+  code: string
+  user_name: string | null
+  /** 有没有可核对的对象（没挂设备时为 false） */
+  applicable: boolean
+  verdict: RelationCheckStatus
+  verdict_label: string
+  /** 需要人看一眼的条数（mismatch，且未被有效例外压住） */
+  review_count: number
+  issues: RelationIssue[]
+  asset_checks: RelationAssetCheck[]
+  checked_at: string
+}
+
+export interface RelationExceptionPayload {
+  rule: string
+  asset_id?: number | null
+  fingerprint: string
+  reason: string
+  operator?: string | null
+}
+
+// --------------------------------------------------------------------------- //
+// 点位迁移
+// --------------------------------------------------------------------------- //
+/** `assets` = 资产换点位；`station` = 整个点位业务迁移。**都不碰坐标。** */
+export type RelocationMode = 'assets' | 'station'
+
+export interface AssetMove {
+  asset_id: number
+  asset_code: string
+  asset_user: string | null
+  from_workstation_id: number | null
+  from_workstation_code: string | null
+  to_workstation_id: number | null
+  to_workstation_code: string | null
+  /** 迁移**前**这台设备与它当前点位的关系状态 */
+  relation_state: string
+}
+
+export interface RelocationStationRef {
+  id: number
+  code: string
+  user_name: string | null
+  active: boolean
+}
+
+/** 迁移预览。**绝不写数据。** */
+export interface RelocationPreview {
+  mode: RelocationMode
+  mode_label: string
+  ok: boolean
+  /** 阻止执行的问题 */
+  conflicts: string[]
+  /** 需要用户显式点头的差异 / 影响 */
+  confirmations: string[]
+  moves: AssetMove[]
+  noop_count: number
+  station_changes: string[]
+  source: RelocationStationRef | null
+  target: RelocationStationRef | null
+  /** 预览令牌。执行时带回，不一致说明数据被改过 → 409。 */
+  preview_token: string
+  affected_asset_count: number
+}
+
+export interface RelocationPreviewPayload {
+  mode: RelocationMode
+  asset_ids?: number[]
+  source_workstation_id?: number | null
+  target_workstation_id?: number | null
+  move_assets?: boolean
+  move_user?: boolean
+  retire_source?: boolean
+}
+
+export interface RelocationApplyPayload extends RelocationPreviewPayload {
+  preview_token: string
+  acknowledge_warnings?: boolean
+  operator?: string | null
+}
+
+export interface RelocationApplyResult {
+  ok: boolean
+  mode: RelocationMode
+  moved: number
+  moved_codes: string[]
+  station_changes: string[]
+  /** 执行后重新核对的结论（源 + 目标点位） */
+  relation_checks: StationRelationCheck[]
+  summary: string
+}

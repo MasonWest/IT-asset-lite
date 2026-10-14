@@ -9,20 +9,28 @@ from . import (  # noqa: F401
     assets,
     audit,
     device_types,
+    floor_maps,
     inventory,
     meta,
+    relation_check,
     relations,
+    relocation,
     system,
     transfer,
+    workstations,
 )
 
 __all__ = [
     "assets",
     "audit",
     "device_types",
+    "floor_maps",
     "inventory",
     "meta",
+    "relation_check",
     "relations",
+    "relocation",
     "system",
     "transfer",
+    "workstations",
 ]

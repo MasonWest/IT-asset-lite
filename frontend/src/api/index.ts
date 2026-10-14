@@ -26,8 +26,14 @@ import type {
   InventoryTaskDetail,
   PairingBoard,
   Relation,
+  RelationExceptionPayload,
   RelationHistoryPage,
   MapInventoryView,
+  RelocationApplyPayload,
+  RelocationApplyResult,
+  RelocationPreview,
+  RelocationPreviewPayload,
+  StationRelationCheck,
   SystemInfo,
   TimelinePage,
   Workstation,
@@ -402,6 +408,49 @@ export const mapInventoryApi = {
    * 但地图问的是"这一片点位整体盘到哪了"，必须明确聚合的是哪一次。
    */
   view: (taskId: number) => get<MapInventoryView>(`/inventory/tasks/${taskId}/map-view`),
+}
+
+// --------------------------------------------------------------------------- //
+// 关系核对（点位使用人 ↔ 设备使用人）
+// --------------------------------------------------------------------------- //
+/**
+ * 关系核对。
+ *
+ * ⚠️ 这里的 GET **每次都是现算**的派生结果，后端没有"问题表"——
+ * 所以没有"刷新问题列表"这种动作，也没有 updateIssue 之类的方法。
+ * 唯一写操作是「例外确认」：它记的是**人的决定**，不是问题的状态。
+ */
+export const relationCheckApi = {
+  workstation: (stationId: number) =>
+    get<StationRelationCheck>(`/relation-checks/workstation/${stationId}`),
+
+  /** 确认一条差异为例外。**理由必填**（没理由的例外 = 把提示关掉）。 */
+  confirm: (stationId: number, payload: RelationExceptionPayload) =>
+    post<StationRelationCheck>(`/relation-checks/workstation/${stationId}/exceptions`, payload),
+
+  /** 撤销例外（软删，记录留着）。 */
+  revoke: (exceptionId: number, operator?: string | null) =>
+    del<StationRelationCheck>(
+      `/relation-checks/exceptions/${exceptionId}`,
+      operator ? { operator } : undefined,
+    ),
+}
+
+// --------------------------------------------------------------------------- //
+// 点位迁移
+// --------------------------------------------------------------------------- //
+/**
+ * 点位迁移。**与 `/api/transfer`（导入导出）是两回事** ——
+ * 那边改"台账里有哪些设备"，这里改"设备摆在哪 / 这个位置归谁"。
+ *
+ * `preview` 不写任何数据；`apply` 必须带上 preview 拿到的令牌，
+ * 令牌对不上后端会 409（挡住"预览后被别人改了"和"手抖点了两次"）。
+ */
+export const relocationApi = {
+  preview: (payload: RelocationPreviewPayload) =>
+    post<RelocationPreview>('/relocations/preview', payload),
+  apply: (payload: RelocationApplyPayload) =>
+    post<RelocationApplyResult>('/relocations/apply', payload),
 }
 
 // --------------------------------------------------------------------------- //

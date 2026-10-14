@@ -236,6 +236,14 @@ class AuditAction:
     ASSET_REBIND = "asset_rebind"
     ASSET_IMPORT = "asset_import"
     ASSET_EXPORT = "asset_export"
+    #: 点位迁移助手（整个点位 / 多台资产换点位）。与 ASSET_UPDATE 分开：
+    #: 一次迁移可能动十几台设备和两个点位，在审计页应能一眼筛出来。
+    RELOCATION_APPLY = "relocation_apply"
+
+    #: 关系核对的「例外确认」。**这是一条业务决定，必须留痕** ——
+    #: 不是问题状态的开关（问题状态是每次现算的派生结果，不落库）。
+    RELATION_EXCEPTION_CONFIRM = "relation_exception_confirm"
+    RELATION_EXCEPTION_REVOKE = "relation_exception_revoke"
 
     INVENTORY_CREATE = "inventory_create"
     INVENTORY_MARK = "inventory_mark"
@@ -274,6 +282,9 @@ class AuditAction:
         ASSET_REBIND: "更换配对",
         ASSET_IMPORT: "批量导入",
         ASSET_EXPORT: "导出资产",
+        RELOCATION_APPLY: "点位迁移",
+        RELATION_EXCEPTION_CONFIRM: "确认关系例外",
+        RELATION_EXCEPTION_REVOKE: "撤销关系例外",
         INVENTORY_CREATE: "发起盘点",
         INVENTORY_MARK: "盘点标记",
         INVENTORY_CLOSE: "结束盘点",
@@ -302,6 +313,9 @@ class AuditAction:
         ASSET_REBIND: "🔀",
         ASSET_IMPORT: "📥",
         ASSET_EXPORT: "📤",
+        RELOCATION_APPLY: "🚚",
+        RELATION_EXCEPTION_CONFIRM: "🤝",
+        RELATION_EXCEPTION_REVOKE: "↩️",
         INVENTORY_CREATE: "🧭",
         INVENTORY_MARK: "📋",
         INVENTORY_CLOSE: "🏁",
@@ -330,6 +344,9 @@ class AuditAction:
             WORKSTATION_UPDATE,
             WORKSTATION_MOVE,
             WORKSTATION_DELETE,
+            RELOCATION_APPLY,
+            RELATION_EXCEPTION_CONFIRM,
+            RELATION_EXCEPTION_REVOKE,
             MAP_CREATE,
             MAP_UPDATE,
             MAP_DELETE,
@@ -847,3 +864,82 @@ class Workstation(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Workstation {self.id} {self.code} ({self.x},{self.y}) active={self.active}>"
+
+
+# --------------------------------------------------------------------------- #
+# 关系核对 · 例外确认
+# --------------------------------------------------------------------------- #
+class RelationException(Base):
+    """「这条关系差异我确认过，是正常的」—— **业务决定，不是问题状态**。
+
+    ## 为什么它必须落库，而「问题列表」不必
+
+    关系核对的结果（谁和谁不一致）是**派生数据**：每次由
+    `services/relation_check.check_station()` 现算，所以不建「问题状态表」——
+    建了就会过期，资产一挂一摘、人一改，那张表立刻开始说谎（红线 2）。
+
+    但**例外确认是另一回事**：它是人做的一个判断（"这个位置是共用的，
+    不一致是有意的"）。判断本身是事实，不落库就丢了，下次还会重复烦人。
+    所以这里只存"决定"，不存"结论"。
+
+    ## 失效机制：指纹，而不是状态字段
+
+    `fingerprint` 记录**确认那一刻的关系指纹**（点位使用人 + 相关设备的使用人，
+    由 `relation_check` 生成）。核对时拿当前指纹比一次：
+
+    - 一致 → 例外仍然有效，这条差异不再提示；
+    - 不一致 → 关系已经变了（换了人 / 加了设备 / 设备换了人），
+      旧确认**自动作废**，差异重新冒出来。
+
+    这正是要求里那句「相关关系发生变化后，旧例外确认不会继续掩盖新差异」。
+    **不要**改成"有个 `resolved` 字段由代码去置位" —— 那又变成了人工维护的状态。
+
+    ## 为什么 asset_id 不用外键、且拿 0 当「点位级」
+
+    - 唯一约束 `(rule, workstation_id, asset_id)` 要能挡住"同一件事确认两次"。
+      SQLite 里 `NULL != NULL`，`asset_id` 若可空，点位级的例外能被插无限多条 ——
+      所以用 `0` 当哨兵值（资产主键从 1 起，0 永远不会撞）。
+    - 但 `0` 不是合法资产 id，挂外键会被约束拒绝，所以这一列**刻意不建外键**
+      （与 `AuditLog.target_id` 同一取舍）。资产被删掉时留下的行是安全的：
+      它既不会被核对过程读出来（没有对应的问题），指纹里的编码也对不上。
+    """
+
+    __tablename__ = "relation_exceptions"
+    __table_args__ = (
+        UniqueConstraint("rule", "workstation_id", "asset_id", name="uq_relation_exception"),
+        Index("ix_relation_exception_station", "workstation_id", "active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    #: 哪条规则。见 `services.relation_check.RuleKey`
+    rule: Mapped[str] = mapped_column(String(48), nullable=False)
+
+    #: 点位。点位被删（软删不会触发；硬删极少见）时级联清掉这张表里的行。
+    workstation_id: Mapped[int] = mapped_column(
+        ForeignKey("workstations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: 单台设备级的例外记设备 id；**点位级记 0**（见类说明）。
+    asset_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    #: 确认理由。**必填** —— 没有理由的例外等于把提示直接关掉，明天就没人说得清为什么。
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: 确认那一刻的关系指纹。关系一变就对不上 → 例外自动失效。
+    fingerprint: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: 撤销用（软删）。撤销后不会被读出来，但记录留着 ——
+    #: 「当初谁批的、后来又为什么取消」是要查得到的历史。
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    #: 最近一次核对 / 重新确认时间
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<RelationException {self.id} rule={self.rule} "
+            f"ws={self.workstation_id} asset={self.asset_id} active={self.active}>"
+        )

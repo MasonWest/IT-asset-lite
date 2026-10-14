@@ -42,7 +42,7 @@ import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'v
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { apiMessage, inventoryApi, mapInventoryApi, metaApi, workstationApi } from '@/api'
+import { apiMessage, inventoryApi, mapInventoryApi, metaApi, relationCheckApi, workstationApi } from '@/api'
 import { appState } from '@/stores/app'
 import type {
   Asset,
@@ -50,6 +50,9 @@ import type {
   MapInventoryView,
   MapInventoryWorkstation,
   MapState,
+  RelocationApplyResult,
+  RelocationMode,
+  StationRelationCheck,
   Workstation,
 } from '@/types'
 import { hasOwner, userLabel } from '@/utils/format'
@@ -77,6 +80,7 @@ import {
   type RelationKey,
 } from '@/utils/workstationMap'
 import MapStationPanel from '@/components/MapStationPanel.vue'
+import RelocationDialog from '@/components/RelocationDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -536,7 +540,8 @@ function invalidateAssets(stationId: number) {
 
 async function select(station: Workstation) {
   selectedId.value = station.id
-  await loadAssets(station.id)
+  // 资产清单与关系核对**并行拉**：两者互不依赖，串行会让侧栏分两次"跳"出来
+  await Promise.all([loadAssets(station.id), loadRelationCheck(station.id)])
   // 新增模式下点已有点位：**这个位置已经有主了**。说出来 ——
   // 否则用户"想在这儿加一个"点下去只看到侧栏变了，会以为新增又失败了
   // （2026-10-12 真实用户踩坑，`.ws` 上有 `@click.stop`，
@@ -548,6 +553,75 @@ async function select(station: Workstation) {
 
 function closeSidebar() {
   selectedId.value = null
+  relationCheck.value = null
+}
+
+/* ========================================================================== */
+/* 关系核对（点位使用人 ↔ 设备使用人）                                          */
+/* ========================================================================== */
+
+/**
+ * 关系核对结果。
+ *
+ * ⚠️ **它是派生结果，后端每次现算，前端也只当快照用** ——
+ * 没有任何"本地改一改"的路径，确认 / 撤销例外一律由后端返回新结果覆盖。
+ * 这样"界面上显示的结论"永远等于"后端按当前数据算出来的结论"。
+ */
+const relationCheck = ref<StationRelationCheck | null>(null)
+const relationLoading = ref(false)
+
+async function loadRelationCheck(stationId: number) {
+  relationLoading.value = true
+  try {
+    relationCheck.value = await relationCheckApi.workstation(stationId)
+  } catch (error) {
+    relationCheck.value = null
+    if (import.meta.env.DEV) console.error(error)
+  } finally {
+    relationLoading.value = false
+  }
+}
+
+/** 卡片里确认 / 撤销例外之后，后端会把**刷新后的整份结论**回来，直接覆盖即可 */
+function onRelationUpdated(check: StationRelationCheck) {
+  relationCheck.value = check
+}
+
+function refreshRelationCheck() {
+  if (selectedId.value !== null) loadRelationCheck(selectedId.value)
+}
+
+/* ========================================================================== */
+/* 迁移                                                                       */
+/* ========================================================================== */
+
+const relocationOpen = ref(false)
+const relocationMode = ref<RelocationMode>('assets')
+const relocationPreset = ref<number[]>([])
+
+/** 打开迁移对话框。带 assetId = 单台资产换点位；不带 = 整个点位业务迁移。 */
+function openRelocation(payload: { mode: 'assets' | 'station'; assetId?: number }) {
+  if (selectedId.value === null) return
+  relocationMode.value = payload.mode
+  relocationPreset.value = payload.assetId ? [payload.assetId] : []
+  relocationOpen.value = true
+}
+
+/**
+ * 迁移完成后的刷新。
+ *
+ * 迁移同时动了两样东西：`assets.workstation_id`（设备归属）和
+ * 可能的点位使用人 / 点位退役。所以地图、侧栏资产缓存、关系核对**都要重来** ——
+ * 少刷一个就会出现"地图上设备还在老位置"这种自相矛盾的画面。
+ */
+async function onRelocationApplied(result: RelocationApplyResult) {
+  await loadMap()
+  if (selectedId.value !== null) {
+    await Promise.all([loadAssets(selectedId.value, true), loadRelationCheck(selectedId.value)])
+    const mine = result.relation_checks.find((c) => c.workstation_id === selectedId.value)
+    if (mine) relationCheck.value = mine
+  }
+  if (auditMode.value) await loadMapView()
 }
 
 /* ========================================================================== */
@@ -1980,20 +2054,46 @@ watch(selectedId, (id) => {
           :assets-loading="assetsLoading"
           :marking-ids="markingIds"
           :task-id="taskId"
+          :relation-check="relationCheck"
+          :relation-loading="relationLoading"
           @close="closeSidebar"
           @saved="
             (s) => {
               const idx = stations.findIndex((x) => x.id === s.id)
               if (idx >= 0) stations[idx] = s
+              // 改了使用人 → 关系核对的基准变了，必须重新算
+              loadRelationCheck(s.id)
             }
           "
           @removed="removeStation"
           @mark="markAsset"
           @mark-station="markStation"
           @add-asset="openCreateOnStation"
-          @assets-changed="(id) => loadAssets(id, true)"
+          @assets-changed="
+            (id) => {
+              loadAssets(id, true)
+              loadRelationCheck(id)
+            }
+          "
+          @relation-updated="onRelationUpdated"
+          @relation-refresh="refreshRelationCheck"
+          @relocate="openRelocation"
         />
       </div>
+
+      <!--
+        迁移对话框。挂在画布容器里而不是侧栏里 —— 迁移成功后侧栏可能整个换人
+        （源点位被退役时甚至连点位都没了），对话框不该跟着那个节点一起消失。
+      -->
+      <RelocationDialog
+        v-model="relocationOpen"
+        :mode="relocationMode"
+        :source="selected"
+        :source-assets="selectedAssets"
+        :preset-asset-ids="relocationPreset"
+        :stations="stations"
+        @applied="onRelocationApplied"
+      />
     </div>
   </div>
 </template>
