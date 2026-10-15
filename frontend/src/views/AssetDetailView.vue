@@ -8,10 +8,10 @@ import AssetOperationDialog from '@/components/AssetOperationDialog.vue'
 import AssetRelationsPanel from '@/components/AssetRelationsPanel.vue'
 import AssetTimeline from '@/components/AssetTimeline.vue'
 import InventoryContextBar from '@/components/InventoryContextBar.vue'
-import { assetApi, metaApi } from '@/api'
+import { assetApi, metaApi, workstationApi } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState, assetDetailUrl, loadSystemInfo, qrImageSrc } from '@/stores/app'
-import type { Asset, AssetOperation, FilterOptions } from '@/types'
+import type { Asset, AssetOperation, FilterOptions, Workstation } from '@/types'
 import {
   copyText,
   downloadImage,
@@ -20,6 +20,7 @@ import {
   operationMeta,
   statusMeta,
   typeIcon,
+  userLabel,
   warrantyText,
 } from '@/utils/format'
 
@@ -47,6 +48,17 @@ const loading = ref(true)
 const notFound = ref(false)
 const asset = ref<Asset | null>(null)
 const meta = ref<FilterOptions | null>(null)
+/**
+ * 这台设备所在点位（`assets.workstation_id` 指向的那一格）。
+ *
+ * **为什么详情页也要显示它**：点位是后加的一层，早期详情页里看不到，
+ * 只能进「编辑」才看得见 —— 同一份数据在"看"的界面缺失、只在"改"的界面出现，
+ * 用户会以为它是个可选字段，而它其实是台账的空间维度（地图就是按它摆的）。
+ *
+ * 拿到的是**同一个** `GET /api/workstations/{id}`，与地图页用的是同一份数据 ——
+ * 详情页不做任何本地拼装，免得两处口径漂（本项目在"两套数据两处存"上吃过亏）。
+ */
+const station = ref<Workstation | null>(null)
 const formOpen = ref(false)
 const opOpen = ref(false)
 const initialAction = ref<AssetOperation | null>(null)
@@ -80,12 +92,40 @@ async function load() {
   notFound.value = false
   try {
     asset.value = await assetApi.detail(assetId.value)
+    await loadStation()
   } catch {
     asset.value = null
     notFound.value = true
   } finally {
     loading.value = false
   }
+}
+
+/**
+ * 拉点位详情（只为显示"这格归谁"）。
+ *
+ * ⚠️ **失败不报错、不阻塞**：点位可能刚被删掉（`workstation_id` 还留着旧值），
+ * 那时详情页照常显示资产本身，只是点位那一行退回「已删除的点位」——
+ * 为了一个附属信息把整页打成错误页，是主次颠倒。
+ */
+async function loadStation() {
+  const id = asset.value?.workstation_id
+  if (!id) {
+    station.value = null
+    return
+  }
+  try {
+    station.value = await workstationApi.detail(id)
+  } catch {
+    station.value = null
+  }
+}
+
+/** 跳到空间地图并选中这一格（`?station=<code>` 深链，与问题中心「去核对」同一个落点） */
+function openStation() {
+  const code = asset.value?.workstation_code
+  if (!code) return
+  void router.push(`/map?station=${encodeURIComponent(code)}`)
 }
 
 async function loadMeta() {
@@ -150,6 +190,8 @@ async function onSaved(updated: Asset) {
   asset.value = updated
   refreshKey.value += 1
   await loadMeta()
+  // 编辑里可能改了「所在点位」—— 点位那一行要跟着变，否则界面显示的还是旧格子
+  await loadStation()
 }
 
 async function onOperated(updated: Asset) {
@@ -288,6 +330,30 @@ async function onRelationsChanged() {
           <section class="panel" style="margin-top: 16px">
             <div class="section-title">归属与维保</div>
             <div class="field-list">
+              <!--
+                所在点位 —— 台账的空间维度，与地图上那一格是**同一条数据**（assets.workstation_id）。
+                以前只在「编辑」窗口里能看见/能改，详情页看不到，容易被当成可选字段。
+                点编码跳空间地图并选中这一格（`?station=<code>`，与问题中心「去核对」同一个落点）。
+              -->
+              <div class="item">
+                <div class="k">所在点位</div>
+                <div class="v">
+                  <a v-if="asset.workstation_code" class="ws-link" @click="openStation">
+                    {{ asset.workstation_code }}
+                  </a>
+                  <span v-else class="ws-none">未挂点位</span>
+                </div>
+                <div class="ws-hint">
+                  <template v-if="asset.workstation_code">
+                    地图上的格子，点它去地图看这一格的位置与邻居<template v-if="station">
+                      · 点位使用人 {{ userLabel(station.user_name) }}</template
+                    >
+                  </template>
+                  <template v-else>
+                    这台设备还没有落在任何一个点位上（地图上看不到它）。在「编辑」里选「所在点位」即可挂靠
+                  </template>
+                </div>
+              </div>
               <div class="item">
                 <div class="k">存放位置</div>
                 <div class="v">{{ orDash(asset.location) }}</div>
@@ -381,6 +447,24 @@ async function onRelationsChanged() {
 .section-hint {
   font-size: 11.5px;
   font-weight: 400;
+  color: var(--text-3);
+}
+
+/* 所在点位：编码做成可点的跳转（去地图定位这一格） */
+.ws-link {
+  color: var(--brand, #2563eb);
+  font-weight: 600;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.ws-link:hover { text-decoration: underline; }
+.ws-none { color: var(--text-3); }
+/* 一行小字把「点位」与「存放位置」的区别说清 —— 两个字段都在这一块里，
+   不说清用户会把点位当成存放位置的重复字段。 */
+.ws-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.7;
   color: var(--text-3);
 }
 </style>
