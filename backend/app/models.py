@@ -252,6 +252,11 @@ class AuditAction:
     #: 一次迁移可能动十几台设备和两个点位，在审计页应能一眼筛出来。
     RELOCATION_APPLY = "relocation_apply"
 
+    #: 关联操作建议（给无归属点位新增使用人时，顺手把勾选的资产使用人对上）。
+    #: 与 ASSET_UPDATE 分开的理由同 RELOCATION_APPLY：一次操作可能动多台设备，
+    #: 审计页要能一眼筛出"这是一次关联同步"，而不是 N 条散落的编辑。
+    ASSET_LINKAGE = "asset_linkage"
+
     #: 关系核对的「例外确认」。**这是一条业务决定，必须留痕** ——
     #: 不是问题状态的开关（问题状态是每次现算的派生结果，不落库）。
     RELATION_EXCEPTION_CONFIRM = "relation_exception_confirm"
@@ -295,6 +300,7 @@ class AuditAction:
         ASSET_IMPORT: "批量导入",
         ASSET_EXPORT: "导出资产",
         RELOCATION_APPLY: "点位迁移",
+        ASSET_LINKAGE: "关联使用人",
         RELATION_EXCEPTION_CONFIRM: "确认关系例外",
         RELATION_EXCEPTION_REVOKE: "撤销关系例外",
         INVENTORY_CREATE: "发起盘点",
@@ -326,6 +332,7 @@ class AuditAction:
         ASSET_IMPORT: "📥",
         ASSET_EXPORT: "📤",
         RELOCATION_APPLY: "🚚",
+        ASSET_LINKAGE: "🤝",
         RELATION_EXCEPTION_CONFIRM: "🤝",
         RELATION_EXCEPTION_REVOKE: "↩️",
         INVENTORY_CREATE: "🧭",
@@ -357,6 +364,7 @@ class AuditAction:
             WORKSTATION_MOVE,
             WORKSTATION_DELETE,
             RELOCATION_APPLY,
+            ASSET_LINKAGE,
             RELATION_EXCEPTION_CONFIRM,
             RELATION_EXCEPTION_REVOKE,
             MAP_CREATE,

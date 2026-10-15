@@ -30,6 +30,7 @@ import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState } from '@/stores/app'
 import type {
   Asset,
+  LinkSuggestionsResult,
   MapInventoryAsset,
   MapInventoryWorkstation,
   StationRelationCheck,
@@ -37,6 +38,7 @@ import type {
 } from '@/types'
 import { hasOwner, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
 import RelationCheckCard from '@/components/RelationCheckCard.vue'
+import LinkSuggestDialog from '@/components/LinkSuggestDialog.vue'
 import {
   brandModel,
   facingLabel,
@@ -174,6 +176,14 @@ function relStateOf(assetId: number): string | null {
 
 /* ---- 写操作 ---- */
 
+/* ---- 关联操作建议（v2.7.0）----
+ * 给原本**无归属**的点位新增使用人时，先问一句"要不要顺手把设备使用人对上"。
+ * 只在这个方向触发（无 → 有）：换人 / 清人 / 绑定 / 迁移场景延后，
+ * 现在硬塞进来会让弹窗变成骚扰。 */
+const linkResult = ref<LinkSuggestionsResult | null>(null)
+const linkLoading = ref(false)
+let pendingUser: string | null = null
+
 async function saveBasics() {
   const s = props.station
   if (!s) return
@@ -204,15 +214,42 @@ async function saveBasics() {
 /**
  * 改点位使用人。
  *
- * **只改点位，不动资产。** 点位归属与设备归属是两个事实，
- * 强行联动会把"这位置上写的是 A、但机器记在 B 名下"这种差异抹掉 ——
- * 而那正是盘点要找的东西。
+ * **只改点位，不动资产** —— 这个原则没变，但「无归属 → 有人」这个方向
+ * 多了一步**建议**（不是联动）：后端预检该点位下的资产，给出逐台建议，
+ * 由用户在面板里逐项勾选。冲突项默认不勾，不替用户做覆盖决定。
  */
 async function changeUser(value: string | null) {
   const s = props.station
   if (!s) return
   const next = (value ?? '').trim() || null
   if (next === (s.user_name ?? null)) return
+
+  // 无归属 → 有人：先预检。有值得看一眼的资产才弹面板，否则直接保存。
+  if (next && !hasOwner(s.user_name)) {
+    pendingUser = next
+    linkLoading.value = true
+    try {
+      const res = await workstationApi.linkSuggestions(s.id, next)
+      if (res.suggestions.length === 0) {
+        await saveUser(next)
+      } else {
+        linkResult.value = res
+      }
+    } catch (error) {
+      ElMessage.error(apiMessage(error))
+    } finally {
+      linkLoading.value = false
+    }
+    return
+  }
+
+  await saveUser(next)
+}
+
+/** 只保存点位使用人（不含资产联动）。关联同步在面板确认时已单独执行 */
+async function saveUser(next: string | null) {
+  const s = props.station
+  if (!s) return
   saving.value = true
   try {
     const updated = await workstationApi.update(s.id, {
@@ -226,6 +263,19 @@ async function changeUser(value: string | null) {
   } finally {
     saving.value = false
   }
+}
+
+/** 面板确认（含「暂不处理」）→ 保存点位使用人。资产同步已在面板里执行完 */
+function onLinkConfirm() {
+  linkResult.value = null
+  void saveUser(pendingUser)
+  pendingUser = null
+}
+
+/** 面板被直接关掉（×）：什么都不做，下拉会因 model-value 未变而保持原值 */
+function onLinkClose() {
+  linkResult.value = null
+  pendingUser = null
 }
 
 /** 从点位上摘下一台设备（**资产留着**，只是不再属于这个点位） */
@@ -610,6 +660,14 @@ function dash(v: string | null | undefined): string {
         </div>
       </div>
     </div>
+
+    <!-- 关联操作建议：给无归属点位新增使用人时，先挑一遍要不要同步设备使用人 -->
+    <LinkSuggestDialog
+      :result="linkResult"
+      :loading="linkLoading"
+      @confirm="onLinkConfirm"
+      @close="onLinkClose"
+    />
   </aside>
 </template>
 

@@ -190,6 +190,28 @@ class WorkstationAssetsRequest(BaseModel):
     operator: Optional[str] = Field(default=None, max_length=64)
 
 
+class WorkstationLinkageRequest(BaseModel):
+    """关联操作建议的执行请求：给无归属点位新增使用人后，把勾选的资产使用人对上。
+
+    `asset_ids` 允许为空 = 用户选了「暂不处理」，回包只报告不写库。
+    `user_name` 必须是**非空**的使用人 —— 这个接口只做"填人"，不做"清人"。
+    """
+
+    user_name: str = Field(min_length=1, max_length=64)
+    asset_ids: list[int] = Field(default_factory=list)
+    operator: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("user_name")
+    @classmethod
+    def _user_not_placeholder(cls, v: str) -> str:
+        name = v.strip()
+        if not name:
+            raise ValueError("使用人不能为空")
+        if name in ("/", "／"):
+            raise ValueError("使用人不能是占位符（/ 等于没填）")
+        return name
+
+
 # --------------------------------------------------------------------------- #
 # 地图盘点视图
 # --------------------------------------------------------------------------- #

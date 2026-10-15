@@ -951,3 +951,39 @@ export interface InsightQuery {
   page?: number
   page_size?: number
 }
+
+/* -------------------------------------------------------------------------- */
+/* 关联操作建议（v2.7.0）                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** 单台资产的关联建议。后端逐台算好，前端**一个字都不拼** */
+export interface LinkSuggestion {
+  asset_id: number
+  asset_code: string
+  device_type_name: string
+  /** 当前使用人。没归属（空 / `/`）时为 null —— 界面显示「未登记」 */
+  current_user: string | null
+  suggestion: 'fill' | 'conflict' | 'keep'
+  label: string
+  hint: string
+  /** 默认是否勾选（只有 fill 默认勾） */
+  checked: boolean
+}
+
+export interface LinkSuggestionsResult {
+  station_id: number
+  station_code: string
+  new_user: string
+  suggestions: LinkSuggestion[]
+  /** 已是新使用人、无需提示的台数 */
+  matched_count: number
+  /** 该点位资产总数（对账用） */
+  total_assets: number
+}
+
+export interface LinkageApplyResult {
+  updated: number
+  asset_codes: string[]
+  skipped: { asset_id: number; asset_code?: string; current_user?: string | null; reason: string }[]
+  matched_count: number
+}

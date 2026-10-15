@@ -49,6 +49,8 @@ import type {
   FloorMapSavePayload,
   WorkstationBulkPayload,
   WorkstationBulkResult,
+  LinkSuggestionsResult,
+  LinkageApplyResult,
 } from '@/types'
 
 const http = axios.create({
@@ -376,6 +378,19 @@ export const workstationApi = {
    */
   bulk: (payload: WorkstationBulkPayload) =>
     post<WorkstationBulkResult>('/workstations/bulk', payload),
+
+  /**
+   * 关联操作建议（预检，干跑）：给无归属点位新增使用人前，
+   * 先看该点位下资产的关联建议。只读、不写库。
+   */
+  linkSuggestions: (id: number, userName: string) =>
+    get<LinkSuggestionsResult>(`/workstations/${id}/link-suggestions`, {
+      user_name: userName,
+    }),
+
+  /** 执行关联建议：只改用户勾选的资产使用人（后端执行前会重新核对） */
+  applyLinkage: (id: number, payload: { user_name: string; asset_ids: number[]; operator?: string | null }) =>
+    post<LinkageApplyResult>(`/workstations/${id}/apply-linkage`, payload),
 }
 
 /**

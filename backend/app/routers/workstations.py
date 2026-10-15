@@ -60,12 +60,14 @@ from ..schemas_workstations import (
     WorkstationImportResult,
     WorkstationImportRow,
     WorkstationLayoutRequest,
+    WorkstationLinkageRequest,
     WorkstationMap,
     WorkstationMapCanvas,
     WorkstationOut,
     WorkstationUpdate,
 )
 from ..services import floor_map_layout, ownership, workstation_importer
+from ..services import link_suggestions as link_suggestions_service
 from ..services.audit import record_audit
 from ..services.events import record_event
 from ..services.serialize import to_asset_out
@@ -590,6 +592,129 @@ def bind_assets(station_id: int, payload: WorkstationAssetsRequest, db: Session 
 
     db.commit()
     return {"moved": len(moved), "asset_codes": moved}
+
+
+@router.get("/{station_id}/link-suggestions", response_model=dict, summary="关联操作建议（预检，干跑）")
+def link_suggestions(
+    station_id: int,
+    user_name: str = Query(min_length=1, max_length=64),
+    db: Session = Depends(get_db),
+):
+    """给原本**无归属**的点位新增使用人前，先算一份逐台资产的关联建议。
+
+    **只读、不写库、不写审计** —— 这是干跑（与批量导入 dry_run 同一个理由：
+    让用户在点执行前就能预测结果）。
+
+    规则细节见 `services/link_suggestions.py`。要点：
+    - 没有使用人的设备 → `fill`（默认勾选）；
+    - 已经是新使用人的 → 不出现在列表里（只提示有意义的变化）；
+    - 有其他使用人的 → `conflict`（默认不勾，不替用户做覆盖决定）；
+    - 公用 / 共享占位 → `keep`（可以不绑到个人）。
+    """
+    station = _get_station_or_404(db, station_id)
+    new_user = user_name.strip()
+    if not ownership.has_owner(new_user):
+        raise HTTPException(status_code=400, detail="新使用人必须是非空的人名")
+    if ownership.has_owner(station.user_name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"点位 {station.code} 已有使用人，本接口只服务「无归属点位新增使用人」场景",
+        )
+    assets = list(
+        db.execute(select(Asset).where(Asset.workstation_id == station.id)).scalars().all()
+    )
+    result = link_suggestions_service.build_link_suggestions(assets, new_user)
+    return {
+        "station_id": station.id,
+        "station_code": station.code,
+        "new_user": new_user,
+        **result,
+    }
+
+
+@router.post("/{station_id}/apply-linkage", response_model=dict, summary="执行关联建议（只改勾选的资产使用人）")
+def apply_linkage(station_id: int, payload: WorkstationLinkageRequest, db: Session = Depends(get_db)):
+    """把用户在建议面板里勾选的资产使用人改成新点位使用人。
+
+    两条纪律，缺一不可：
+
+    1. **保存前重新核对**：弹窗打开期间资产关系可能已经变了（别人在台账里改了、
+       另一个浏览器标签动了），过时的检查结果不能直接批量覆盖 ——
+       每台资产在**写库前重算一次** suggestion，不再是 `fill` 的原样跳过并在回包里说明。
+    2. **只写用户勾选的**：`asset_ids` 之外一个字都不动；`fill` 之外的建议
+       （`keep` / `conflict`）即使被勾选也**只执行填入** —— 本接口不做清空。
+    """
+    station = _get_station_or_404(db, station_id)
+    new_user = payload.user_name.strip()
+    if not ownership.has_owner(new_user):
+        raise HTTPException(status_code=400, detail="新使用人必须是非空的人名")
+
+    # 只处理真实挂在本点位上的资产（前端传来的 id 可能已过期）
+    assets = {
+        a.id: a
+        for a in db.execute(
+            select(Asset).where(
+                Asset.workstation_id == station.id, Asset.id.in_(payload.asset_ids or [-1])
+            )
+        ).scalars().all()
+    }
+
+    updated: list[str] = []
+    skipped: list[dict] = []
+    for asset_id in payload.asset_ids:
+        asset = assets.get(asset_id)
+        if asset is None:
+            skipped.append({"asset_id": asset_id, "reason": "not_on_station"})
+            continue
+        # 重新核对：当前状态必须仍是「没有使用人」才允许填入。
+        if link_suggestions_service.suggest_for_asset(asset.user_name, new_user) != "fill":
+            skipped.append(
+                {"asset_id": asset_id, "asset_code": asset.asset_code,
+                 "current_user": (asset.user_name or "").strip() or None,
+                 "reason": "state_changed"}
+            )
+            continue
+        before = (asset.user_name or "").strip() or ""
+        asset.user_name = new_user
+        updated.append(asset.asset_code)
+        record_event(
+            db,
+            asset,
+            AssetEventType.UPDATE,
+            operator=payload.operator,
+            note=f"使用人 {before or '（未登记）'} → {new_user}（随点位 {station.code} 使用人关联）",
+            detail={"changes": {"user_name": {"from": before, "to": new_user}}},
+        )
+
+    if updated:
+        record_audit(
+            db,
+            AuditAction.ASSET_LINKAGE,
+            target_type=AuditTarget.WORKSTATION,
+            target_id=station.id,
+            target_label=_station_label(station),
+            summary=f"点位 {station.code} 使用人关联为 {new_user}："
+                    f"更新 {len(updated)} 台设备使用人"
+                    + (f"（{'、'.join(updated[:3])} 等）" if len(updated) > 3 else f"（{'、'.join(updated)}）"),
+            operator=payload.operator,
+            detail={
+                "workstation_id": station.id,
+                "code": station.code,
+                "new_user": new_user,
+                "asset_codes": updated,
+                "skipped": skipped,
+            },
+        )
+
+    db.commit()
+    return {
+        "updated": len(updated),
+        "asset_codes": updated,
+        "skipped": skipped,
+        "matched_count": link_suggestions_service.build_link_suggestions(
+            list(assets.values()), new_user
+        )["matched_count"],
+    }
 
 
 @router.delete("/{station_id}/assets/{asset_id}", response_model=dict, summary="把资产从点位摘下来")
