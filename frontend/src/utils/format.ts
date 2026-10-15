@@ -225,6 +225,10 @@ export const EVENT_META: Record<string, EventMeta> = {
   repair_done: { icon: '✅', color: '#0f7b3f', bg: '#e8f7ee' },
   scrap: { icon: '🗑️', color: '#d54941', bg: '#fdecea' },
   restore: { icon: '♻️', color: '#0b6bcb', bg: '#eaf2ff' },
+  // 点位迁移：与通用「信息变更」分开，一次搬十几台时履历上能一眼认出来
+  relocate: { icon: '🔀', color: '#0b6bcb', bg: '#eaf2ff' },
+  // 关系例外：这是"关于这台设备的一条业务决定"，不是设备被改了 —— 所以用中性灰蓝，不用红
+  relation_exception: { icon: '🩹', color: '#7a7f87', bg: '#f2f3f5' },
 }
 
 export function eventMeta(eventType: string): EventMeta {
@@ -239,6 +243,8 @@ export const EVENT_TYPES: AssetEventType[] = [
   'pair',
   'unpair',
   'inventory',
+  'relocate',
+  'relation_exception',
   'checkout',
   'return',
   'repair',

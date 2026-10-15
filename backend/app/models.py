@@ -177,6 +177,16 @@ class AssetEventType:
     UNPAIR = "unpair"                # 解除配对
     INVENTORY = "inventory"          # 盘点标记
     DELETE = "delete"                # 删除（先记后删，实际不留）
+    #: 点位迁移（整点位业务迁移 / 多台资产换点位）。
+    #: **与 UPDATE 分开**：迁移会一次动十几台设备，在履历上应该一眼可辨，
+    #: 而不是让人从"信息变更：所在点位 空 → W01"里去猜这是不是一次批量迁移。
+    RELOCATE = "relocate"
+    #: 关系差异被**确认为例外** / 例外被撤销。
+    #: 它不是"设备被改了"，而是"关于这台设备的一条业务决定" —— 之所以也写进履历，
+    #: 是因为看履历的人有权知道"它当初被认定过是合理的、理由是什么"。
+    #: ⚠️ 只有**设备级**的例外写它（点位级没有对应设备，写在点位侧栏的例外表里）。
+    #: ⚠️ 例外的**失效**不写事件 —— 失效是算出来的（指纹比对），落库就违反红线 2。
+    RELATION_EXCEPTION = "relation_exception"
 
     LABELS: dict[str, str] = {
         CREATE: "录入台账",
@@ -185,6 +195,8 @@ class AssetEventType:
         PAIR: "绑定配对",
         UNPAIR: "解除配对",
         INVENTORY: "盘点标记",
+        RELOCATE: "点位迁移",
+        RELATION_EXCEPTION: "关系例外",
     }
 
     @classmethod

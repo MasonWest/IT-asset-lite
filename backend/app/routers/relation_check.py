@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import (
     Asset,
+    AssetEventType,
     AuditAction,
     AuditTarget,
     RelationException,
@@ -43,6 +44,7 @@ from ..schemas_relations import (
 )
 from ..services import relation_check
 from ..services.audit import record_audit
+from ..services.events import record_event
 
 router = APIRouter(prefix="/api/relation-checks", tags=["relation-checks"])
 
@@ -121,8 +123,10 @@ def _issue_out(
     exc_out: Optional[RelationExceptionOut] = None
     suppressed = False
     if exception is not None:
-        # 指纹一致 = 关系没变，这条确认仍然成立；不一致 = 已失效，差异重新冒出来
-        valid = exception.fingerprint == issue.fingerprint
+        # 指纹一致 = 关系没变，这条确认仍然成立；不一致 = 已失效，差异重新冒出来。
+        # ⚠️ 判定走 `relation_check.exception_still_valid`（唯一实现）——
+        # 问题中心那边也用它，两处不能各写一遍比较。
+        valid = relation_check.exception_still_valid(exception.fingerprint, issue.fingerprint)
         exc_out = _exception_out(exception, valid=valid)
         suppressed = valid
 
@@ -147,6 +151,47 @@ def _issue_out(
         ],
         exception=exc_out,
         suppressed=suppressed,
+    )
+
+
+def _record_exception_event(
+    db: Session,
+    asset_id: int,
+    *,
+    confirmed: bool,
+    station_code: str,
+    reason: str,
+    operator: Optional[str],
+    title: str = "",
+) -> None:
+    """把"这条差异被确认为例外 / 例外被撤销"写进**设备履历**（Phase 4）。
+
+    为什么一条业务决定也要进设备履历：看这台设备历史的人，有权知道
+    "它当初被认定过是合理的、理由是什么" —— 否则他会看到一条差异凭空消失又凭空出现。
+
+    ⚠️ 两个边界：
+      · 只有**设备级**例外调到这儿（`asset_id != 0`）。点位级例外没有对应设备，
+        写不进 `asset_events`，它在点位侧栏的例外表里呈现。
+      · 设备已经删了就直接跳过（它的履历已随 CASCADE 清掉，别硬写孤儿行）。
+    """
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        return
+    verb = "记为例外" if confirmed else "撤销例外"
+    record_event(
+        db,
+        asset,
+        AssetEventType.RELATION_EXCEPTION,
+        operator=operator,
+        note=f"{verb}（点位 {station_code}）：{reason}",
+        detail={
+            "relation_exception": {
+                "confirmed": confirmed,
+                "reason": reason,
+                "workstation_code": station_code,
+                "title": title,
+            }
+        },
     )
 
 
@@ -223,7 +268,12 @@ def list_exceptions(
     result = relation_check.check_station(station_input, asset_inputs)
     current: dict[tuple[str, int], str] = {i.exception_key: i.fingerprint for i in result.issues}
     return [
-        _exception_out(e, valid=current.get((e.rule, int(e.asset_id))) == e.fingerprint)
+        _exception_out(
+            e,
+            valid=relation_check.exception_still_valid(
+                e.fingerprint, current.get((e.rule, int(e.asset_id)))
+            ),
+        )
         for e in rows
     ]
 
@@ -312,6 +362,17 @@ def confirm_exception(
             "fingerprint": matched.fingerprint,
         },
     )
+    # 设备级例外同时进设备履历（点位级 asset_id=0 没有对应设备，跳过）
+    if asset_id:
+        _record_exception_event(
+            db,
+            asset_id,
+            confirmed=True,
+            station_code=station.code,
+            reason=payload.reason or "",
+            operator=payload.operator,
+            title=matched.title,
+        )
     db.commit()
     return build_check(db, station)
 
@@ -346,5 +407,15 @@ def revoke_exception(
         detail={"exception_id": exception.id, "workstation_id": station.id,
                 "rule": exception.rule, "asset_id": exception.asset_id},
     )
+    # 撤销也进履历 —— 只记"确认"不记"撤销"，履历就是残缺的
+    if int(exception.asset_id):
+        _record_exception_event(
+            db,
+            int(exception.asset_id),
+            confirmed=False,
+            station_code=station.code,
+            reason=exception.reason or "",
+            operator=operator,
+        )
     db.commit()
     return build_check(db, station)

@@ -19,6 +19,8 @@ import type {
   ImportMode,
   ImportPreview,
   ImportResult,
+  InsightQuery,
+  InsightsPage,
   InventoryContext,
   InventoryResult,
   InventoryScope,
@@ -484,6 +486,20 @@ export function downloadUrl(url: string): void {
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
+}
+
+// --------------------------------------------------------------------------- //
+// 问题中心
+// --------------------------------------------------------------------------- //
+export const insightsApi = {
+  /**
+   * 全库问题清单（**现算，不落库**）。
+   *
+   * `silent`：导航栏那个角标用它 —— 拿不到就静静不显示，
+   * 不该因为一个角标在别的页面上弹错误提示。
+   */
+  issues: (query: InsightQuery = {}, silent = false) =>
+    get<InsightsPage>('/insights/issues', pruneParams(query as Record<string, unknown>), silent),
 }
 
 export default http

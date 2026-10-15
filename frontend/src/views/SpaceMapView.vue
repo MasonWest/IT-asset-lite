@@ -480,6 +480,29 @@ async function loadUsers() {
   }
 }
 
+/**
+ * 把 URL 里的 `?station=<code>` 对回去 —— 问题中心「去核对」深链的落点。
+ *
+ * ⚠️ 用 **code** 而不是 id：问题是按编码展示给人的，链接里写 id 谁也不知道指的是哪一格；
+ * 而且点位编码软删除后**不释放**，链接长期有效。
+ * ⚠️ 只对**一次**。对完之后用户在地图上点别的格子，URL 由 `select()` 接着维护，
+ * 不需要（也不该）再被这个入口拽回去。
+ */
+let stationQueryApplied = false
+async function applyStationFromQuery() {
+  if (stationQueryApplied) return
+  const want = String(route.query.station ?? '').trim()
+  if (!want) return
+  stationQueryApplied = true
+  const hit = stations.value.find((s) => s.code === want)
+  if (!hit) {
+    // 点位可能刚被删掉 / 改了编码。说出来，别让人对着一个空侧栏猜
+    ElMessage.info(`没找到点位 ${want} —— 它可能已被删除或改了编码`)
+    return
+  }
+  await select(hit)
+}
+
 /** 打开进行中的盘点任务，并把 URL 里的 ?task= 对回去 */
 async function loadTasks() {
   try {
@@ -540,6 +563,18 @@ function invalidateAssets(stationId: number) {
 
 async function select(station: Workstation) {
   selectedId.value = station.id
+  /**
+   * 让 URL 里的 `?station=` 跟着走。
+   *
+   * 这一页的 query 约定是早就有的（`?task=`），这里只是补上"当前选中哪一格"。
+   * 好处是**问题中心点「去核对」跳过来能直接定位到 W61**（见 `applyStationFromQuery`），
+   * 而且刷新 / 把链接发给人，落到的是同一格。
+   *
+   * 用 `replace` 而不是 `push`：点几个格子就在历史里塞几条记录，会把"返回上一页"变得没法用。
+   */
+  if (String(route.query.station ?? '') !== station.code) {
+    void router.replace({ query: { ...route.query, station: station.code } })
+  }
   // 资产清单与关系核对**并行拉**：两者互不依赖，串行会让侧栏分两次"跳"出来
   await Promise.all([loadAssets(station.id), loadRelationCheck(station.id)])
   // 新增模式下点已有点位：**这个位置已经有主了**。说出来 ——
@@ -1493,6 +1528,9 @@ function onBlur() {
 onMounted(async () => {
   await Promise.all([loadMap(), loadUsers(), loadTasks()])
   await loadMapView()
+  // 问题中心的「去核对」深链：把 ?station= 选中。放在 fit() 之前 ——
+  // 侧栏一出现就会改变可视高度，晚一步会先按没侧栏的尺寸 fit 一次。
+  await applyStationFromQuery()
 
   /**
    * 断点判定必须在第一次 fit() 之前落地。

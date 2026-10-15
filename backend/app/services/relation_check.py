@@ -90,6 +90,9 @@ class Severity:
 
     LABELS: dict[str, str] = {OK: "正常", INFO: "提示", REVIEW: "待核对"}
 
+    #: 排序权重（大的更值得先看）。问题中心按它把"值得看一眼的"排在前面。
+    RANK: dict[str, int] = {REVIEW: 2, INFO: 1, OK: 0}
+
 
 class RuleKey:
     """规则标识。前端按它决定怎么渲染 / 怎么挂例外。"""
@@ -259,6 +262,17 @@ def station_fingerprint(station: StationInput, assets: list[AssetInput]) -> str:
     return _digest(
         ["station", str(station.id), (station.user_name or "").strip(), *rows]
     )
+
+
+def exception_still_valid(stored: str, fresh: Optional[str]) -> bool:
+    """存下来的指纹和**现算**的对得上，这条例外才算数。
+
+    ⚠️ **这是"例外还有效吗"的唯一实现。** 接口层（`routers/relation_check.py`）与
+    问题中心（`services/issues.py`）都要用它，别各写一遍 `a == b` ——
+    写两遍就会有一天不一样（比如一边 strip 一边不 strip），
+    而那种不一致不会有任何报错，只会让"已确认的例外"在某些页面算数、在另一些页面不算数。
+    """
+    return bool(stored) and stored == (fresh or "")
 
 
 def pair_state(station_user: Optional[str], asset_user: Optional[str]) -> str:

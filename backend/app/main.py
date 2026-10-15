@@ -43,6 +43,7 @@ from .routers import (
     audit,
     device_types,
     floor_maps,
+    insights,
     inventory,
     meta,
     relation_check,
@@ -280,6 +281,7 @@ app.include_router(workstations.router)
 app.include_router(floor_maps.router)
 app.include_router(relation_check.router)
 app.include_router(relocation.router)
+app.include_router(insights.router)
 app.include_router(audit.router)
 
 

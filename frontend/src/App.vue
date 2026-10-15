@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 
 import {
   appState,
@@ -10,15 +11,29 @@ import {
   saveOperator,
   saveOverride,
 } from '@/stores/app'
+import { useInsightBadge } from '@/composables/useInsightBadge'
 
 const settingsOpen = ref(false)
 const overrideInput = ref('')
 const operatorInput = ref('')
 
+/**
+ * 「问题中心」的角标。
+ *
+ * **只在 `review`（需要看一眼）不为 0 时显示，而且是琥珀不是红** ——
+ * 常驻红点会把用户训练成无视它，而这个页面存在的意义恰恰是"值得看一眼的事别被埋掉"。
+ * 每次切页刷一次（一次很轻的 GET），所以从问题中心处理完回到台账，数字立刻是新的。
+ */
+const route = useRoute()
+const { reviewPending, refresh: refreshBadge } = useInsightBadge()
+
+watch(() => route.fullPath, () => void refreshBadge())
+
 onMounted(async () => {
   await loadSystemInfo()
   overrideInput.value = loadOverride()
   operatorInput.value = appState.operator
+  void refreshBadge()
 })
 
 const baseDisplay = computed(() => effectiveBaseUrl() || '未探测到局域网地址')
@@ -53,6 +68,10 @@ async function refreshInfo() {
 
       <nav>
         <RouterLink to="/">资产台账</RouterLink>
+        <RouterLink to="/insights" class="nav-insights">
+          问题中心
+          <span v-if="reviewPending > 0" class="nav-badge">{{ reviewPending }}</span>
+        </RouterLink>
         <RouterLink to="/map">空间地图</RouterLink>
         <RouterLink to="/pairings">配对管理</RouterLink>
         <RouterLink to="/inventory">盘点</RouterLink>

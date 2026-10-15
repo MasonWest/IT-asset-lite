@@ -32,6 +32,7 @@ import type {
   Workstation,
 } from '@/types'
 import { hasOwner, userLabel } from '@/utils/format'
+import { compareStationCode } from '@/utils/workstationMap'
 
 const props = defineProps<{
   modelValue: boolean
@@ -92,8 +93,21 @@ watch([mode, selectedAssetIds, targetId, moveAssets, moveUser, retireSource], ()
   acknowledged.value = false
 }, { deep: true })
 
+/**
+ * 目标点位候选 —— **必须按编码排序，不能沿用接口给的顺序**。
+ *
+ * `GET /api/workstations` 的顺序是 `y, x, id`，那是**地图渲染**的顺序
+ * （同一排的挨着给），本身没问题；但用在一个"从 68 个点位里挑一个"的下拉里，
+ * 用户看到的就是 W48、W49、W5、W50… 这种顺序 —— 选起来极其费劲。
+ *
+ * 排序实现复用 `utils/workstationMap.ts::compareStationCode`
+ * （`AssetFormDialog` 的点位下拉已经在用它）。**不要在这里再写一份**
+ * —— `W10` 排在 `W2` 前面正是那个函数存在的原因。
+ */
 const targetCandidates = computed(() =>
-  props.stations.filter((s) => s.active && s.id !== props.source?.id),
+  props.stations
+    .filter((s) => s.active && s.id !== props.source?.id)
+    .sort((a, b) => compareStationCode(a.code, b.code)),
 )
 
 const canPreview = computed(() => {
@@ -108,6 +122,31 @@ const targetStation = computed(() =>
 
 /** 目标点位使用人与将被搬过去的设备使用人是否会打架 —— 预览里后端也会说，这里先给个提醒 */
 const targetOwnerLabel = computed(() => userLabel(targetStation.value?.user_name ?? null))
+
+/** 归属原值 → 给用户看的文案（空值、`/`、`／` 一律显示成「未填使用人」） */
+function ownerLabel(v: string | null | undefined): string {
+  return userLabel(v ?? null)
+}
+
+/**
+ * 这一侧的归属迁移前后变了没有。
+ *
+ * ⚠️ 比的是**显示文案**而不是原值：`null` 与 `/` 是两个不同的值、却是同一句话
+ * （都显示「未填使用人」），按原值比会高亮出一个用户根本看不见的差别。
+ */
+function ownerChanged(before: string | null, after: string | null): boolean {
+  return ownerLabel(before) !== ownerLabel(after)
+}
+
+/** 归属块的两种"侧"：源点位、目标点位。顺序固定，界面才不会跳。 */
+const ownerSides = computed(() => {
+  const p = preview.value
+  if (!p) return []
+  return [
+    { key: 'source', code: p.source?.code ?? '源点位', before: p.source_user_before, after: p.source_user_after },
+    { key: 'target', code: p.target?.code ?? '目标点位', before: p.target_user_before, after: p.target_user_after },
+  ]
+})
 
 async function runPreview() {
   if (!props.source || targetId.value === null) return
@@ -231,14 +270,14 @@ const RELATION_LABEL: Record<string, string> = {
     <div v-else class="block">
       <div class="blk-title">迁移内容</div>
       <el-checkbox v-model="moveAssets">
-        一并迁移设备（点位 {{ source?.code }} 上现有
-        {{ sourceAssets.length }} 台）
+        一并迁移设备
+        <span class="sub">（只搬设备；源点位 {{ source?.code }} 上现有 {{ sourceAssets.length }} 台）</span>
       </el-checkbox>
       <el-checkbox v-model="moveUser">
         迁移点位使用人
         <span class="sub">
-          （源点位使用人 {{ hasOwner(source?.user_name ?? null) ? source!.user_name : '未填' }}
-          → 目标点位；<b>源点位使用人会被清空</b>）
+          （源点位 {{ source?.code }} 现为 {{ ownerLabel(source?.user_name) }} → 目标点位；
+          <b>源点位使用人会被清空</b>。不勾就两侧都不动）
         </span>
       </el-checkbox>
       <el-checkbox v-model="retireSource">
@@ -279,6 +318,37 @@ const RELATION_LABEL: Record<string, string> = {
       </div>
 
       <template v-if="preview.ok">
+        <!--
+          点位归属：**两侧都把"迁移前 → 迁移后"摆出来，哪怕这一侧根本不变。**
+          这一块存在的理由就是"不变的也要说" —— 曾经它只说会变的，
+          于是用户点了「点位业务迁移 + 一并迁移设备」，执行完发现使用人没动，
+          只能靠事后翻审计日志才知道"那项没勾，所以没搬"。
+        -->
+        <div v-if="preview.mode === 'station'" class="pane owner">
+          <div class="pane-title">
+            点位归属
+            <span v-if="preview.user_move">（跟着走）</span>
+            <span v-else>（不跟着走）</span>
+          </div>
+          <div v-for="side in ownerSides" :key="side.key" class="owner-row">
+            <span class="ocode">{{ side.code }}</span>
+            <span class="obefore">{{ ownerLabel(side.before) }}</span>
+            <span class="oarrow">→</span>
+            <span class="oafter" :class="{ changed: ownerChanged(side.before, side.after) }">
+              {{ ownerLabel(side.after) }}
+            </span>
+            <span v-if="!ownerChanged(side.before, side.after)" class="okeep">不变</span>
+          </div>
+          <div v-if="!preview.user_move" class="owner-hint">
+            <template v-if="hasOwner(preview.source_user_before)">
+              要把归属一起搬过去，请勾上「迁移点位使用人」。
+            </template>
+            <template v-else>
+              源点位本来就没有登记使用人，没有归属可搬；目标点位现有的人不会被覆盖。
+            </template>
+          </div>
+        </div>
+
         <div class="pane">
           <div class="pane-title">
             将迁移 {{ preview.moves.length }} 台设备
@@ -300,6 +370,13 @@ const RELATION_LABEL: Record<string, string> = {
           <div class="pane-title">点位侧的变更</div>
           <ul>
             <li v-for="(s, i) in preview.station_changes" :key="i">{{ s }}</li>
+          </ul>
+        </div>
+
+        <div v-if="preview.notes.length" class="pane">
+          <div class="pane-title">说明</div>
+          <ul>
+            <li v-for="(n, i) in preview.notes" :key="i">{{ n }}</li>
           </ul>
         </div>
 
@@ -367,6 +444,19 @@ const RELATION_LABEL: Record<string, string> = {
 .pane.warn { background: #fffbeb; border-color: #fde68a; }
 .pane.warn .pane-title { color: #b45309; }
 .pane.warn li { color: #92400e; }
+/* 归属块：信息性，用蓝不用红 —— 它不是警告，是"告诉你事实" */
+.pane.owner { background: #f8fafc; }
+.owner-row {
+  display: flex; align-items: center; gap: 9px; padding: 4px 0;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.ocode { font-weight: 700; color: #0f172a; min-width: 48px; }
+.obefore { color: #64748b; }
+.oarrow { color: #cbd5e1; }
+.oafter { color: #475569; font-weight: 600; }
+.oafter.changed { color: #b45309; font-weight: 700; }
+.okeep { font-size: 10.5px; color: #94a3b8; }
+.owner-hint { font-size: 11px; color: #64748b; line-height: 1.7; margin-top: 7px; }
 .ack { margin-top: 9px; font-size: 12px; }
 
 .moves { max-height: 220px; overflow-y: auto; }

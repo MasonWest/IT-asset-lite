@@ -140,10 +140,23 @@ class RelocationPreviewOut(BaseModel):
     conflicts: list[str] = []
     #: 需要用户确认的差异 / 影响 —— 不阻止，但必须显式点头
     confirmations: list[str] = []
+    #: 只是说明情况、**不要求点头**的提示。
+    #: 例如「源点位没登记使用人，没有归属可搬」——不是差异，但不告诉用户，
+    #: 他只能靠事后翻审计日志才发现"使用人怎么没跟着走"。
+    notes: list[str] = []
     moves: list[AssetMoveOut] = []
     noop_count: int = 0
     #: 点位级的变更说明（mode=station 时才有内容）：改使用人 / 退役源点位…
     station_changes: list[str] = []
+    #: mode=station：归属**到底会不会跟着走**。
+    #: 源点位没有登记归属（空值 / `/` / `／`）时恒为 `false` —— 没有东西可搬。
+    user_move: bool = False
+    #: 迁移前后的归属原值（照实给，含 `None` 与 `/`）。勾没勾都算，
+    #: 好让界面在点执行前就能说清「谁没跟着走」。
+    source_user_before: Optional[str] = None
+    source_user_after: Optional[str] = None
+    target_user_before: Optional[str] = None
+    target_user_after: Optional[str] = None
     source: Optional[dict] = None
     target: Optional[dict] = None
     #: 预览态指纹。执行时带回来，不一致说明期间有人动过数据 → 409，让用户重新预览。
@@ -207,6 +220,8 @@ class RelocationApplyResult(BaseModel):
     moved: int = 0
     moved_codes: list[str] = []
     station_changes: list[str] = []
+    #: 说明性提示（与预览同源），例如"源点位没有归属可搬，目标点位使用人保持不动"
+    notes: list[str] = []
     #: 执行后重新核对受影响点位的结论（要求：迁移后 P0 检查结果与最新数据一致）
     relation_checks: list[StationRelationCheckOut] = []
     summary: str = ""

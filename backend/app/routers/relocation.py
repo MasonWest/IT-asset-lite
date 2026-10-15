@@ -51,6 +51,7 @@ from ..schemas_relations import (
 from ..services import relocation
 from ..services.audit import record_audit
 from ..services.events import record_event
+from ..services.ownership import has_owner
 from .relation_check import build_check
 
 router = APIRouter(prefix="/api/relocations", tags=["relocations"])
@@ -169,6 +170,7 @@ def _preview_out(plan: relocation.Plan) -> RelocationPreviewOut:
         ok=plan.ok,
         conflicts=list(plan.conflicts),
         confirmations=list(plan.confirmations),
+        notes=list(plan.notes),
         moves=[
             AssetMoveOut(
                 asset_id=m.asset_id,
@@ -184,6 +186,11 @@ def _preview_out(plan: relocation.Plan) -> RelocationPreviewOut:
         ],
         noop_count=plan.noop_count,
         station_changes=list(plan.station_changes),
+        user_move=plan.user_move,
+        source_user_before=plan.source_user_before,
+        source_user_after=plan.source_user_after,
+        target_user_before=plan.target_user_before,
+        target_user_after=plan.target_user_after,
         source={
             "id": plan.source.id, "code": plan.source.code,
             "user_name": plan.source.user_name, "active": plan.source.active,
@@ -232,7 +239,7 @@ def _apply_moves(
         record_event(
             db,
             asset,
-            AssetEventType.UPDATE,
+            AssetEventType.RELOCATE,
             operator=operator,
             note=f"所在点位 {before_code} → {target.code}（点位迁移）",
             detail={"changes": {"workstation_id": {"from": before_code, "to": target.code}}},
@@ -311,16 +318,20 @@ def apply_relocation(payload: RelocationApplyRequest, db: Session = Depends(get_
                 if moved:
                     station_changes.append(f"{len(moved)} 台设备：{source.code} → {target.code}")
 
-            if payload.move_user:
+            if payload.move_user and has_owner(source.user_name):
+                # ⚠️ 门槛是 `has_owner()` 而不是"勾了框"。
+                # 源点位没登记归属（空值，或 `/` / `／` 这种"没填"占位符）时**一个字都不写**：
+                # 拿"空"去覆盖目标点位的使用人不是迁移，是丢归属。
+                # 曾经这里只看 `payload.move_user`，于是勾上它会把目标点位的
+                # 「林晓薇」覆盖成 `/` —— 而且预览里还写着"不会改变任何东西"。
                 new_owner = source.user_name
                 if (target.user_name or "") != (new_owner or ""):
                     station_changes.append(
-                        f"点位使用人：{target.code}「{target.user_name or '未填'}」→「{new_owner or '未填'}」"
+                        f"点位使用人：{target.code}「{target.user_name or '未填'}」→「{new_owner}」"
                     )
                 target.user_name = new_owner
-                if (source.user_name or "") != "":
-                    station_changes.append(f"{source.code} 的使用人清空")
                 source.user_name = None
+                station_changes.append(f"{source.code} 的使用人清空")
 
             if payload.retire_source:
                 # 退役前确认它已经空了 —— 业务上"退役一个还挂着设备的点位"没有意义
@@ -383,6 +394,7 @@ def apply_relocation(payload: RelocationApplyRequest, db: Session = Depends(get_
         moved=len(moved),
         moved_codes=moved,
         station_changes=station_changes,
+        notes=list(plan.notes),
         relation_checks=checks,
         summary=summary,
     )

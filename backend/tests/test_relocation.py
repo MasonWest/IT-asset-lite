@@ -146,14 +146,75 @@ class TestStationMigration(unittest.TestCase):
         self.assertTrue(any("会丢失" in c or "改写成" in c for c in plan.confirmations))
         self.assertTrue(plan.station_changes)
 
-    def test_move_user_blank_source_warns(self):
+    def test_move_user_blank_source_never_overwrites_target(self):
+        """源点位没有归属时，勾了「迁移使用人」也**绝不写** —— 更不许拿空去覆盖目标点位。
+
+        这条是从一个真实缺陷反推出来的：以前判"有没有人"用的是 `(x or '').strip()`，
+        于是源点位的 `/` 被当成一个**真使用人**，"迁移"它就等于把目标点位的
+        「林晓薇」覆盖成 `/`（丢归属），而预览里还写着"不会改变任何东西"。
+        """
         plan = rl.plan_station_migration(
             st(1, "W01", None), st(2, "W02", "陈默"),
             [a(10, "A-1", None, 1, "W01")],
             move_assets=True, move_user=True,
         )
         self.assertTrue(plan.ok)
-        self.assertTrue(plan.confirmations)
+        # 不要求点头：这是"说明"，不是"差异"
+        self.assertEqual(plan.confirmations, [])
+        self.assertTrue(any("没有归属可搬" in n for n in plan.notes))
+        self.assertFalse(plan.user_move)
+        self.assertEqual(plan.target_user_after, "陈默")  # 目标点位的归属原样保留
+        self.assertEqual(plan.source_user_after, None)
+        # 也不许出现"要清空/要改写"这类变更说明
+        self.assertFalse(any("使用人清空" in c for c in plan.station_changes))
+
+    def test_slash_source_is_not_an_owner(self):
+        """`/` 是「没填」，不是人名 —— 与 `ownership.has_owner()` 同口径（决策 76）。
+
+        半角 `/` 与全角 `／` 都要认（中文输入法下打全角太正常了）。
+        """
+        for mark in ("/", "／"):
+            with self.subTest(mark=mark):
+                plan = rl.plan_station_migration(
+                    st(1, "W01", mark), st(2, "W02", "林晓薇"),
+                    [a(10, "A-1", "林晓薇", 1, "W01")],
+                    move_assets=True, move_user=True,
+                )
+                self.assertFalse(plan.user_move, f"{mark} 不该被当成使用人")
+                self.assertEqual(plan.target_user_after, "林晓薇")
+                self.assertTrue(any("没有归属可搬" in n for n in plan.notes))
+
+    def test_slash_target_is_not_an_owner(self):
+        """目标点位只有 `/` 时，等于"没有登记使用人"，要给出「公共设备」的那句提醒。"""
+        plan = rl.plan_asset_move([a(10, "A-1", "林晓薇", 1, "W01")], st(2, "W02", "/"), {1: st(1, "W01", "/")})
+        self.assertTrue(plan.ok)
+        self.assertTrue(any("没有登记使用人" in c for c in plan.confirmations))
+
+    def test_owner_before_after_when_moving(self):
+        """归属会跟着走时，前后值要算对（界面靠它显示「迁移前 → 迁移后」）。"""
+        plan = rl.plan_station_migration(
+            st(1, "W01", "林晓薇"), st(2, "W02", "陈默"),
+            [a(10, "A-1", "林晓薇", 1, "W01")],
+            move_assets=True, move_user=True,
+        )
+        self.assertTrue(plan.user_move)
+        self.assertEqual(
+            (plan.source_user_before, plan.source_user_after), ("林晓薇", None)
+        )
+        self.assertEqual(
+            (plan.target_user_before, plan.target_user_after), ("陈默", "林晓薇")
+        )
+
+    def test_owner_before_after_when_not_moving(self):
+        """不搬归属时，两侧前后都必须是原值 —— 界面据此说"不变"。"""
+        plan = rl.plan_station_migration(
+            st(1, "W01", "林晓薇"), st(2, "W02", "陈默"),
+            [a(10, "A-1", "林晓薇", 1, "W01")],
+            move_assets=True, move_user=False,
+        )
+        self.assertFalse(plan.user_move)
+        self.assertEqual(plan.source_user_after, "林晓薇")
+        self.assertEqual(plan.target_user_after, "陈默")
 
     def test_retire_adds_station_change(self):
         plan = rl.plan_station_migration(

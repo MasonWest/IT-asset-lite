@@ -10,6 +10,16 @@ const router = createRouter({
       meta: { title: '资产台账' },
     },
     {
+      path: '/insights',
+      name: 'insights',
+      component: () => import('@/views/InsightsView.vue'),
+      /**
+       * 问题中心。**放在「资产台账」之后** —— 它是"该关注什么"的总览入口，
+       * 看完总览再钻进台账/地图处理具体对象，符合使用顺序。
+       */
+      meta: { title: '问题中心' },
+    },
+    {
       path: '/asset/:id',
       name: 'asset-detail',
       component: () => import('@/views/AssetDetailView.vue'),

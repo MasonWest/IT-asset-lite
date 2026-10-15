@@ -29,6 +29,8 @@ import { apiMessage, relationCheckApi } from '@/api'
 import { appState } from '@/stores/app'
 import type { RelationIssue, StationRelationCheck } from '@/types'
 import { hasOwner, userLabel } from '@/utils/format'
+// 最小富文本渲染（`**重点**` → `<b>`）的唯一实现 —— 问题中心也用同一个
+import { richText } from '@/utils/richText'
 
 const props = defineProps<{
   check: StationRelationCheck | null
@@ -46,22 +48,6 @@ const emit = defineEmits<{
 }>()
 
 const busy = ref(false)
-
-/**
- * 后端重点文案里用 `**粗体**` 标关键词（例如「系统**不会**自动改任何一侧」）。
- * 这里做**最小渲染**：先转义 HTML —— 文案里会插进数据库里的人名与编码，
- * 不能直接当 HTML 信 —— 再把成对的 `**` 换成 `<b>`。
- *
- * 不引 markdown 库：我们只需要这一个标记，为它加一个依赖不划算；
- * 也**不要**在后端把 `**` 去掉 —— 去掉之后那句话就没有重点了。
- */
-function richText(text: string | null | undefined): string {
-  const escaped = (text || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return escaped.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-}
 
 /** 需要人看一眼、且没有被有效例外压住的差异条数 */
 const openReviews = computed(() =>

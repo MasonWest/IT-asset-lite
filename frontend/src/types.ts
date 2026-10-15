@@ -217,6 +217,10 @@ export type AssetEventType =
   | 'pair'
   | 'unpair'
   | 'inventory'
+  /** 点位迁移（整点位业务迁移 / 多台资产换点位）—— 与通用 update 分开，履历上一眼可辨 */
+  | 'relocate'
+  /** 关系差异被确认为例外 / 例外被撤销（设备级才有） */
+  | 'relation_exception'
   | AssetOperation
 
 export interface AssetEvent {
@@ -804,9 +808,21 @@ export interface RelocationPreview {
   conflicts: string[]
   /** 需要用户显式点头的差异 / 影响 */
   confirmations: string[]
+  /** 只说明情况、不要求点头的提示（如"源点位没有归属可搬"） */
+  notes: string[]
   moves: AssetMove[]
   noop_count: number
   station_changes: string[]
+  /**
+   * mode=station：归属**到底会不会跟着走**。
+   * 源点位没有登记归属（空值 / `/` / `／`）时恒为 false —— 没有东西可搬。
+   */
+  user_move: boolean
+  /** 迁移前后的归属原值（照实给，含 null 与 `/`）。展示走 `userLabel()`。 */
+  source_user_before: string | null
+  source_user_after: string | null
+  target_user_before: string | null
+  target_user_after: string | null
   source: RelocationStationRef | null
   target: RelocationStationRef | null
   /** 预览令牌。执行时带回，不一致说明数据被改过 → 409。 */
@@ -836,7 +852,102 @@ export interface RelocationApplyResult {
   moved: number
   moved_codes: string[]
   station_changes: string[]
+  /** 说明性提示，与预览同源 */
+  notes: string[]
   /** 执行后重新核对的结论（源 + 目标点位） */
   relation_checks: StationRelationCheck[]
   summary: string
+}
+
+// --------------------------------------------------------------------------- //
+// 问题中心
+//
+// ⚠️ `key` 与 `fingerprint` 是两件事，**别混用**：
+//   · `key`        只随**对象身份**变 —— 去重 / 定位 / 跨刷新一致靠它；
+//   · `fingerprint` 随**关系状态**变 —— 只用来判"例外还算不算数"。
+// 拿 fingerprint 当标识，用户改一下使用人同一条问题就换了身份。
+// --------------------------------------------------------------------------- //
+export type InsightSeverity = 'ok' | 'info' | 'review'
+export type InsightSource = 'relation_check' | 'data_integrity'
+export type InsightRule =
+  | 'station_vs_asset_user'
+  | 'asset_user_unregistered'
+  | 'asset_unbound'
+  | 'asset_on_deleted_station'
+  | 'relation_exception_stale'
+
+export interface InsightSubject {
+  kind: 'workstation' | 'asset'
+  id: number
+  code: string
+  user_name: string | null
+  label: string
+}
+
+export interface InsightRuleGroup {
+  rule: InsightRule
+  label: string
+  severity: InsightSeverity
+  severity_label: string
+  source: InsightSource
+  source_label: string
+  /** 一句"为什么值得关注" —— 后端下发，前端**一个字都不拼** */
+  reason: string
+  /** 该规则的**全部**问题数（含已被有效例外盖住的） */
+  count: number
+  /** 其中已被有效例外盖住的 */
+  handled_count: number
+  /** 还需要看一眼的条数 */
+  pending: number
+  /** 只有当该规则下待办问题落点一致时才有；否则为空，界面只提供"展开逐条" */
+  action_label: string
+  action_url: string | null
+}
+
+export interface InsightProblem {
+  /** 稳定标识（只随对象身份变） */
+  key: string
+  rule: InsightRule
+  rule_label: string
+  severity: InsightSeverity
+  severity_label: string
+  source: InsightSource
+  source_label: string
+  title: string
+  detail: string
+  reason: string
+  subjects: InsightSubject[]
+  action_label: string
+  /** 后端保证是白名单里的完整路径，前端直接跳 */
+  action_url: string
+  fingerprint: string
+  /** 已被有效例外盖住 → 不计入待办，但仍可查看 / 可撤销 */
+  handled: boolean
+  exception_id: number | null
+  exception_reason: string | null
+}
+
+export interface InsightChecked {
+  rules: string[]
+  stations: number
+  assets: number
+}
+
+export interface InsightsPage {
+  generated_at: string
+  total: number
+  counts: Record<string, number>
+  checked: InsightChecked
+  by_rule: InsightRuleGroup[]
+  items: InsightProblem[]
+  page: number
+  page_size: number
+  pages: number
+}
+
+export interface InsightQuery {
+  rule?: InsightRule
+  severity?: InsightSeverity
+  page?: number
+  page_size?: number
 }
