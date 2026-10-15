@@ -138,5 +138,69 @@ class TestApplyGuard(unittest.TestCase):
         self.assertEqual(ls.suggest_for_asset("/", "张三"), "fill")
 
 
+class TestClearSuggestions(unittest.TestCase):
+    """清人方向（第二期）：点位 有人 → 无人。"""
+
+    def test_only_assets_holding_that_user(self):
+        """只提示「仍登记为被清那位」的设备；别人名下 / 本来没登记的一律不列。"""
+        assets = [
+            FakeAsset(1, "A-1", user_name="张三"),   # 命中
+            FakeAsset(2, "A-2", user_name="李四"),   # 不是他 → 不列
+            FakeAsset(3, "A-3", user_name=None),     # 本来没有 → 不列
+            FakeAsset(4, "A-4", user_name="/"),      # 占位符 = 没归属 → 不列
+        ]
+        r = ls.build_clear_suggestions(assets, "张三")
+        self.assertEqual([s["asset_code"] for s in r["suggestions"]], ["A-1"])
+        self.assertEqual(r["other_count"], 3)
+        self.assertEqual(r["total_assets"], 4)
+
+    def test_default_unchecked(self):
+        """⭐ 清人是「丢归属」方向 —— **默认一个都不勾**（勾了才清，不勾=留给下一任）。"""
+        r = ls.build_clear_suggestions([FakeAsset(1, "A-1", user_name="张三")], "张三")
+        self.assertFalse(r["suggestions"][0]["checked"])
+
+    def test_trimmed_match(self):
+        """名字带空格 = 同一个人（判据走 trim，别写成精确相等）。"""
+        r = ls.build_clear_suggestions([FakeAsset(1, "A-1", user_name=" 张三 ")], "张三")
+        self.assertEqual(len(r["suggestions"]), 1)
+
+    def test_recheck_rejects_changed_state(self):
+        """执行前重检：期间已被改名 / 已被清过 → 不是 clear → 跳过不覆盖。"""
+        self.assertIsNone(ls.suggest_clear_for_asset("李四", "张三"))
+        self.assertIsNone(ls.suggest_clear_for_asset(None, "张三"))
+        self.assertIsNone(ls.suggest_clear_for_asset("/", "张三"))
+        self.assertEqual(ls.suggest_clear_for_asset(" 张三 ", "张三"), "clear")
+
+    def test_no_suggestion_when_station_user_unknown(self):
+        """资产名与"被清的人"无关时永远不提示（防"清 A 却动了 B 的设备"）。"""
+        self.assertIsNone(ls.suggest_clear_for_asset("王五", "张三"))
+
+
+class TestDecoupledFromRelocation(unittest.TestCase):
+    """⭐ 用户口径：「清人与迁移各干各的」。
+
+    这条不是靠自觉 —— 直接**读两个迁移模块的真实源码**断言它们没碰本模块。
+    （断言口径同理：不在测试里复刻一份逻辑，而是检查引用关系本身。）
+    """
+
+    def _src(self, rel: str) -> str:
+        path = BACKEND_DIR / "app" / rel
+        return path.read_text(encoding="utf-8")
+
+    def test_relocation_modules_do_not_reference_link_suggestions(self):
+        for rel in ("services/relocation.py", "routers/relocation.py"):
+            with self.subTest(module=rel):
+                src = self._src(rel)
+                self.assertNotIn("link_suggestions", src,
+                                 f"{rel} 引用了关联建议模块 —— 两个场景耦合了")
+                self.assertNotIn("apply-unlink", src)
+                self.assertNotIn("build_clear_suggestions", src)
+
+    def test_relocation_does_not_clear_asset_users(self):
+        """迁移**不碰资产使用人**（预览里已明说）。清人是用户主动操作，不是迁移的副作用。"""
+        src = self._src("services/relocation.py")
+        self.assertNotIn("asset.user_name =", src, "迁移模块在改资产使用人 —— 越界了")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

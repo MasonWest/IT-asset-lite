@@ -212,6 +212,18 @@ class WorkstationLinkageRequest(BaseModel):
         return name
 
 
+class WorkstationUnlinkRequest(BaseModel):
+    """清人建议的执行请求：点位使用人被清空时，把勾选的设备解除使用人。
+
+    `asset_ids` 允许为空 = 用户选了「都保留」，回包只报告不写库。
+    **没有 `user_name` 字段** —— 清谁由点位**当前**使用人决定（服务端读库），
+    不接受客户端传人名，免得清错人。
+    """
+
+    asset_ids: list[int] = Field(default_factory=list)
+    operator: Optional[str] = Field(default=None, max_length=64)
+
+
 # --------------------------------------------------------------------------- #
 # 地图盘点视图
 # --------------------------------------------------------------------------- #

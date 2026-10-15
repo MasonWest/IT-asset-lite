@@ -256,6 +256,10 @@ class AuditAction:
     #: 与 ASSET_UPDATE 分开的理由同 RELOCATION_APPLY：一次操作可能动多台设备，
     #: 审计页要能一眼筛出"这是一次关联同步"，而不是 N 条散落的编辑。
     ASSET_LINKAGE = "asset_linkage"
+    #: 清人场景的姊妹动作：点位使用人被清空时，把仍登记在原使用人名下的设备解除。
+    #: 与 ASSET_LINKAGE 分开（而不是用一个带方向的字段）：审计页筛"谁把设备划给某人"
+    #: 与"谁把设备从某人名下拿掉"是两件不同的事，方向混在一条里等于要读 summary 才知道。
+    ASSET_UNLINK = "asset_unlink"
 
     #: 关系核对的「例外确认」。**这是一条业务决定，必须留痕** ——
     #: 不是问题状态的开关（问题状态是每次现算的派生结果，不落库）。
@@ -301,6 +305,7 @@ class AuditAction:
         ASSET_EXPORT: "导出资产",
         RELOCATION_APPLY: "点位迁移",
         ASSET_LINKAGE: "关联使用人",
+        ASSET_UNLINK: "解除使用人",
         RELATION_EXCEPTION_CONFIRM: "确认关系例外",
         RELATION_EXCEPTION_REVOKE: "撤销关系例外",
         INVENTORY_CREATE: "发起盘点",
@@ -333,6 +338,7 @@ class AuditAction:
         ASSET_EXPORT: "📤",
         RELOCATION_APPLY: "🚚",
         ASSET_LINKAGE: "🤝",
+        ASSET_UNLINK: "🔓",
         RELATION_EXCEPTION_CONFIRM: "🤝",
         RELATION_EXCEPTION_REVOKE: "↩️",
         INVENTORY_CREATE: "🧭",
@@ -365,6 +371,7 @@ class AuditAction:
             WORKSTATION_DELETE,
             RELOCATION_APPLY,
             ASSET_LINKAGE,
+            ASSET_UNLINK,
             RELATION_EXCEPTION_CONFIRM,
             RELATION_EXCEPTION_REVOKE,
             MAP_CREATE,

@@ -127,3 +127,71 @@ def build_link_suggestions(
         "matched_count": matched,
         "total_assets": len(assets),
     }
+
+
+# --------------------------------------------------------------------------- #
+# 清人（第二期）—— 「有人 → 无人」方向
+#
+# ⚠️ **与迁移彻底解耦**（用户口径："各干各的"）：本函数只服务「用户在点位侧栏
+# 把使用人清空」这一条路径。`services/relocation.py` 里那套 `move_user`
+# 有它自己的预览与令牌，**不许调用这里**，这里的逻辑也不许伸手去改迁移。
+# 解耦由 `tests/test_link_suggestions.py::TestDecoupledFromRelocation` 用源码断言守住。
+# --------------------------------------------------------------------------- #
+
+CLEAR_META: dict[str, dict[str, str]] = {
+    "clear": {"label": "建议清除", "hint": "勾选后这台设备会变成「未登记使用人」"},
+}
+
+
+def suggest_clear_for_asset(current_user: str | None, old_user: str) -> str | None:
+    """单台资产的清人建议：使用人**仍登记为被清的那位**才给建议，否则 `None`。
+
+    条件刻意收得很紧：只提示"名字还挂在他身上"的设备。
+    使用人本来就为空、或已经是别人的 —— **一个字都不说**（与填人场景同一条原则：
+    只提示真正有意义的变化）。
+    """
+    current = _clean(current_user)
+    if not has_owner(current):
+        return None
+    if current != _clean(old_user):
+        return None
+    return "clear"
+
+
+def build_clear_suggestions(assets: list, old_user: str) -> dict:
+    """为「点位使用人 有人 → 无人」算一份逐台建议。
+
+    **默认一个都不勾** —— 清人是"丢归属"方向，且设备很可能属于岗位而非个人
+    （人走了、机器留给下一任）。勾了才清，不勾就是保留。
+
+    Returns:
+        - `suggestions`: 仍登记为 `old_user` 的设备（`checked` 恒为 `False`）；
+        - `other_count`: 使用人不是他 / 本来没登记的设备数（导语里说"另有 N 台不受影响”）；
+        - `total_assets`: 该点位资产总数（对账用）。
+    """
+    rows: list[dict] = []
+    other = 0
+    for asset in assets:
+        suggestion = suggest_clear_for_asset(asset.user_name, old_user)
+        if suggestion is None:
+            other += 1
+            continue
+        meta = CLEAR_META[suggestion]
+        rows.append(
+            {
+                "asset_id": asset.id,
+                "asset_code": asset.asset_code,
+                "device_type_name": _type_name(asset),
+                "current_user": _clean(asset.user_name),
+                "suggestion": suggestion,
+                "label": meta["label"],
+                "hint": meta["hint"],
+                "checked": False,
+            }
+        )
+    rows.sort(key=lambda r: r["asset_code"])
+    return {
+        "suggestions": rows,
+        "other_count": other,
+        "total_assets": len(assets),
+    }

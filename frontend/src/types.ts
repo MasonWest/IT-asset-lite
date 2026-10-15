@@ -987,3 +987,34 @@ export interface LinkageApplyResult {
   skipped: { asset_id: number; asset_code?: string; current_user?: string | null; reason: string }[]
   matched_count: number
 }
+
+/** 清人方向（第二期）：点位使用人 有人 → 无人 */
+export interface ClearSuggestion {
+  asset_id: number
+  asset_code: string
+  device_type_name: string
+  /** 当前使用人（= 被清的那位） */
+  current_user: string | null
+  suggestion: 'clear'
+  label: string
+  hint: string
+  /** 恒为 false —— 清人默认一个都不勾（勾了才清，不勾 = 留给下一任） */
+  checked: boolean
+}
+
+export interface ClearSuggestionsResult {
+  station_id: number
+  station_code: string
+  /** 被清空的点位使用人 */
+  old_user: string
+  suggestions: ClearSuggestion[]
+  /** 使用人不是他 / 本来没登记的设备数（导语里说"另有 N 台不受影响"） */
+  other_count: number
+  total_assets: number
+}
+
+export interface UnlinkApplyResult {
+  cleared: number
+  asset_codes: string[]
+  skipped: { asset_id: number; asset_code?: string; current_user?: string | null; reason: string }[]
+}

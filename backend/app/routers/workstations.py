@@ -61,6 +61,7 @@ from ..schemas_workstations import (
     WorkstationImportRow,
     WorkstationLayoutRequest,
     WorkstationLinkageRequest,
+    WorkstationUnlinkRequest,
     WorkstationMap,
     WorkstationMapCanvas,
     WorkstationOut,
@@ -715,6 +716,107 @@ def apply_linkage(station_id: int, payload: WorkstationLinkageRequest, db: Sessi
             list(assets.values()), new_user
         )["matched_count"],
     }
+
+
+@router.get("/{station_id}/unlink-suggestions", response_model=dict, summary="清人建议（预检，干跑）")
+def unlink_suggestions(station_id: int, db: Session = Depends(get_db)):
+    """点位使用人要从**有人 → 无人**时，先算一份"哪些设备还挂在他名下"的清单。
+
+    只读、不写库、不写审计。清谁由**点位当前使用人**决定（不接客户端传人名）。
+
+    ⚠️ **与点位迁移彻底解耦**：迁移的 `move_user` 有它自己的预览与令牌，
+    两条路径互不调用（用户口径"各干各的"，解耦由单测源码断言守住）。
+    """
+    station = _get_station_or_404(db, station_id)
+    if not ownership.has_owner(station.user_name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"点位 {station.code} 当前没有使用人，没有可清的人",
+        )
+    old_user = (station.user_name or "").strip()
+    assets = list(
+        db.execute(select(Asset).where(Asset.workstation_id == station.id)).scalars().all()
+    )
+    result = link_suggestions_service.build_clear_suggestions(assets, old_user)
+    return {
+        "station_id": station.id,
+        "station_code": station.code,
+        "old_user": old_user,
+        **result,
+    }
+
+
+@router.post("/{station_id}/apply-unlink", response_model=dict, summary="执行清人建议（解除勾选设备的使用人）")
+def apply_unlink(station_id: int, payload: WorkstationUnlinkRequest, db: Session = Depends(get_db)):
+    """把点位当前使用人名下、且被用户勾选的设备使用人**清空**。
+
+    两条纪律与 fill 方向一致，只是重检条件不同：
+
+    1. **重新核对**：写库前逐台确认它**仍登记为被清的那个人**，
+       否则跳过（弹窗期间可能被别人改名 / 已经清过了）；
+    2. **只清勾选的**：不勾 = 保留（设备留给下一任是合法选择）。
+    """
+    station = _get_station_or_404(db, station_id)
+    if not ownership.has_owner(station.user_name):
+        raise HTTPException(status_code=400, detail="点位当前没有使用人，无法执行清人建议")
+    old_user = (station.user_name or "").strip()
+
+    assets = {
+        a.id: a
+        for a in db.execute(
+            select(Asset).where(
+                Asset.workstation_id == station.id, Asset.id.in_(payload.asset_ids or [-1])
+            )
+        ).scalars().all()
+    }
+
+    cleared: list[str] = []
+    skipped: list[dict] = []
+    for asset_id in payload.asset_ids:
+        asset = assets.get(asset_id)
+        if asset is None:
+            skipped.append({"asset_id": asset_id, "reason": "not_on_station"})
+            continue
+        if link_suggestions_service.suggest_clear_for_asset(asset.user_name, old_user) is None:
+            skipped.append(
+                {"asset_id": asset_id, "asset_code": asset.asset_code,
+                 "current_user": (asset.user_name or "").strip() or None,
+                 "reason": "state_changed"}
+            )
+            continue
+        asset.user_name = None
+        cleared.append(asset.asset_code)
+        record_event(
+            db,
+            asset,
+            AssetEventType.UPDATE,
+            operator=payload.operator,
+            note=f"使用人 {old_user} → 空（随点位 {station.code} 清空使用人）",
+            detail={"changes": {"user_name": {"from": old_user, "to": ""}}},
+        )
+
+    if cleared:
+        record_audit(
+            db,
+            AuditAction.ASSET_UNLINK,
+            target_type=AuditTarget.WORKSTATION,
+            target_id=station.id,
+            target_label=_station_label(station),
+            summary=f"点位 {station.code} 清空使用人 {old_user}："
+                    f"解除 {len(cleared)} 台设备的使用人"
+                    + (f"（{'、'.join(cleared[:3])} 等）" if len(cleared) > 3 else f"（{'、'.join(cleared)}）"),
+            operator=payload.operator,
+            detail={
+                "workstation_id": station.id,
+                "code": station.code,
+                "old_user": old_user,
+                "asset_codes": cleared,
+                "skipped": skipped,
+            },
+        )
+
+    db.commit()
+    return {"cleared": len(cleared), "asset_codes": cleared, "skipped": skipped}
 
 
 @router.delete("/{station_id}/assets/{asset_id}", response_model=dict, summary="把资产从点位摘下来")

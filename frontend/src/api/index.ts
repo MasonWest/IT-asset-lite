@@ -51,6 +51,8 @@ import type {
   WorkstationBulkResult,
   LinkSuggestionsResult,
   LinkageApplyResult,
+  ClearSuggestionsResult,
+  UnlinkApplyResult,
 } from '@/types'
 
 const http = axios.create({
@@ -391,6 +393,16 @@ export const workstationApi = {
   /** 执行关联建议：只改用户勾选的资产使用人（后端执行前会重新核对） */
   applyLinkage: (id: number, payload: { user_name: string; asset_ids: number[]; operator?: string | null }) =>
     post<LinkageApplyResult>(`/workstations/${id}/apply-linkage`, payload),
+
+  /**
+   * 清人建议（预检，干跑）：点位使用人要从有人 → 无人前，
+   * 看该点位下还有哪些设备挂在他名下。只读。
+   */
+  unlinkSuggestions: (id: number) => get<ClearSuggestionsResult>(`/workstations/${id}/unlink-suggestions`),
+
+  /** 执行清人建议：只解除用户勾选的设备使用人（后端执行前会重新核对） */
+  applyUnlink: (id: number, payload: { asset_ids: number[]; operator?: string | null }) =>
+    post<UnlinkApplyResult>(`/workstations/${id}/apply-unlink`, payload),
 }
 
 /**

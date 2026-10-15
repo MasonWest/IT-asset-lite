@@ -1,38 +1,52 @@
 <script setup lang="ts">
 /**
- * 关联操作建议面板（v2.7.0 第一期）。
+ * 关联操作建议面板 —— 两个方向共用一套 UI，但**语义严格分开**：
  *
- * 触发时机：给**原本无归属**的点位新增使用人时，如果该点位下存在
- * 使用人为空或与新使用人不一致的资产，先在这里让用户挑一遍。
+ * | mode | 触发 | 默认勾选 | 执行接口 |
+ * | --- | --- | --- | --- |
+ * | `link` | 无归属点位 → 有人（填人） | `fill` 默认勾 | `apply-linkage` |
+ * | `unlink` | 有人点位 → 清空（清人） | **一个都不勾** | `apply-unlink` |
  *
  * 三条设计约束（与落地评审口径一致）：
- * 1. **只提示有意义的变化** —— 已是新使用人的资产后端就不下发，这里不会出现。
- * 2. **冲突不替用户决定** —— `conflict` / `keep` 默认不勾，勾选才覆盖。
- * 3. **建议不落库** —— 本组件没有"已处理/忽略"状态，关掉就是暂不处理；
- *    点位保存后问题中心会按最新数据重新计算。
+ * 1. **只提示有意义的变化** —— 不相干的资产后端就不下发，这里不会出现。
+ * 2. **不替用户决定** —— `conflict` / `keep` / `clear` 默认不勾，勾了才动。
+ * 3. **建议不落库** —— 没有"已处理/忽略"状态，关掉就是暂不处理。
  *
- * ⚠️ 数据纪律：每行的文案（label / hint）由后端下发，本组件**一个字都不拼**；
- * 执行后由父组件调 `apply-linkage`，后端在写库前还会**重新核对**一遍
- * （弹窗打开期间资产被改过的话会被跳过并回包说明），本组件不做本地兜底判断。
+ * ⚠️ **两个方向互不触发**：清人只由「用户在点位侧栏清空使用人」产生；
+ * 点位迁移（`move_user`）走它自己的预览与令牌，两者不互相调用（用户口径"各干各的"）。
+ *
+ * ⚠️ 数据纪律：每行文案（label / hint）由后端下发，本组件**一个字都不拼**；
+ * 执行时后端会在写库前**重新核对**（期间被改过的会被跳过并回包说明）。
  */
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { apiMessage, workstationApi } from '@/api'
 import { appState } from '@/stores/app'
-import type { LinkSuggestion, LinkSuggestionsResult } from '@/types'
+import type { ClearSuggestionsResult, LinkSuggestionsResult } from '@/types'
+
+type Row =
+  | LinkSuggestionsResult['suggestions'][number]
+  | ClearSuggestionsResult['suggestions'][number]
 
 const props = defineProps<{
-  /** 预检结果。null = 面板关闭 */
-  result: LinkSuggestionsResult | null
+  /** 预检结果。两个方向的回包结构兼容（suggestions / total_assets）。null = 面板关闭 */
+  result: LinkSuggestionsResult | ClearSuggestionsResult | null
+  /** 方向：link = 填人，unlink = 清人 */
+  mode: 'link' | 'unlink'
   loading: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
-  /** 用户确认。ids = 勾选的资产 id；空数组 = 全部暂不处理（只保存点位） */
+  /** 用户确认。ids = 勾选的资产 id；空数组 = 暂不处理 / 都保留（只保存点位） */
   (e: 'confirm', ids: number[]): void
 }>()
+
+const isUnlink = computed(() => props.mode === 'unlink')
+const title = computed(
+  () => `${isUnlink.value ? '清人建议' : '关联建议'} · ${props.result?.station_code ?? ''}`,
+)
 
 /** 勾选状态：asset_id → boolean。每次打开按后端给的 checked 初始化 */
 const checkedMap = ref<Record<number, boolean>>({})
@@ -47,16 +61,17 @@ watch(
   { immediate: true },
 )
 
-const rows = computed(() => props.result?.suggestions ?? [])
+const rows = computed<Row[]>(() => (props.result?.suggestions ?? []) as Row[])
 const checkedCount = computed(() => rows.value.filter((r) => checkedMap.value[r.asset_id]).length)
-const allFill = computed(() => rows.value.every((r) => r.suggestion !== 'fill'))
+const nothingActionable = computed(() => rows.value.length === 0)
 
-/** 建议 → 行样式。fill 蓝（顺理成章）、keep 灰（可不动）、conflict 琥珀（要人拍板）。
- *  刻意不用红：这是建议不是告警，与问题中心"差异不是错误"同一个理念。 */
-const ROW_CLASS: Record<LinkSuggestion['suggestion'], string> = {
+/** 建议 → 行样式。link: fill 蓝 / keep 灰 / conflict 琥珀 ｜ unlink: clear 琥珀。
+ *  刻意不用红：这是建议不是告警（问题中心同一条理念：差异不是错误）。 */
+const ROW_CLASS: Record<string, string> = {
   fill: 'is-fill',
   keep: 'is-keep',
   conflict: 'is-conflict',
+  clear: 'is-clear',
 }
 
 function selectAll() {
@@ -76,23 +91,32 @@ async function onConfirm() {
     return
   }
   try {
-    const res = await workstationApi.applyLinkage(r.station_id, {
-      user_name: r.new_user,
-      asset_ids: ids,
-      operator: appState.operator || null,
-    })
-    if (res.skipped.length) {
-      // 弹窗打开期间数据变了 —— 后端拦下了，如实告知，不静默
-      const names = res.skipped
-        .map((s) => s.asset_code ?? `#${s.asset_id}`)
-        .join('、')
-      ElMessage.warning(`已同步 ${res.updated} 台；${names} 在此期间已被修改，已跳过`)
+    if (isUnlink.value) {
+      const res = await workstationApi.applyUnlink(r.station_id, {
+        asset_ids: ids,
+        operator: appState.operator || null,
+      })
+      report(res.skipped.map((s) => s.asset_code ?? `#${s.asset_id}`), res.cleared, '解除')
     } else {
-      ElMessage.success(`已同步 ${res.updated} 台设备的使用人`)
+      const res = await workstationApi.applyLinkage(r.station_id, {
+        user_name: (r as LinkSuggestionsResult).new_user,
+        asset_ids: ids,
+        operator: appState.operator || null,
+      })
+      report(res.skipped.map((s) => s.asset_code ?? `#${s.asset_id}`), res.updated, '同步')
     }
     emit('confirm', ids)
   } catch (error) {
     ElMessage.error(apiMessage(error))
+  }
+}
+
+/** 面板打开期间数据变了 → 后端拦下了，如实告知，不静默 */
+function report(names: string[], done: number, verb: string) {
+  if (names.length) {
+    ElMessage.warning(`已${verb} ${done} 台；${names.join('、')} 在此期间已被修改，已跳过`)
+  } else {
+    ElMessage.success(`已${verb} ${done} 台设备的使用人`)
   }
 }
 </script>
@@ -100,18 +124,33 @@ async function onConfirm() {
 <template>
   <el-dialog
     :model-value="result !== null"
-    :title="`关联建议 · ${result?.station_code ?? ''}`"
+    :title="title"
     width="520px"
     :close-on-click-modal="false"
     append-to-body
     @update:model-value="(v: boolean) => !v && emit('close')"
   >
     <div v-loading="loading" class="ls-body">
-      <p class="ls-lead">
-        <b>{{ result?.new_user }}</b> 接管了 <b>{{ result?.station_code }}</b
+      <!-- 填人方向：新使用人接管点位 -->
+      <p v-if="!isUnlink" class="ls-lead">
+        <b>{{ (result as LinkSuggestionsResult)?.new_user }}</b> 接管了
+        <b>{{ result?.station_code }}</b
         >，该点位下有 {{ result?.total_assets }} 台资产，其中
-        <b>{{ rows.length }}</b> 台需要你看一眼<template v-if="result && result.matched_count > 0">
-          （另有 {{ result.matched_count }} 台已登记为本人，无需调整）</template
+        <b>{{ rows.length }}</b> 台需要你看一眼<template
+          v-if="(result as LinkSuggestionsResult)?.matched_count > 0"
+        >
+          （另有 {{ (result as LinkSuggestionsResult).matched_count }} 台已登记为本人，无需调整）</template
+        >：
+      </p>
+
+      <!-- 清人方向：使用人已清空，还有设备挂在他名下 -->
+      <p v-else class="ls-lead">
+        <b>{{ result?.station_code }}</b> 的使用人 <b>{{ (result as ClearSuggestionsResult)?.old_user }}</b>
+        已清空，该点位下有 {{ result?.total_assets }} 台资产，其中
+        <b>{{ rows.length }}</b> 台仍登记为 {{ (result as ClearSuggestionsResult)?.old_user }}<template
+          v-if="(result as ClearSuggestionsResult)?.other_count"
+        >
+          （另有 {{ (result as ClearSuggestionsResult).other_count }} 台不受影响）</template
         >：
       </p>
 
@@ -137,19 +176,25 @@ async function onConfirm() {
       </div>
 
       <div class="ls-foot-hint">
-        只同步你勾选的；冲突项（<b>当前：别人</b>）勾选即覆盖，请逐台确认。
-        暂不处理也没关系 —— 差异会留在问题中心，随时能找到。
+        <template v-if="!isUnlink">
+          只同步你勾选的；冲突项（<b>当前：别人</b>）勾选即覆盖，请逐台确认。
+          暂不处理也没关系 —— 差异会留在问题中心，随时能找到。
+        </template>
+        <template v-else>
+          只清除你勾选的；<b>不勾的设备保留原使用人</b>，适合"人走了、设备留给下一任"。
+          清空之后再留下的名字，问题中心<b>不会</b>替你盯着（它只看点位有没有人），所以这里值得看一眼。
+        </template>
       </div>
     </div>
 
     <template #footer>
       <div class="ls-actions">
-        <el-button text :disabled="allFill" @click="selectAll">全选</el-button>
+        <el-button text :disabled="nothingActionable" @click="selectAll">全选</el-button>
         <el-button text :disabled="checkedCount === 0" @click="selectNone">全不选</el-button>
         <span class="spacer" />
-        <el-button @click="emit('confirm', [])">暂不处理</el-button>
+        <el-button @click="emit('confirm', [])">{{ isUnlink ? '都保留' : '暂不处理' }}</el-button>
         <el-button type="primary" :loading="loading" @click="onConfirm">
-          同步{{ checkedCount ? ` ${checkedCount} 台` : '' }}
+          {{ isUnlink ? '清除' : '同步' }}{{ checkedCount ? ` ${checkedCount} 台` : '' }}
         </el-button>
       </div>
     </template>
@@ -168,7 +213,8 @@ async function onConfirm() {
   transition: border-color 0.14s, background 0.14s;
 }
 .ls-row.is-fill { background: #f8fbff; border-color: #bfdbfe; }
-.ls-row.is-conflict { background: #fffdf7; border-color: #fde68a; }
+.ls-row.is-conflict,
+.ls-row.is-clear { background: #fffdf7; border-color: #fde68a; }
 .ls-row.off { opacity: 0.62; }
 .ls-check { width: 15px; height: 15px; flex: none; accent-color: #2563eb; }
 
@@ -180,7 +226,8 @@ async function onConfirm() {
 .ls-tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; line-height: 1.6; }
 .ls-tag.is-fill { background: #eff6ff; color: #1d4ed8; }
 .ls-tag.is-keep { background: #f1f5f9; color: #64748b; }
-.ls-tag.is-conflict { background: #fef3c7; color: #b45309; }
+.ls-tag.is-conflict,
+.ls-tag.is-clear { background: #fef3c7; color: #b45309; }
 .ls-hint { font-size: 10.5px; color: #94a3b8; }
 
 .ls-foot-hint {

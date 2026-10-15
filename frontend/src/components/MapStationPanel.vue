@@ -30,6 +30,7 @@ import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState } from '@/stores/app'
 import type {
   Asset,
+  ClearSuggestionsResult,
   LinkSuggestionsResult,
   MapInventoryAsset,
   MapInventoryWorkstation,
@@ -176,12 +177,16 @@ function relStateOf(assetId: number): string | null {
 
 /* ---- 写操作 ---- */
 
-/* ---- 关联操作建议（v2.7.0）----
- * 给原本**无归属**的点位新增使用人时，先问一句"要不要顺手把设备使用人对上"。
- * 只在这个方向触发（无 → 有）：换人 / 清人 / 绑定 / 迁移场景延后，
- * 现在硬塞进来会让弹窗变成骚扰。 */
-const linkResult = ref<LinkSuggestionsResult | null>(null)
+/* ---- 关联操作建议（v2.7.0 填人 / v2.7.1 清人）----
+ * 两个方向**各干各的**，互不触发：
+ *   · 无归属 → 有人：问"要不要顺手把设备使用人对上"（mode=link）
+ *   · 有人 → 无人：问"这些还挂在他名下的设备，一并清除还是留给下一任"（mode=unlink）
+ * 换人（有人→有人）、绑定、迁移三个方向刻意不做（见评估结论）：
+ *   迁移有自己的预览与令牌，本组件不碰它。 */
+const linkResult = ref<LinkSuggestionsResult | ClearSuggestionsResult | null>(null)
+const linkMode = ref<'link' | 'unlink'>('link')
 const linkLoading = ref(false)
+/** 待保存的点位使用人（面板确认后才真正写库） */
 let pendingUser: string | null = null
 
 async function saveBasics() {
@@ -214,9 +219,10 @@ async function saveBasics() {
 /**
  * 改点位使用人。
  *
- * **只改点位，不动资产** —— 这个原则没变，但「无归属 → 有人」这个方向
- * 多了一步**建议**（不是联动）：后端预检该点位下的资产，给出逐台建议，
- * 由用户在面板里逐项勾选。冲突项默认不勾，不替用户做覆盖决定。
+ * **只改点位，不动资产** —— 这个原则没变；但两个方向各多了一步**建议**（不是联动）：
+ *   · 无归属 → 有人：预检该点位下的资产，给出逐台建议，用户逐项勾选；
+ *   · 有人 → 无人：预检"还有哪些设备挂在他名下"，默认都不勾（清人 = 丢归属方向）。
+ * 冲突 / 清除项都不替用户决定。换人（有→有）不做建议 —— 评估结论：噪音最高、收益最低。
  */
 async function changeUser(value: string | null) {
   const s = props.station
@@ -224,7 +230,7 @@ async function changeUser(value: string | null) {
   const next = (value ?? '').trim() || null
   if (next === (s.user_name ?? null)) return
 
-  // 无归属 → 有人：先预检。有值得看一眼的资产才弹面板，否则直接保存。
+  // 无归属 → 有人：填人方向预检
   if (next && !hasOwner(s.user_name)) {
     pendingUser = next
     linkLoading.value = true
@@ -233,6 +239,27 @@ async function changeUser(value: string | null) {
       if (res.suggestions.length === 0) {
         await saveUser(next)
       } else {
+        linkMode.value = 'link'
+        linkResult.value = res
+      }
+    } catch (error) {
+      ElMessage.error(apiMessage(error))
+    } finally {
+      linkLoading.value = false
+    }
+    return
+  }
+
+  // 有人 → 无人：清人方向预检（只在"这个点位下确实有设备挂在他名下"时才弹）
+  if (!next && hasOwner(s.user_name)) {
+    pendingUser = null
+    linkLoading.value = true
+    try {
+      const res = await workstationApi.unlinkSuggestions(s.id)
+      if (res.suggestions.length === 0) {
+        await saveUser(null)
+      } else {
+        linkMode.value = 'unlink'
         linkResult.value = res
       }
     } catch (error) {
@@ -265,9 +292,10 @@ async function saveUser(next: string | null) {
   }
 }
 
-/** 面板确认（含「暂不处理」）→ 保存点位使用人。资产同步已在面板里执行完 */
+/** 面板确认（含「暂不处理」/「都保留」）→ 保存点位使用人。资产侧已在面板里执行完 */
 function onLinkConfirm() {
   linkResult.value = null
+  // 填人方向：pendingUser = 新使用人；清人方向：pendingUser = null（= 清空点位使用人）
   void saveUser(pendingUser)
   pendingUser = null
 }
@@ -661,9 +689,10 @@ function dash(v: string | null | undefined): string {
       </div>
     </div>
 
-    <!-- 关联操作建议：给无归属点位新增使用人时，先挑一遍要不要同步设备使用人 -->
+    <!-- 关联操作建议：填人（无→有）/ 清人（有→无）两个方向共用面板，语义分开 -->
     <LinkSuggestDialog
       :result="linkResult"
+      :mode="linkMode"
       :loading="linkLoading"
       @confirm="onLinkConfirm"
       @close="onLinkClose"
