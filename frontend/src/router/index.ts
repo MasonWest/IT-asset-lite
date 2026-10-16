@@ -27,6 +27,35 @@ const router = createRouter({
       meta: { title: '设备详情' },
     },
     {
+      /**
+       * 轻资产（不纳入正式台账的 IT 配件）。
+       * 与正式资产台账**平级**而不是它的子页 —— 两边的统计口径刻意分开，
+       * 混在一起会让"150 台设备"这种数字永远说不清包不包括键鼠套装。
+       */
+      path: '/light',
+      name: 'light',
+      component: () => import('@/views/LightListView.vue'),
+      meta: { title: '轻资产' },
+    },
+    {
+      /**
+       * ⚠️ 必须排在 `/light/:categoryId` **之前**：Vue Router 按声明顺序匹配，
+       * 否则 `/light-help` 会被 `:categoryId` 当成一个品类 id 吃掉，进不去这一页。
+       * （同一个坑项目里已经记过一次 —— 见 `/floor-maps/default` 与 `/assets/grouped` 的注释。）
+       */
+      path: '/light-help',
+      name: 'light-help',
+      component: () => import('@/views/LightHelpView.vue'),
+      meta: { title: '轻资产怎么用' },
+    },
+    {
+      path: '/light/:categoryId',
+      name: 'light-category',
+      component: () => import('@/views/LightCategoryView.vue'),
+      props: true,
+      meta: { title: '轻资产品类' },
+    },
+    {
       path: '/map',
       name: 'space-map',
       component: () => import('@/views/SpaceMapView.vue'),

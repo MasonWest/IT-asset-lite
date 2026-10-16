@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import AssetFormDialog from '@/components/AssetFormDialog.vue'
+import AssetLightAssetsPanel from '@/components/AssetLightAssetsPanel.vue'
 import AssetOperationDialog from '@/components/AssetOperationDialog.vue'
 import AssetRelationsPanel from '@/components/AssetRelationsPanel.vue'
 import AssetTimeline from '@/components/AssetTimeline.vue'
@@ -326,6 +327,13 @@ async function onRelationsChanged() {
             style="margin-top: 16px"
             @changed="onRelationsChanged"
           />
+
+          <!--
+            关联轻资产（设计 §5.3）：这台机器上装了什么配件。
+            **不折进正式资产统计口径** —— 两边刻意分开，"150 台设备"不会变成
+            "150 台设备 + 38 件配件"。
+          -->
+          <AssetLightAssetsPanel :asset="asset" />
 
           <section class="panel" style="margin-top: 16px">
             <div class="section-title">归属与维保</div>

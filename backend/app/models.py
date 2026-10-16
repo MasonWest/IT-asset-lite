@@ -10,6 +10,16 @@
 - workstations          点位（资产空间地图上的一个格子）
 - floor_maps            平面图（点位站的建筑图元：地台 / 走廊 / 房间 / 墙体）
 - audit_logs            操作审计日志（谁、从哪个 IP、什么时间、干了什么）
+- light_categories      轻资产品类（MK270 键鼠 / SSD …），决定追踪粒度
+- light_items           轻资产单件条目（**只有单件模式的品类才产生行**）
+- light_movements       轻资产流转流水（append-only，**当前状态的唯一真相**）
+
+轻资产（不建正式资产编码、不进 assets 台账的 IT 配件）刻意独立成三张表：
+  - **不复用 assets**：它没有 asset_code，混进去会污染台账统计口径与二维码/标签打印；
+  - **不复用 asset_events**：那是以 `asset_id` 为 NOT NULL 外键的"设备视角"流水，
+    轻资产的历史必须独立记录（配件可能在主机流转前后被拆装、更换，靠宿主日志推断会丢真因）；
+  - **不复用 asset_relations**：配对语义是"主机 ↔ 显示器"固定两类，硬塞配件会污染配对页与套装聚合。
+  可复用的是**范式**（预览/校验/审计/派生），不是表。
 
 asset_events 和 audit_logs 长得像，但视角不同，别合并：
   asset_events 是「设备视角」—— 挂在某台设备下、给那台设备的事件时间线看；
@@ -50,6 +60,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -293,6 +304,22 @@ class AuditAction:
 
     AUDIT_EXPORT = "audit_export"
 
+    #: 轻资产（不建正式编码的 IT 配件）。粒度与 ASSET_* 保持一致：
+    #: 一个 `LIGHT_OPERATE` 覆盖入库/分配/归还/拆卸/转移/报损/调整 ——
+    #: 具体是哪种操作写在 summary 与 detail.op 里，不按 op 拆成一堆动作名
+    #: （对照 AssetOperation 六种流转也只对应一个 ASSET_OPERATE）。
+    LIGHT_CATEGORY_CREATE = "light_category_create"
+    LIGHT_CATEGORY_UPDATE = "light_category_update"
+    LIGHT_CATEGORY_DELETE = "light_category_delete"
+    #: ⚠️ **已废弃（取消单件追踪）：不再有代码产生这三个值**，但枚举值本身
+    #: **必须保留** —— 老库的 `audit_logs` 里冻结着它们，删掉枚举会让审计页
+    #: 把历史记录显示成原始字符串。审计记录不是文案，是证据，不追改。
+    LIGHT_ITEM_CREATE = "light_item_create"
+    LIGHT_ITEM_UPDATE = "light_item_update"
+    LIGHT_ITEM_DELETE = "light_item_delete"
+    LIGHT_OPERATE = "light_operate"
+    LIGHT_IMPORT = "light_import"
+
     LABELS: dict[str, str] = {
         ASSET_CREATE: "新增资产",
         ASSET_UPDATE: "编辑资产",
@@ -323,6 +350,14 @@ class AuditAction:
         MAP_CREATE: "新建平面图",
         MAP_UPDATE: "编辑平面图",
         MAP_DELETE: "删除平面图",
+        LIGHT_CATEGORY_CREATE: "新增轻资产品类",
+        LIGHT_CATEGORY_UPDATE: "编辑轻资产品类",
+        LIGHT_CATEGORY_DELETE: "删除轻资产品类",
+        LIGHT_ITEM_CREATE: "新增轻资产单件",
+        LIGHT_ITEM_UPDATE: "编辑轻资产单件",
+        LIGHT_ITEM_DELETE: "注销轻资产单件",
+        LIGHT_OPERATE: "轻资产流转",
+        LIGHT_IMPORT: "导入轻资产流水",
         AUDIT_EXPORT: "导出审计日志",
     }
 
@@ -356,6 +391,14 @@ class AuditAction:
         MAP_CREATE: "🗺️",
         MAP_UPDATE: "🗺️",
         MAP_DELETE: "🗺️",
+        LIGHT_CATEGORY_CREATE: "📦",
+        LIGHT_CATEGORY_UPDATE: "📦",
+        LIGHT_CATEGORY_DELETE: "📦",
+        LIGHT_ITEM_CREATE: "🔩",
+        LIGHT_ITEM_UPDATE: "🔩",
+        LIGHT_ITEM_DELETE: "🔩",
+        LIGHT_OPERATE: "🔄",
+        LIGHT_IMPORT: "📥",
         AUDIT_EXPORT: "📤",
     }
 
@@ -378,7 +421,16 @@ class AuditAction:
             MAP_UPDATE,
             MAP_DELETE,
         ),
-        "导入导出": (ASSET_IMPORT, ASSET_EXPORT, AUDIT_EXPORT),
+        "导入导出": (ASSET_IMPORT, ASSET_EXPORT, LIGHT_IMPORT, AUDIT_EXPORT),
+        "轻资产": (
+            LIGHT_CATEGORY_CREATE,
+            LIGHT_CATEGORY_UPDATE,
+            LIGHT_CATEGORY_DELETE,
+            LIGHT_ITEM_CREATE,
+            LIGHT_ITEM_UPDATE,
+            LIGHT_ITEM_DELETE,
+            LIGHT_OPERATE,
+        ),
         "设备类型": (TYPE_CREATE, TYPE_UPDATE, TYPE_DELETE),
     }
 
@@ -403,6 +455,12 @@ class AuditTarget:
     MAP = "map"
     FILE = "file"
     SYSTEM = "system"
+    #: 轻资产。品类与单件分开 —— 审计页「操作对象」那一列的跳转目标不同
+    #: （一个跳到品类详情，一个跳到单件所在页面）。
+    LIGHT_CATEGORY = "light_category"
+    #: ⚠️ **已废弃（取消单件追踪）**：新代码不再产生它，但老库的 `audit_logs` 里
+    #: 冻结着这个值，删掉会让审计页把历史记录显示成原始字符串。保留。
+    LIGHT_ITEM = "light_item"
 
     LABELS: dict[str, str] = {
         ASSET: "设备",
@@ -412,6 +470,8 @@ class AuditTarget:
         MAP: "平面图",
         FILE: "文件",
         SYSTEM: "系统",
+        LIGHT_CATEGORY: "轻资产品类",
+        LIGHT_ITEM: "轻资产单件",
     }
 
 
@@ -970,3 +1030,455 @@ class RelationException(Base):
             f"<RelationException {self.id} rule={self.rule} "
             f"ws={self.workstation_id} asset={self.asset_id} active={self.active}>"
         )
+
+
+# --------------------------------------------------------------------------- #
+# 轻资产
+# --------------------------------------------------------------------------- #
+#: 轻资产**不再有**追踪粒度（`tracking`）这个概念 —— 上一版那套「按数量 / 按单件」双模式
+#: 已被取消：所有品类统一按「品类 + 数量」管理（见《设计方案-轻资产管理模块-修订版》§1.1）。
+#: 这里刻意**保留一段占位注释**而不是彻底删干净，是因为历史流水里冻结着老库的
+#: `light_categories.tracking` 语义；将来若有人翻到旧 CHANGELOG，这段注释能解释
+#: "为什么这里本来有个枚举，现在没了"。
+
+
+class LightOrigin:
+    """流水来源 —— **"这条记录从哪来"决定它算不算数**。
+
+    这是本模块最容易做错的地方：历史 Excel 里的分配流水**不代表当前库存**，
+    它只是"曾经发生过"的追溯材料（用户明确要求：不得据这些记录推断真实总库存）。
+
+    - `manual`  系统内正常业务操作（入库 / 分配 / 归还 / 拆卸 …）→ **计入**当前状态
+    - `opening` 期初初始化（管理员盘点确认后建立的真实基线）        → **计入**当前状态
+    - `import`  历史导入（仅追溯）                                → **不计入**当前状态
+
+    ⚠️ 判断"这条流水算不算数"**只用 `EFFECTIVE`**，不要在各处手写 `== 'manual'`
+    （漏掉 opening 会让期初基线凭空消失，且没有任何报错）。
+    """
+
+    MANUAL = "manual"
+    OPENING = "opening"
+    IMPORT = "import"
+
+    LABELS: dict[str, str] = {MANUAL: "业务操作", OPENING: "期初初始化", IMPORT: "历史导入"}
+    ALL: tuple[str, ...] = (MANUAL, OPENING, IMPORT)
+    #: 计入当前状态（库存 / 持有关系）的来源。**import 被刻意排除。**
+    EFFECTIVE: tuple[str, ...] = (MANUAL, OPENING)
+
+
+class LightHolderKind:
+    """一条流水的「从哪来 / 到哪去」。
+
+    库里只存 kind + 引用，**不存副本**：当前使用人 / 点位一律现读正式资产或点位表
+    （红线 2）。但引用对象会消失、主键还会被复用（本库无 AUTOINCREMENT），
+    所以每条流水同时**快照当时的编码与名称**（`*_ref_code` / `*_ref_label`）。
+    """
+
+    STOCK = "stock"
+    USER = "user"
+    ASSET = "asset"
+    WORKSTATION = "workstation"
+
+    LABELS: dict[str, str] = {
+        STOCK: "库存",
+        USER: "使用人",
+        ASSET: "正式资产",
+        WORKSTATION: "点位",
+    }
+    ALL: tuple[str, ...] = (STOCK, USER, ASSET, WORKSTATION)
+    #: 算作"已被持有"的种类（库存不算）。
+    HELD: tuple[str, ...] = (USER, ASSET, WORKSTATION)
+
+
+class LightOp:
+    """轻资产操作类型。
+
+    每条流水都是一次**物料移动**：`quantity` 件从 `from` 去往 `to`。
+    统一成 from→to 之后，"库存怎么变 / 持有关系怎么变"就只有一个算法
+    （见 services/light.py 的派生公式），加新操作不用再改统计代码。
+    """
+
+    STOCK_IN = "stock_in"     # 入库      None → stock
+    ALLOCATE = "allocate"     # 分配      stock → user（**给人**）
+    RETURN = "return"         # 归还      user / asset / workstation → stock
+    ATTACH = "attach"         # 安装/落位 stock|None → asset / workstation（**给物/给位置**）
+    DETACH = "detach"         # 拆卸      asset / workstation → stock
+    TRANSFER = "transfer"     # 转移      持有方 → 另一持有方
+    SCRAP = "scrap"           # 报损      stock|持有方 → None（注销）
+    ADJUST = "adjust"         # 盘盈盘亏  stock ↔ None（数量校正）
+    #: 更换 —— **不是一次物料移动**，而是"旧件报损 + 新件装上"两条流水的组合动作。
+    #: 它不在 FLOWS 里被当成普通 op 校验（见 services/light.py::replace_asset_part），
+    #: 放在这里只是为了让"业务动作 → op"的映射表有一个正式的名字。
+    REPLACE = "replace"
+
+    LABELS: dict[str, str] = {
+        STOCK_IN: "入库",
+        ALLOCATE: "分配",
+        RETURN: "归还",
+        ATTACH: "安装",
+        DETACH: "拆卸",
+        TRANSFER: "转移",
+        SCRAP: "报损",
+        ADJUST: "调整",
+        REPLACE: "更换配件",
+    }
+
+    ALL: tuple[str, ...] = (
+        STOCK_IN, ALLOCATE, RETURN, ATTACH, DETACH, TRANSFER, SCRAP, ADJUST, REPLACE,
+    )
+
+    #: 每种操作允许的 `(from_kind, to_kind)` 组合。`None` 表示"系统外部 / 注销"。
+    #: 校验时逐条比对，不在表里的组合直接 400 —— 与其让它写进去再靠统计去猜，不如当场挡住。
+    #:
+    #: ⚠️ **按"意图"划分，刻意不重叠**：
+    #:   - 「分配」只对人（`user`）—— "把这件东西给张三"；
+    #:   - 「安装」只对物（`asset` / `workstation`）—— "把这件东西装到 / 放到某处"。
+    #: 两条都允许 `stock → X` 的话（第一版就是），会出现"分配一台主机"这种
+    #: 语义上讲不通、但数据库照收的记录，将来对账没人说得清那是安装还是分配。
+    #:
+    #: 字面量写成 `"stock"` 而不是 `LightHolderKind.STOCK`：这张表在类体内定义，
+    #: 引用外部类是循环依赖；反正它只在校验里用，值本身就是契约。
+    FLOWS: dict[str, tuple[tuple[str | None, str | None], ...]] = {
+        STOCK_IN: ((None, "stock"),),
+        ALLOCATE: (("stock", "user"),),
+        RETURN: (("user", "stock"), ("asset", "stock"), ("workstation", "stock")),
+        ATTACH: (("stock", "asset"), ("stock", "workstation"), (None, "asset"), (None, "workstation")),
+        DETACH: (("asset", "stock"), ("workstation", "stock")),
+        #: `user → user` = "这批东西本来在张三那儿，现在归李四"。
+        #: 没有它，这个再日常不过的意图只能绕「归还 + 分配」两步 ——
+        #: 而那条路中间会经过"库存"，一次换手被记成两次入出库，时间线上看不出
+        #: 它其实是同一批东西直接换了人；绕路还正好踩过当时的幽灵归还漏洞。
+        #: ⚠️ 必须包含 `asset → asset`（B022 → B023）与 `workstation → workstation`
+        #: （W23 → W25）—— "机器与机器的转移、点位与点位的转移"是真实业务动作，
+        #: 漏了它们就只能绕"先拆卸回库存、再安装过去"，一次挪位被记成两次出入库。
+        TRANSFER: (
+            ("user", "user"),
+            ("user", "asset"), ("user", "workstation"),
+            ("asset", "user"), ("asset", "asset"), ("asset", "workstation"),
+            ("workstation", "user"), ("workstation", "asset"), ("workstation", "workstation"),
+        ),
+        SCRAP: (("stock", None), ("user", None), ("asset", None), ("workstation", None)),
+        ADJUST: ((None, "stock"), ("stock", None)),
+    }
+
+    @classmethod
+    def allows(cls, op: str, from_kind: str | None, to_kind: str | None) -> bool:
+        return (from_kind, to_kind) in cls.FLOWS.get(op, ())
+
+    #: 冲正时按顺序尝试的候选操作。**不是简单地"把 op 原样反过来"** ——
+    #: 反向操作落在哪个 op 上取决于原来的 from：同样是「归还」，
+    #: 从人还回去要写成「分配」，从资产还回去要写成「安装」。
+    #: 空元组 = 这条操作没有机械的反向（报损想撤销必须由人判断走哪条路），
+    #: 强行"恢复"会凭空把它塞回库存，那是编造事实。
+    REVERSE_CANDIDATES: dict[str, tuple[str, ...]] = {
+        STOCK_IN: (ADJUST,),
+        ALLOCATE: (RETURN,),
+        RETURN: (ALLOCATE, ATTACH),
+        ATTACH: (DETACH,),
+        DETACH: (ATTACH,),
+        TRANSFER: (TRANSFER,),
+        ADJUST: (ADJUST,),
+        SCRAP: (),
+    }
+
+    @classmethod
+    def reverse_op(cls, op: str, from_kind: str | None, to_kind: str | None) -> str | None:
+        """冲正一条流水该用哪个操作。挑不出合法组合就返回 None。
+
+        参数是**原流水**的 from / to；内部会反过来找能与之匹配的操作。
+        """
+        swapped = (to_kind, from_kind)
+        for candidate in cls.REVERSE_CANDIDATES.get(op, ()):
+            if cls.allows(candidate, *swapped):
+                return candidate
+        return None
+
+    @classmethod
+    def label(cls, op: str) -> str:
+        return cls.LABELS.get(op, op)
+
+
+# --------------------------------------------------------------------------- #
+# 轻资产 · 品类
+# --------------------------------------------------------------------------- #
+class LightCategory(Base):
+    """轻资产品类 —— 回答"这是什么"。
+
+    **一张字典表**：名称、品牌（选填）、规格（选填）、单位。
+    它**不记数量、不记位置、不记追踪模式**（《修订版设计》§1.1）。
+
+    品牌与规格**允许为空**：真实流水里只给了"设备名"一行字，硬拆只会在库里
+    造出一堆凭空的字段值（不编造数据）。名称为空时前端按"品类 #id"兜底显示。
+    """
+
+    __tablename__ = "light_categories"
+    __table_args__ = (UniqueConstraint("name", name="uq_light_category_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    brand: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    spec: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    #: 计量单位：套 / 块 / 条。只是给人看的文案，不参与任何计算。
+    unit: Mapped[str] = mapped_column(String(16), nullable=False, default="件", server_default="件")
+
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: 软删 —— 与 workstations / floor_maps 同一设计（编码/名称不释放）。
+    #: 被流水引用时不允许硬删（应用层 409 + 人话；流程走软删）。
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now, onupdate=datetime.now
+    )
+
+    #: 现在的分布（快照）—— 列表页 / 详情页直接读它，不重放历史。
+    holdings: Mapped[list["LightHolding"]] = relationship(
+        back_populates="category", cascade="all, delete-orphan", passive_deletes=True
+    )
+    #: 完整轨迹（append-only）—— "这条 SSD 去年装在哪台机器上" 这类问题由它回答。
+    movements: Mapped[list["LightMovement"]] = relationship(
+        back_populates="category", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    @property
+    def display_name(self) -> str:
+        return self.name or f"品类 #{self.id}"
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<LightCategory {self.id} {self.name}>"
+
+
+# --------------------------------------------------------------------------- #
+# 轻资产 · 当前分配记录
+# --------------------------------------------------------------------------- #
+class LightHolding(Base):
+    """轻资产**当前分配记录** —— 回答"现在在哪、有几件"（《修订版设计》§1.2 / §2）。
+
+    ## 一条记录 = 一个持有位置 + 该位置上的数量
+
+    `holder_kind` 四选一，**一条记录只能有一个持有位置**：
+
+    | kind          | 什么时候用        | 现实例子                    |
+    | ------------- | ------------- | ----------------------- |
+    | `asset`       | 装在某台正式资产上的配件  | 2 条内存插在 `B022-03-00001` 上 |
+    | `workstation` | 固定放在某个工位用的    | 1 套键鼠放在 `W23` 工位上        |
+    | `user`        | 专门发给某人、没有固定位置 | 3 套键鼠发给张三               |
+    | `stock`       | 还没分配出去，在库房    | 5 个转接头备着                |
+
+    **使用人不是第五种位置，而是展示信息**：持有位置是 `asset` / `workstation` 时，
+    使用人一律**现读宿主**（`assets.user_name` / `workstations.user_name`），本表
+    不另存一份；持有位置是 `user` 时，记录上**不带任何点位**，界面就老实说
+    "在某人手上，未记录固定位置"——绝不因为张三名下有工位就推断这套键鼠在 W23。
+
+    ## 与 `LightMovement` 的分工：现在 vs 过去
+
+    - 本表 = **现在的快照**，给列表页 / 详情页直接读（快、简单）；
+    - `light_movements` = **完整轨迹**（append-only），给"去年装在哪台机器上"这种问题。
+
+    两者**同事务双写**，改 holdings、追加流水、写审计一起 commit（§4.2）。
+    holdings 只允许被 `services/light.py::apply_holding_delta()` 修改，
+    并可从流水完整重建（`light_check.py` 体检、`light_rebuild.py` 重建）。
+
+    ## 为什么不落"使用人 + 点位都记"
+
+    那会立刻产生一个无法回答的问题：**张三调去别的工位了，这条配件跟着走还是留下？**
+    配件跟着人走 → 记 `user`；配件固定在工位 → 记 `workstation`。二者只能选一个。
+    """
+
+    __tablename__ = "light_holdings"
+    __table_args__ = (
+        # 第二层防线：部分唯一索引（SQLite / PostgreSQL 支持；MySQL 不支持 —— 项目明确不打算支持）。
+        # ⚠️ 与 `asset_relations` 的取舍**故意不同**：配对表要保留"解绑"的历史行（active=0 不能互相冲突），
+        # 所以不建唯一索引；而本表**只存当前状态、不存历史**（历史在流水里），
+        # 表里没有软删行，所以部分唯一索引不会误伤任何合法数据。
+        Index(
+            "uq_light_hold_asset", "category_id", "asset_id",
+            unique=True, sqlite_where=text("asset_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_light_hold_station", "category_id", "workstation_id",
+            unique=True, sqlite_where=text("workstation_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_light_hold_user", "category_id", "holder_user",
+            unique=True, sqlite_where=text("holder_user IS NOT NULL"),
+        ),
+        # 库存按"存放位置"而不是按品类唯一：同一个品类可以分放几处库房（库房A 3 个、前台抽屉 2 个）。
+        # `COALESCE(...,'')` 是为了让"没填位置"本身也成为一个可唯一的取值 ——
+        # 否则 SQLite / SQL 里 NULL 互不相等，两条"没填位置"的库存记录能同时存在。
+        Index(
+            "uq_light_hold_stock", "category_id", text("COALESCE(stock_location, '')"),
+            unique=True, sqlite_where=text("holder_kind = 'stock'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("light_categories.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+    #: stock / user / asset / workstation，见 LightHolderKind
+    holder_kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+
+    #: kind=asset 时必填（其余为空）
+    asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    #: kind=workstation 时必填（其余为空）
+    workstation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workstations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    #: kind=user 时必填（自由文本，走 ownership.has_owner 校验）
+    holder_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    #: kind=stock 时的存放位置描述（自由文本，也可以是某个点位的编码，见设计 §2.4）。
+    #: **不建外键**：现实里备件常放在不是工位的地方（库房、机柜、行政抽屉），
+    #: 强行要求先在地图上建点位会把"库房"这种空间硬塞进点位表，污染地图。
+    stock_location: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: 这一条是从什么时候开始的（业务时间，非 created_at）
+    since: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now, onupdate=datetime.now
+    )
+
+    category: Mapped[LightCategory] = relationship(back_populates="holdings", lazy="joined")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<LightHolding {self.id} cat={self.category_id} {self.holder_kind} "
+            f"x{self.quantity} asset={self.asset_id} ws={self.workstation_id} user={self.holder_user}>"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 轻资产 · 流转流水
+# --------------------------------------------------------------------------- #
+class LightMovement(Base):
+    """轻资产流转流水 —— **append-only 的历史**（"怎么变成现在这样的"，设计 §1.3）。
+
+    ## 与 `LightHolding` 的分工：过去 vs 现在
+
+    - `LightHolding` = **现在的快照**，列表页 / 详情页直接读（快、简单）；
+    - 本表 = **完整轨迹**，给"这条 SSD 去年装在哪台机器上"这种问题（全、可审计）；
+    - 两者**同事务双写**，本表同时是**可重建快照的唯一依据**
+      （`light_check.py` 体检、`light_rebuild.py` 重建都按它重放）。
+
+    ## 一条流水就是一次物料移动
+
+    `quantity` 件从 `from_*` 去往 `to_*`。`to_kind` 为 NULL 表示"离开系统"（报损）。
+
+    ## 重放口径（唯一口径，实现见 services/light.py）
+
+    ```
+    Δ(某个位置) = quantity × [ +1 若 to 命中该位置  −1 若 from 命中该位置 ]
+    ```
+    只累计 `origin ∈ LightOrigin.EFFECTIVE` 的流水 —— **历史导入 `import` 绝不参与重放**
+    （Excel 里只有分配、没有对应入库，算进来会得到负库存或凭空出现的持有量）。
+    排序必须稳定：`occurred_at ASC, id ASC`（同一天多条时用 id 兜底）。
+
+    ## 为什么不原地改
+
+    "改错了一条分配" = 追加两条更正流水（反向 + 重记），不是 UPDATE。
+    已确认的历史是证据，篡改它等于让时间线说谎。`corrects_id` 只做**追溯链接**
+    （"这条是在更正 #123"），不参与任何计算。
+
+    ## 引用正式资产 / 点位为什么不建外键
+
+    与 `audit_logs.target_id`、`relation_exceptions.asset_id` 同一取舍：
+    关联是**历史事实**，宿主删了它也成立（"它当初确实装在 B022-03-00001 上"）。
+    且本库主键无 AUTOINCREMENT、**id 会被复用** —— 只存 id 会让旧记录指到一台新设备上。
+    所以同时快照 `*_ref_id` + `*_ref_code`（当时的编码）+ `*_ref_label`（当时的名称/型号），
+    展示时优先查活的宿主，查不到就回落到快照 +「已删除」。
+    """
+
+    __tablename__ = "light_movements"
+    __table_args__ = (
+        Index("ix_light_movement_category_time", "category_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("light_categories.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+    # ⚠️ **这里曾经有一个 `item_id` 外键指向 `light_items`（单件档案表）。**
+    # 取消单件追踪后那张表被删除，于是出现两个致命后果，必须把这一列连外键一起拿掉：
+    #   1. **新库**：模型删了 → create_all 不再建 `light_items` → `light_movements` 里
+    #      那条 `REFERENCES light_items(id)` 指向一张不存在的表 → 任何一次流水写入
+    #      都直接 `OperationalError: no such table: main.light_items`（实测确认）；
+    #   2. **老库**：`DROP TABLE light_items` 之后，同样的"外键指向不存在的表"会立刻生效。
+    # 初稿的设计写的是"保留列但不读不写（SQLite 物理删列要重建表，风险大于收益）"——
+    # 那个判断**漏算了外键这个副作用**：不是"要不要留着一列"的问题，
+    # 而是"留着一个指向幽表的约束会让整张表彻底写不进去"。
+    # SQLite 3.35+ 原生支持 `ALTER TABLE ... DROP COLUMN`（本机 3.45），
+    # 所以迁移脚本直接删列即可，不需要 12 步重建表。
+
+    op: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    quantity: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
+
+    #: --- 从哪来 ---
+    from_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    from_ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    from_ref_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    from_ref_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    from_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    #: --- 到哪去 ---
+    to_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    to_ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    to_ref_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    to_ref_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    to_user: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    operator: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    #: **业务发生时间**（历史导入可回填过去的时间），与 created_at 不是一个概念。
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now, index=True
+    )
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    #: manual / opening / import，见 LightOrigin
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=LightOrigin.MANUAL,
+        server_default=LightOrigin.MANUAL, index=True,
+    )
+    #: 一次导入一个批次号，导入结果可追溯（哪一批进来的）
+    import_batch: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    #: 前端每次提交带一个 UUID，唯一索引挡住"手抖点两次 / 网络重试"。
+    #: SQLite 里 NULL 之间互不冲突，所以只有真正传了才参与去重。
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+
+    #: 这条流水是在更正哪一条（仅追溯，不参与计算，**不建外键**）
+    corrects_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+
+    category: Mapped[LightCategory] = relationship(back_populates="movements", lazy="joined")
+
+    @property
+    def effective(self) -> bool:
+        """这条流水算不算进当前状态。"""
+        return self.origin in LightOrigin.EFFECTIVE
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<LightMovement {self.id} cat={self.category_id} {self.op} x{self.quantity} "
+            f"{self.from_kind}→{self.to_kind} origin={self.origin}>"
+        )
+

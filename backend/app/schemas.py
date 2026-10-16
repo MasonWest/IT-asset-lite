@@ -320,6 +320,14 @@ class AssetOperationRequest(BaseModel):
     user_name: Optional[str] = Field(default=None, max_length=64, description="领用时指定使用人")
     location: Optional[str] = Field(default=None, max_length=128, description="可选，同时更新存放位置")
     note: Optional[str] = Field(default=None, max_length=500)
+    #: 报废时，这台设备上还挂着轻资产配件 —— 用户看过清单、点头了才继续。
+    #: 复用项目里"预检 → confirmations → 前端 acknowledge_warnings 点头"的既有形状
+    #: （见 routers/relocation.py），不新造一套机制。
+    acknowledge_warnings: bool = Field(default=False, description="已知悉关联影响，继续")
+    #: 「随设备一起报废」：在**同一次确认**里把配件也报损。
+    #: 默认 False —— 系统**绝不自动改配件归属**（配件可能是拆下来、转别的机器、或随设备一起扔，
+    #: 只有人知道是哪一种）。不点它就先报损设备、配件留着，问题中心会兜住。
+    scrap_light_assets: bool = Field(default=False, description="把挂在这台设备上的轻资产一并报损")
 
     _clean = field_validator("operator", "user_name", "location", "note", mode="before")(_blank_to_none)
 

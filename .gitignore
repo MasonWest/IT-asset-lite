@@ -67,3 +67,6 @@ v9.png
 # 旧交接文档（含本机绝对路径与对已排除素材的引用，
 # 且自身声明「第六节及之后已过时」，已被 CURRENT_STATE.md 取代）
 PROJECT-HANDOFF.md
+
+# 编辑器/工具产生的 artifact 元数据（本机过程记录，不属于项目源码）
+*.artifact.json

@@ -32,6 +32,9 @@ from ..models import (
     AuditTarget,
     DeviceCategory,
     DeviceType,
+    LightCategory,
+    LightHolderKind,
+    LightOp,
 )
 from ..schemas import (
     AssetCreate,
@@ -48,6 +51,7 @@ from ..schemas import (
     TimelinePage,
 )
 from ..services import bundles as bundles_service
+from ..services import light as light_service
 from ..services import pairing
 from ..services.audit import asset_label, describe_operation, record_audit
 from ..services.events import describe_changes, diff_changes, record_event
@@ -528,6 +532,28 @@ def run_operation(asset_id: int, payload: AssetOperationRequest, db: Session = D
             detail=f"「{AssetOperation.LABELS[action]}」必须填写使用人",
         )
 
+    # 报废前先看这台设备上还挂着什么轻资产配件（设计 §7.2）。
+    # **绝不自动改配件归属** —— 配件可能是拆下来回库存、转到别的机器、或随设备一起扔，
+    # 只有人知道是哪一种；这里只负责"把话说清楚"，把决定权交回去。
+    scrap_light: list = []
+    if action == AssetOperation.SCRAP:
+        scrap_light = light_service.holdings_by_asset(db, asset.id)
+        if scrap_light and not payload.acknowledge_warnings:
+            lines = []
+            for h in scrap_light:
+                category = db.get(LightCategory, h.category_id)
+                unit = category.unit if category else "件"
+                name = category.display_name if category else f"品类 #{h.category_id}"
+                lines.append(f"{name} ×{h.quantity} {unit}")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"这台设备上还登记着轻资产配件：{'、'.join(lines)}。"
+                    "请先决定这些配件怎么处理：拆下来回库存 / 转到别的机器上 / 随设备一起报废。"
+                    "如果就是随设备一起报废，请在确认框里勾上「配件随设备一起报废」。"
+                ),
+            )
+
     target = AssetOperation.TARGET_STATUS[action]
 
     # 领用/归还时顺手把归属信息一起更新，少一步手改表单
@@ -549,6 +575,28 @@ def run_operation(asset_id: int, payload: AssetOperationRequest, db: Session = D
         else:
             note = AssetOperation.LABELS[action]
 
+    # 「随设备一起报废」：在**同一次确认**里把配件也报损。
+    # 只做用户明确勾选的那一种情况 —— 不勾就一个字都不动配件的归属。
+    scraped_light: list[str] = []
+    if scrap_light and payload.scrap_light_assets:
+        from ..services.light import HolderRef
+
+        for holding in scrap_light:
+            category = db.get(LightCategory, holding.category_id)
+            if category is None:
+                continue
+            light_service.record_operation(
+                db,
+                category=category,
+                op=LightOp.SCRAP,
+                from_ref=HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id),
+                to_ref=HolderRef(),
+                quantity=holding.quantity,
+                operator=payload.operator,
+                note=f"随设备 {asset.asset_code} 一起报废",
+            )
+            scraped_light.append(f"{category.display_name} ×{holding.quantity} {category.unit}")
+
     event = record_event(
         db,
         asset,
@@ -569,7 +617,8 @@ def run_operation(asset_id: int, payload: AssetOperationRequest, db: Session = D
         target_type=AuditTarget.ASSET,
         target_id=asset.id,
         target_label=asset_label(asset),
-        summary=describe_operation(action, current, target, note),
+        summary=describe_operation(action, current, target, note)
+        + (f"；同时报损关联轻资产：{'、'.join(scraped_light)}" if scraped_light else ""),
         operator=payload.operator,
         detail={
             "action": action,
@@ -578,6 +627,7 @@ def run_operation(asset_id: int, payload: AssetOperationRequest, db: Session = D
             "to_status": target,
             "user_name": asset.user_name,
             "location": asset.location,
+            "scrapped_light_assets": scraped_light,
         },
     )
 

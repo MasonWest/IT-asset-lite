@@ -68,6 +68,7 @@ async function refreshInfo() {
 
       <nav>
         <RouterLink to="/">资产台账</RouterLink>
+        <RouterLink to="/light">轻资产</RouterLink>
         <RouterLink to="/insights" class="nav-insights">
           问题中心
           <span v-if="reviewPending > 0" class="nav-badge">{{ reviewPending }}</span>

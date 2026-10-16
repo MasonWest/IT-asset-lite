@@ -71,14 +71,27 @@ def init_db() -> None:
 #: （所以顺序是 assets → workstations → floor_maps：先删引用方，再删被引用方）。
 #: 靠这个顺序而不是"临时关掉外键校验"，是为了让 schema 的问题在重置时就暴露出来 ——
 #: 顺序排错的话 reset.py 会当场抛外键错，而不是留下一个残缺的库。
+#:
+#: 轻资产现在只有两张表 + 一张「当前分配记录」：
+#: - `light_movements`（历史）与 `light_holdings`（现在的快照）都引用 `light_categories`，
+#:   所以必须排在 categories **之前**（先删引用方）；
+#: - `light_holdings` 还**建了外键**指向 `assets` / `workstations`（当前分配记录是
+#:   "此刻真的挂在哪"，与历史流水不同，它要求宿主真的存在），所以它必须排在
+#:   assets / workstations **之前**。
+#: - `light_movements` 引用的是 assets / workstations 的**历史快照而非外键**
+#:   （宿主删了历史也成立），所以它与 assets / workstations 之间没有删除顺序约束。
+#: （`light_items` 单件档案表已在 v2.9.0 删除 —— 取消单件追踪，不再保留。）
 BUSINESS_TABLES: tuple[str, ...] = (
     "inventory_items",
     "asset_relations",
     "asset_events",
     "inventory_tasks",
+    "light_movements",  # 引用 light_categories
+    "light_holdings",  # 引用 light_categories + assets + workstations（都要排在它后面）
+    "light_categories",  # 被上面两张引用，必须排在它们后面
     "assets",
     "relation_exceptions",  # 引用 workstations，必须排在 workstations 前面
-    "workstations",  # 被 assets 引用，必须排在 assets 后面
+    "workstations",  # 被 assets / light_holdings 引用，必须排在它们后面
     "floor_maps",  # 被 workstations 引用，必须排在 workstations 后面
     "audit_logs",  # 无外键，但同属业务数据（审计日志只追加，只有 reset 能清）
 )
@@ -156,6 +169,45 @@ def _meta_set(conn, key: str, value: str) -> None:
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
     )
+
+
+def meta_get_on(db, key: str) -> str | None:
+    """在**既有会话**里读记账值 —— 与 `meta_get` 的区别是不另开连接。
+
+    ⚠️ 为什么必须有这一对 `_on` 版本：SQLite 在写事务未提交时不让**同一个进程的另一个
+    连接**写库（`database is locked`）。服务层在写事务里要读/写 `schema_meta` 时，
+    必须走同一个会话，否则一提交就炸。
+    """
+    from sqlalchemy import text as _text
+
+    try:
+        row = db.execute(_text("SELECT value FROM schema_meta WHERE key = :k"), {"k": key}).first()
+    except Exception:  # noqa: BLE001 —— 表还没建好时不该把请求打挂
+        return None
+    return row[0] if row else None
+
+
+def meta_set_on(db, key: str, value: str) -> None:
+    """在**既有会话 / 事务**里写记账值（表不存在时先建）。"""
+    from sqlalchemy import text as _text
+
+    db.execute(_text(_SCHEMA_META_DDL))
+    db.execute(
+        _text(
+            "INSERT INTO schema_meta (key, value) VALUES (:k, :v) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        ),
+        {"k": key, "v": value},
+    )
+
+
+def light_opening_key(category_id: int) -> str:
+    """「这个品类做过期初确认了吗」的记账键。
+
+    ⚠️ **它只是"提示用"**（界面据此收起"去登记期初"的提示），
+    **不是"禁止再录入"的开关** —— 期初确认允许补录 / 重做（设计 §6.1）。
+    """
+    return f"light_opening:{category_id}"
 
 
 def _add_category_column(conn) -> bool:

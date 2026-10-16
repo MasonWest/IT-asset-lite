@@ -48,6 +48,7 @@ from ..models import (
     AuditTarget,
     Facing,
     FloorMap,
+    LightCategory,
     Workstation,
 )
 from ..schemas import AssetOut
@@ -67,7 +68,7 @@ from ..schemas_workstations import (
     WorkstationOut,
     WorkstationUpdate,
 )
-from ..services import floor_map_layout, ownership, workstation_importer
+from ..services import floor_map_layout, light as light_service, ownership, workstation_importer
 from ..services import link_suggestions as link_suggestions_service
 from ..services.audit import record_audit
 from ..services.events import record_event
@@ -119,7 +120,18 @@ def _default_floor_map(db: Session) -> Optional[FloorMap]:
     return db.execute(stmt).scalars().first()
 
 
-def _serialize(station: Workstation, asset_count: int = 0) -> WorkstationOut:
+def _serialize(
+    station: Workstation,
+    asset_count: int = 0,
+    light: Optional[dict[str, int]] = None,
+) -> WorkstationOut:
+    """把 ORM 点位拼成下发的形状。
+
+    ⚠️ **两个派生值都必须由调用方传进来**，不在这个函数里现查 ——
+    列表接口走它的批量版本（一次查完 N 个点位），这里再查一遍就是 N+1。
+    单点位的路径统一走 `_serialize_one`，别手写 `_asset_counts(...)`。
+    """
+    counts = light or {}
     return WorkstationOut(
         id=station.id,
         code=station.code,
@@ -132,6 +144,21 @@ def _serialize(station: Workstation, asset_count: int = 0) -> WorkstationOut:
         created_at=station.created_at,
         updated_at=station.updated_at,
         asset_count=asset_count,
+        light_direct=int(counts.get("direct", 0)),
+        light_via_assets=int(counts.get("via_assets", 0)),
+    )
+
+
+def _serialize_one(db: Session, station: Workstation) -> WorkstationOut:
+    """单点位序列化：资产数 + 轻资产件数各一次索引查询。
+
+    ⚠️ **不能省成 `_serialize(station)`** —— 那样这两个派生值会静默变成 0，
+    而"这个点位上有 3 件配件"是老实的 0 还是没查的 0，从响应里看不出来。
+    """
+    return _serialize(
+        station,
+        _asset_counts(db, [station.id]).get(station.id, 0),
+        light_service.station_light_counts(db, [station.id]).get(station.id, {}),
     )
 
 
@@ -251,7 +278,12 @@ def list_workstations(
     rows = list(db.execute(stmt.order_by(Workstation.y.asc(), Workstation.x.asc(), Workstation.id.asc())).scalars().all())
 
     counts = _asset_counts(db, [s.id for s in rows])
-    items = [_serialize(s, counts.get(s.id, 0)) for s in rows]
+    # 轻资产件数**一次查完**，与 `_asset_counts` 同一个套路 —— 逐点位查会 N+1。
+    # 口径在 `services/light.py::station_light_counts`，与点位侧栏共用取数实现。
+    light_counts = light_service.station_light_counts(db, [s.id for s in rows])
+    items = [
+        _serialize(s, counts.get(s.id, 0), light_counts.get(s.id, {})) for s in rows
+    ]
 
     # 画布尺寸 + 建筑图元都来自默认平面图（不再写死在前端模板里）。
     # 取不到图时退回模块级 CANVAS 默认值，保证老库/被 reset 过的库也能渲染点位。
@@ -367,7 +399,7 @@ def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db
 @router.get("/{station_id}", response_model=WorkstationOut, summary="单个点位")
 def get_workstation(station_id: int, db: Session = Depends(get_db)):
     station = _get_station_or_404(db, station_id)
-    return _serialize(station, _asset_counts(db, [station.id]).get(station.id, 0))
+    return _serialize_one(db, station)
 
 
 @router.get("/{station_id}/assets", response_model=list[AssetOut], summary="点位上挂着的资产")
@@ -498,7 +530,7 @@ def update_workstation(station_id: int, payload: WorkstationUpdate, db: Session 
         data["code"] = code
 
     if not data:
-        return _serialize(station, _asset_counts(db, [station.id]).get(station.id, 0))
+        return _serialize_one(db, station)
 
     # 改动前的快照，用来算「改了什么」
     before = {key: getattr(station, key) for key in data}
@@ -535,7 +567,7 @@ def update_workstation(station_id: int, payload: WorkstationUpdate, db: Session 
 
     db.commit()
     db.refresh(station)
-    return _serialize(station, _asset_counts(db, [station.id]).get(station.id, 0))
+    return _serialize_one(db, station)
 
 
 def _as_text(value: object) -> str:
@@ -893,14 +925,54 @@ def delete_workstation(
         db.execute(select(Asset).where(Asset.workstation_id == station.id)).scalars().all()
     )
 
-    if attached and not force:
-        preview = "、".join(a.asset_code for a in attached[:5])
-        more = f" 等 {len(attached)} 台" if len(attached) > 5 else ""
+    # 轻资产关联影响预检（设计 §5.6）。两类要**分开提示**，否则用户会以为
+    # "随主机上的配件"也是自己放在这个工位上的。
+    light = light_service.holdings_by_workstation(db, station.id)
+    direct_light = light["direct"]
+    via_assets_light = light["via_assets"]
+
+    def _describe_light(rows) -> str:
+        out = []
+        for h in rows:
+            category = db.get(LightCategory, h.category_id)
+            unit = category.unit if category else "件"
+            name = category.display_name if category else f"品类 #{h.category_id}"
+            out.append(f"{name} ×{h.quantity} {unit}")
+        return "、".join(out)
+
+    # ① 直接关联（东西就固定放在这个工位上）：**硬拦**，force 也过不去 ——
+    #    它是真的会因此失去位置，必须先明确处理归属。
+    # ② 随主机关联（装在那台主机上、主机正好在这个点位）：不拦（主机移出点位后它仍然
+    #    正确地"装在那台主机上"，信息没丢），但**必须列出来**让人知道。
+    # ③ 其他受影响正式资产：沿用原有逻辑（409 拦截 + force 清空）。
+    if direct_light:
+        extra = (
+            f" 另有随主机上的：{_describe_light(via_assets_light)}（主机移出点位后它们也失去点位信息）。"
+            if via_assets_light
+            else ""
+        )
         raise HTTPException(
             status_code=409,
             detail=(
-                f"点位 {station.code} 上还挂着 {len(attached)} 台设备（{preview}{more}）。"
-                f"请先把它们移到别的点位；如果确定要删，就带上「同时清空这些资产的点位归属」，"
+                f"点位 {station.code} 上还固定放着轻资产：{_describe_light(direct_light)}。"
+                f"请先决定它们转到哪个点位 / 发给谁 / 放回库存 —— "
+                f"这一步不能用「强行清空」跳过，否则这些配件会静默掉进「归属不明」。{extra}"
+            ),
+        )
+
+    if (attached or via_assets_light) and not force:
+        parts = []
+        if attached:
+            preview = "、".join(a.asset_code for a in attached[:5])
+            more = f" 等 {len(attached)} 台" if len(attached) > 5 else ""
+            parts.append(f"正式资产 {len(attached)} 台（{preview}{more}）")
+        if via_assets_light:
+            parts.append(f"随主机上的轻资产：{_describe_light(via_assets_light)}（主机移出点位后它们也失去点位信息）")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"点位 {station.code} 上还有：{'；'.join(parts)}。"
+                f"请先把正式资产移到别的点位；如果确定要删，就带上「同时清空这些资产的点位归属」，"
                 f"设备本身不会被删除。"
             ),
         )
@@ -930,10 +1002,16 @@ def delete_workstation(
         target_id=station_id,
         target_label=label,
         summary=f"删除点位 {code}"
-        + (f"，同时清空 {len(detached)} 台设备的点位归属（设备保留）" if detached else ""),
+        + (f"，同时清空 {len(detached)} 台设备的点位归属（设备保留）" if detached else "")
+        + (
+            f"；随主机上的轻资产 {len(via_assets_light)} 条随之失去点位信息（配件仍正确归属那台主机）"
+            if via_assets_light
+            else ""
+        ),
         operator=operator,
         detail={"workstation_id": station_id, "code": code,
-                "detached_assets": detached, "detached_count": len(detached)},
+                "detached_assets": detached, "detached_count": len(detached),
+                "light_via_assets": len(via_assets_light)},
     )
 
     db.commit()

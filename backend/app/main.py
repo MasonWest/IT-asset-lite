@@ -45,6 +45,7 @@ from .routers import (
     floor_maps,
     insights,
     inventory,
+    light,
     meta,
     relation_check,
     relations,
@@ -101,6 +102,18 @@ _FAILED_ROUTES: list[tuple[re.Pattern[str], str, str]] = [
     # 底部那张图是单图，接口设计成 /api/floor-maps/{id}，将来也不会出现别的固定子路径。
     (re.compile(r"^/api/floor-maps/\d+$"), AuditAction.MAP_UPDATE, AuditTarget.MAP),
     (re.compile(r"^/api/floor-maps$"), AuditAction.MAP_CREATE, AuditTarget.MAP),
+    # 轻资产。字面量与 /{id} 的先后同样有讲究：
+    # 先列「带子路径的」，再列「集合」与「带 id 的」；
+    # 漏掉这里的话，失败的操作会被兜底记成「编辑资产 / 操作对象：系统」——审计里多出一条不存在的操作。
+    (re.compile(r"^/api/light/categories/\d+$"), AuditAction.LIGHT_CATEGORY_UPDATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/categories$"), AuditAction.LIGHT_CATEGORY_CREATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/movements/\d+/reverse$"), AuditAction.LIGHT_OPERATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/movements$"), AuditAction.LIGHT_OPERATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/replace$"), AuditAction.LIGHT_OPERATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/opening/preview$"), AuditAction.LIGHT_OPERATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/opening$"), AuditAction.LIGHT_OPERATE, AuditTarget.LIGHT_CATEGORY),
+    (re.compile(r"^/api/light/import/preview$"), AuditAction.LIGHT_IMPORT, AuditTarget.FILE),
+    (re.compile(r"^/api/light/import$"), AuditAction.LIGHT_IMPORT, AuditTarget.FILE),
 ]
 
 
@@ -282,6 +295,7 @@ app.include_router(floor_maps.router)
 app.include_router(relation_check.router)
 app.include_router(relocation.router)
 app.include_router(insights.router)
+app.include_router(light.router)
 app.include_router(audit.router)
 
 

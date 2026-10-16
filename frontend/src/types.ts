@@ -512,6 +512,16 @@ export interface Workstation {
   updated_at: string
   /** 点位上挂了几台资产 —— 后端派生，不落库 */
   asset_count: number
+  /**
+   * 点位上「看得见的」轻资产件数（`Σquantity`）—— 后端派生，不落库。
+   *
+   * **分两组、不发合计**：地图徽标显示的是这两个相加，
+   * 与点位详情里「轻资产（N）」**必须是同一个数**（后端同一份取数实现）。
+   * 不含库存 —— 还没分配出去的东西不属于任何点位。
+   */
+  light_direct: number
+  /** 装在这个点位上的主机里的配件（按宿主现算） */
+  light_via_assets: number
 }
 
 export interface WorkstationMapCanvas {
@@ -1017,4 +1027,296 @@ export interface UnlinkApplyResult {
   cleared: number
   asset_codes: string[]
   skipped: { asset_id: number; asset_code?: string; current_user?: string | null; reason: string }[]
+}
+
+// --------------------------------------------------------------------------- //
+// 轻资产（不纳入正式台账的 IT 配件）
+// --------------------------------------------------------------------------- //
+/**
+ * ⚠️ 这里的每个数字都来自后端（`light_holdings` 当前分配记录的聚合），前端不做任何加减。
+ *
+ * 这一版**取消了**追踪粒度（`tracking` 数量 / 单件双模式）与整套「单件档案」，
+ * 统一按「品类 + 数量」管理；当前状态由 `light_holdings` 承载，历史由 `light_movements`。
+ */
+/** 手工登记允许的来源。没有 'import' —— 历史导入只能走导入接口 */
+export type LightOrigin = 'manual' | 'opening' | 'import'
+
+export type LightHolderKind = 'stock' | 'user' | 'asset' | 'workstation' | 'none'
+
+/** 物料移动的操作类型。`replace`（更换）不在其中 —— 它一次写两条流水，走专用入口 */
+export type LightOp =
+  | 'stock_in'
+  | 'allocate'
+  | 'return'
+  | 'attach'
+  | 'detach'
+  | 'transfer'
+  | 'scrap'
+  | 'adjust'
+
+/** 一处引用 / 一个持有位置（流水的 from / to，或一条当前分配记录指向的位置） */
+export interface LightHolder {
+  kind: LightHolderKind | null
+  kind_label: string
+  ref_id: number | null
+  ref_code: string | null
+  ref_label: string | null
+  user: string | null
+  /** 现成的展示文案（"库存" / "张三" / "B022-03-00001"） */
+  display: string
+  /** 引用的宿主是否还在（资产/点位被删后为 false） */
+  alive: boolean
+  /** 一行简短说明（"随 B022-03-00001" / "在某人手上，未记录固定位置"…） */
+  hint: string
+  /** 以下只在 kind='asset' 时填：宿主**当前**的使用人 / 点位 / 状态（现读，不落库） */
+  host_user: string | null
+  host_workstation_code: string | null
+  host_status: string | null
+  host_status_label: string | null
+  /** 仅 kind='stock'：存放位置描述 + 它恰好是某个活点位的编码时的 id（可点击） */
+  stock_location: string | null
+  stock_location_station_id: number | null
+}
+
+/** 一条**当前分配记录**："现在在哪、有几件" */
+export interface LightHolding extends LightHolder {
+  id: number
+  category_id: number
+  /**
+   * 品类信息。⚠️ **必须有** —— `LightHolder` 那半边只回答"在哪"（`display` 是宿主，
+   * 资产页上就是那台机器自己的编号）。少了这几个字段，界面就只能显示
+   * "装在 B022-03-00038 上 ×1"，看不出装的是什么东西。
+   */
+  category_name: string
+  category_brand: string | null
+  category_spec: string | null
+  category_unit: string
+  /** 「名称 · 品牌 规格」单行版 —— 只有一行位置的地方用它，别自己再拼一遍 */
+  category_label: string
+  quantity: number
+  since: string | null
+  note: string | null
+}
+
+export interface LightHoldingPage {
+  items: LightHolding[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface LightCategoryStat {
+  stock: number
+  allocated: number
+  net: number
+  imported_count: number
+  /** true = 有历史流水、当前账却是空的（典型：只导入了分配、没做期初确认）→ 界面说"未登记" */
+  pending_opening: boolean
+  /** 当前分配记录（只读 `light_holdings`，结构上不可能和库存 / 已分配对不上） */
+  holdings: LightHolding[]
+}
+
+export interface LightCategory {
+  id: number
+  name: string
+  brand: string | null
+  spec: string | null
+  unit: string
+  notes: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+  /** 做过期初确认没有 —— **只是提示用**，不阻止再次登记（期初允许补录 / 重做） */
+  opening_done: boolean
+  stat: LightCategoryStat
+}
+
+export interface LightCategoryPage {
+  items: LightCategory[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface LightMovement {
+  id: number
+  category_id: number
+  category_name: string
+  op: LightOp
+  op_label: string
+  quantity: number
+  from_holder: LightHolder
+  to_holder: LightHolder
+  operator: string | null
+  occurred_at: string
+  created_at: string
+  note: string | null
+  origin: LightOrigin
+  origin_label: string
+  /** 是否计入当前状态（历史导入为 false） */
+  effective: boolean
+  import_batch: string | null
+  corrects_id: number | null
+  /** 这条流水能不能机械冲正。后端按 `LightOp.reverse_op()` 算好 —— 「报损」「安装（外部→X）」
+   *  这类没有机械反向的操作，界面上不该出现一个点下去必然报错的按钮。 */
+  can_reverse: boolean
+}
+
+export interface LightMovementPage {
+  items: LightMovement[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** 登记一次业务动作的响应：新流水（**更换是两条**）+ 这次操作后的当前状态 */
+export interface LightMovementResult {
+  movements: LightMovement[]
+  stat: LightCategoryStat
+}
+
+/** 某资产 / 某点位的关联配件 */
+export interface AssetLightHoldings {
+  asset_id: number
+  asset_code: string
+  items: LightHolding[]
+  total: number
+}
+
+/** 点位关联配件 —— **两组分开返回**，前端不做拼装判断 */
+export interface StationLightHoldings {
+  workstation_id: number
+  code: string
+  /** 固定在此工位（`holder_kind='workstation'`） */
+  direct: LightHolding[]
+  /** 随主机上的（`holder_kind='asset'` 且该资产当前就在本点位） */
+  via_assets: LightHolding[]
+}
+
+/** 期初确认预览：每个持有位置的「改前 → 改后」 */
+export interface OpeningPreviewRow {
+  holder: LightHolder
+  before: number
+  delta: number
+  after: number
+}
+
+export interface OpeningPreview {
+  category_id: number
+  unit: string
+  rows: OpeningPreviewRow[]
+  stock: { before: number; after: number }
+  allocated: { before: number; after: number }
+  net: { before: number; after: number }
+  opening_done: boolean
+}
+
+export interface LightSummary {
+  category_count: number
+  /** 流水总条数（含历史导入） */
+  movement_count: number
+  imported_movement_count: number
+  /** 有历史流水、当前账却是空的品类数 —— 页头给一条中性提示，引导做期初确认 */
+  pending_opening_count: number
+  /** 当前分配记录条数 */
+  holding_count: number
+  stock_total: number
+  allocated_total: number
+}
+
+/** 流转对话框里选「正式资产 / 点位」时的一个候选（/light/holders 搜索结果） */
+export interface LightHolderCandidate {
+  id: number
+  /** 资产编码 / 点位编码（快照进流水用的就是这个） */
+  code: string
+  /** 主文案：设备类型名 / 点位编码 */
+  label: string
+  /** 副提示：当前使用人 / 房间备注（现读，仅展示） */
+  hint: string
+  kind: 'asset' | 'workstation'
+}
+
+export interface LightFilterOptions {
+  categories: { id: number; name: string; unit: string }[]
+  users: string[]
+  ops: { value: LightOp; label: string }[]
+  /** 已经用过的库存存放位置（自由文本候选） */
+  stock_locations: string[]
+}
+
+export interface LightCategoryPayload {
+  name: string
+  brand?: string | null
+  spec?: string | null
+  unit?: string
+  notes?: string | null
+  operator?: string | null
+}
+
+/** 一处持有位置的请求体（kind='none' = 系统外部 / 注销） */
+export interface LightHolderRefPayload {
+  kind: LightHolderKind
+  ref_id?: number | null
+  user?: string | null
+  /** 仅 kind='stock'：存放位置（"库房A" / 某个点位编码…） */
+  stock_location?: string | null
+}
+
+export interface LightMovementPayload {
+  category_id: number
+  op: LightOp
+  from_ref: LightHolderRefPayload
+  to_ref: LightHolderRefPayload
+  quantity?: number
+  occurred_at?: string | null
+  note?: string | null
+  operator?: string | null
+  origin?: LightOrigin
+  /** 前端每次提交带一个 UUID，防重复提交 */
+  request_id?: string | null
+}
+
+/** 更换配件：一条业务动作 = 报损 + 安装两条流水（同事务） */
+export interface LightReplacePayload {
+  category_id: number
+  asset_id: number
+  quantity?: number
+  occurred_at?: string | null
+  note?: string | null
+  operator?: string | null
+  request_id?: string | null
+}
+
+export interface OpeningEntryPayload {
+  holder: LightHolderRefPayload
+  quantity: number
+}
+
+export interface OpeningPayload {
+  category_id: number
+  entries: OpeningEntryPayload[]
+  operator?: string | null
+  note?: string | null
+  occurred_at?: string | null
+}
+
+/** 历史导入的一行判定结果 */
+export interface LightImportRow {
+  row: number
+  action: 'import' | 'duplicate' | 'error'
+  action_label: string
+  message: string
+  summary: string
+}
+
+export interface LightImportPreview {
+  filename: string
+  total: number
+  will_import: number
+  duplicate: number
+  error: number
+  rows: LightImportRow[]
+  rows_truncated: boolean
+  /** 文件层面的问题（表头缺列 / 空文件 / 解不开）—— 非空时整份文件都不落库 */
+  schema_note: string | null
 }

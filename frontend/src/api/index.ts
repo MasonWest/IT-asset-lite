@@ -26,6 +26,24 @@ import type {
   InventoryScope,
   InventoryTask,
   InventoryTaskDetail,
+  AssetLightHoldings,
+  LightCategory,
+  LightCategoryPage,
+  LightCategoryPayload,
+  LightFilterOptions,
+  LightHolding,
+  LightHoldingPage,
+  LightHolderCandidate,
+  LightImportPreview,
+  LightMovement,
+  LightMovementPage,
+  LightMovementPayload,
+  LightMovementResult,
+  LightReplacePayload,
+  LightSummary,
+  OpeningPayload,
+  OpeningPreview,
+  StationLightHoldings,
   PairingBoard,
   Relation,
   RelationExceptionPayload,
@@ -480,6 +498,156 @@ export const relocationApi = {
     post<RelocationPreview>('/relocations/preview', payload),
   apply: (payload: RelocationApplyPayload) =>
     post<RelocationApplyResult>('/relocations/apply', payload),
+}
+
+// --------------------------------------------------------------------------- //
+// 轻资产（不纳入正式台账的 IT 配件）
+// --------------------------------------------------------------------------- //
+/**
+ * ⚠️ 库存 / 已分配**全部由后端从 `light_holdings` 聚合**（GET 返回值里的 `stat`），
+ * 前端一个数都不自己加 —— 本地加减必然和库里的真相打架。
+ *
+ * 登记业务动作（`movements`）是**唯一写入口**，每次提交带 `request_id`（UUID），
+ * 重复提交后端 409，不会二次入账。没有"直接改库存"的接口。
+ */
+export const lightApi = {
+  summary: () => get<LightSummary>('/light/summary'),
+  filters: () => get<LightFilterOptions>('/light/filters'),
+
+  categories: (
+    params: { keyword?: string; active?: string; page?: number; page_size?: number } = {},
+  ) =>
+    get<LightCategoryPage>(
+      '/light/categories',
+      pruneParams({
+        keyword: params.keyword ?? '',
+        active: params.active ?? '',
+        page: params.page ?? 1,
+        page_size: params.page_size ?? 20,
+      }),
+    ),
+  category: (id: number) => get<LightCategory>(`/light/categories/${id}`),
+  createCategory: (payload: LightCategoryPayload) =>
+    post<LightCategory>('/light/categories', payload),
+  updateCategory: (id: number, payload: Partial<LightCategoryPayload>) =>
+    put<LightCategory>(`/light/categories/${id}`, payload),
+  /** 停用（软删）。force = 还有配件在外也停（不删任何数据） */
+  deactivateCategory: (id: number, opts: { operator?: string | null; force?: boolean } = {}) =>
+    del<LightCategory>(
+      `/light/categories/${id}`,
+      pruneParams({ operator: opts.operator ?? '', force: opts.force ? 'true' : '' }),
+    ),
+
+  /** 当前分配记录（列表页 / 详情页） */
+  holdings: (
+    params: {
+      category_id?: number
+      holder_kind?: string
+      keyword?: string
+      page?: number
+      page_size?: number
+    } = {},
+  ) =>
+    get<LightHoldingPage>(
+      '/light/holdings',
+      pruneParams({
+        category_id: params.category_id,
+        holder_kind: params.holder_kind ?? '',
+        keyword: params.keyword ?? '',
+        page: params.page ?? 1,
+        page_size: params.page_size ?? 100,
+      }),
+    ),
+
+  /** 某资产的关联配件（资产详情页「关联轻资产」区块） */
+  byAsset: (assetId: number) => get<AssetLightHoldings>(`/light/by-asset/${assetId}`),
+  /** 某点位的关联配件 —— 返回 `direct` / `via_assets` 两组 */
+  byWorkstation: (stationId: number) =>
+    get<StationLightHoldings>(`/light/by-workstation/${stationId}`),
+
+  movements: (
+    params: {
+      category_id?: number
+      op?: string
+      origin?: string
+      keyword?: string
+      start?: string
+      end?: string
+      page?: number
+      page_size?: number
+    } = {},
+  ) =>
+    get<LightMovementPage>(
+      '/light/movements',
+      pruneParams({
+        category_id: params.category_id,
+        op: params.op ?? '',
+        origin: params.origin ?? '',
+        keyword: params.keyword ?? '',
+        start: params.start ?? '',
+        end: params.end ?? '',
+        page: params.page ?? 1,
+        page_size: params.page_size ?? 20,
+      }),
+    ),
+
+  /** 登记一次业务动作。唯一写入口 —— op 决定语义，from/to 决定物料移动 */
+  createMovement: (payload: LightMovementPayload) =>
+    post<LightMovementResult>('/light/movements', payload),
+
+  /** **更换配件**：一条业务动作 = 报损 + 安装两条流水（同事务） */
+  replacePart: (payload: LightReplacePayload) =>
+    post<LightMovementResult>('/light/replace', payload),
+
+  /** 冲正 = 追加一条反向流水，原记录一个字不改 */
+  reverseMovement: (
+    id: number,
+    opts: { note?: string | null; operator?: string | null; request_id?: string | null } = {},
+  ) =>
+    post<LightMovementResult>(
+      `/light/movements/${id}/reverse`,
+      null,
+      pruneParams({
+        note: opts.note ?? '',
+        operator: opts.operator ?? '',
+        request_id: opts.request_id ?? '',
+      }),
+    ),
+
+  /** 期初确认预览（**不写任何数据**）：每个持有位置的「改前 → 改后」 */
+  openingPreview: (payload: OpeningPayload) =>
+    post<OpeningPreview>('/light/opening/preview', payload),
+  /** 登记期初确认。允许补录 / 重做，不永久封锁 */
+  registerOpening: (payload: OpeningPayload) =>
+    post<LightMovementResult>('/light/opening', payload),
+
+  /** 历史导入预览（只补历史，不动当前账） */
+  importPreview: (file: File) => {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    return post<LightImportPreview>('/light/import/preview', form)
+  },
+  /** 历史导入落库：只写流水，**当前持有不变** */
+  importHistory: (file: File, operator?: string | null) => {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    return post<LightImportPreview>(
+      '/light/import',
+      form,
+      pruneParams({ operator: operator ?? '' }),
+    )
+  },
+
+  /** 导出轻资产台账（当前分配 + 流转流水）。给 `<a href>` 用 */
+  exportUrl: (categoryId?: number | null) =>
+    `/api/light/export?${queryString(pruneParams({ category_id: categoryId ?? '' }))}`,
+
+  /**
+   * 搜索可关联的正式资产 / 点位（流转对话框选宿专用）。
+   * 不给全量列表 —— 150 台设备全塞进下拉纯浪费，要什么搜什么。
+   */
+  holders: (kind: 'asset' | 'workstation', keyword = '', limit = 20) =>
+    get<LightHolderCandidate[]>('/light/holders', pruneParams({ kind, keyword, limit })),
 }
 
 // --------------------------------------------------------------------------- //

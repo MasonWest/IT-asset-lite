@@ -348,7 +348,10 @@ export function toIsoDate(value: Date | string): string {
 /** 2026-01-02 → 2026/01/02；空值 → — */
 export function formatDate(value?: string | null): string {
   if (!value) return '—'
-  return value.replace(/-/g, '/')
+  // ⚠️ 后端给的是完整 datetime（2026-10-16T09:41:26.505245），不带时间会原样显示出来 ——
+  // 以前这里只把连字符换成斜杠，于是"建档时间"列显示成一串带微秒的时间戳，
+  // 靠列宽把它遮住而已。这里显式截到日期。
+  return value.replace('T', ' ').slice(0, 10).replace(/-/g, '/')
 }
 
 /** 2026-01-02T09:37:28 → 2026/01/02 09:37 */

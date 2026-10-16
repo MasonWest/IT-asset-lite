@@ -25,15 +25,17 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { apiMessage, assetApi, workstationApi } from '@/api'
+import { apiMessage, assetApi, lightApi, workstationApi } from '@/api'
 import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState } from '@/stores/app'
 import type {
   Asset,
   ClearSuggestionsResult,
   LinkSuggestionsResult,
+  LightHolding,
   MapInventoryAsset,
   MapInventoryWorkstation,
+  StationLightHoldings,
   StationRelationCheck,
   Workstation,
 } from '@/types'
@@ -121,6 +123,72 @@ watch(
   },
   { immediate: true },
 )
+
+/* ------------------------------------------------------------------ */
+/* 轻资产：点位详情里的**两组**关联配件（设计 §5.4）                     */
+/* ------------------------------------------------------------------ */
+/**
+ * ⚠️ 两组**只是展示分组，不创建任何额外持有记录**：
+ * - `direct`：`holder_kind='workstation'` —— 东西就固定放在这个工位上；
+ * - `via_assets`：`holder_kind='asset'` 且那台主机**当前**就在这个点位 —— 查询时算出来的，
+ *   主机换点位这一组自动跟着变，配件上**不另存点位**（这就是"不重复位置关系"）。
+ *
+ * 数据由后端分组返回（`/light/by-workstation/{id}`），前端不做拼装判断。
+ */
+const lightHoldings = ref<StationLightHoldings | null>(null)
+const lightLoading = ref(false)
+
+async function loadLightHoldings() {
+  const s = props.station
+  if (!s) {
+    lightHoldings.value = null
+    return
+  }
+  lightLoading.value = true
+  try {
+    lightHoldings.value = await lightApi.byWorkstation(s.id)
+  } catch {
+    // 轻资产只是附加信息，取不到不该把整个侧栏打红
+    lightHoldings.value = null
+  } finally {
+    lightLoading.value = false
+  }
+}
+
+watch(
+  () => props.station?.id,
+  () => {
+    void loadLightHoldings()
+  },
+  { immediate: true },
+)
+
+/** 两组相加 = 这个点位上"看得到的"配件总量（仅用于界面提示，不写进任何统计表） */
+const lightSummary = computed(() => {
+  const g = lightHoldings.value
+  if (!g) return ''
+  const total =
+    g.direct.reduce((sum, h) => sum + h.quantity, 0) +
+    g.via_assets.reduce((sum, h) => sum + h.quantity, 0)
+  return total ? `共 ${total} 件` : ''
+})
+
+/**
+ * 副行文本：`品牌 规格`。
+ *
+ * ⚠️ **主行必须是品类名（`category_name`），不是 `display`**。`display` 是**宿主**：
+ * 在这两组里它分别等于点位编码和主机编号 —— 也就是"东西放在哪"，不是"这是什么东西"。
+ * 2026-10-16 用户实测报障：原来两行都渲染 `display`，界面上只剩
+ * 「B022-03-00038 ×1」，根本看不出装的是块固态硬盘。
+ */
+function catSpec(h: LightHolding): string {
+  return [h.category_brand, h.category_spec].filter(Boolean).join(' ')
+}
+
+/** 「随主机」那一组的副行：`品牌 规格 · 装在 B022-03-00038 上`（前半段没有就不留分隔点） */
+function viaSub(h: LightHolding): string {
+  return [catSpec(h), `装在 ${h.display} 上`].filter(Boolean).join(' · ')
+}
 
 /** 盘点模式下的状态（没开盘点时为 null） */
 const state = computed(() => props.mapRow?.state ?? null)
@@ -386,6 +454,11 @@ function openLedger() {
   router.push(`/?${q.toString()}`)
 }
 
+/** 跳去轻资产台账（登记 / 查看配件用）。地图上不画轻资产对象，这里只是入口 */
+function openLightLedger() {
+  router.push('/light')
+}
+
 /** 跳去某台设备的详情页 */
 function openAsset(asset: Asset) {
   const q = props.taskId ? `?task=${props.taskId}` : ''
@@ -629,6 +702,50 @@ function dash(v: string | null | undefined): string {
         <div v-else-if="!assetsLoading" class="none">
           该点位暂无绑定资产。<br />
           到<a @click="openLedger">资产台账</a>里编辑设备，把「所在点位」选上它就会出现在这里。
+        </div>
+      </div>
+
+      <!--
+        轻资产（设计 §5.4）：**不把每个配件画成地图对象**，只在这里分组列出来。
+        两组分开显示，是因为它们的含义完全不同 —— 不分开，用户会以为
+        "随主机上的配件"也是自己放在这个工位上的。
+      -->
+      <div class="sect">
+        <div class="sh">
+          <span>轻资产{{ lightSummary ? `（${lightSummary}）` : '' }}</span>
+          <span v-if="lightLoading" class="loading">加载中…</span>
+        </div>
+
+        <template v-if="lightHoldings && (lightHoldings.direct.length || lightHoldings.via_assets.length)">
+          <div v-if="lightHoldings.direct.length" class="light-group">
+            <div class="light-group-title">固定在此工位（直接关联）</div>
+            <div v-for="h in lightHoldings.direct" :key="h.id" class="light-row">
+              <div class="light-info">
+                <div class="light-name">{{ h.category_name }}</div>
+                <div class="light-sub">
+                  <template v-if="catSpec(h)">{{ catSpec(h) }}</template>
+                  <template v-else>就放在这个工位上</template>
+                </div>
+              </div>
+              <span class="light-qty">×{{ h.quantity }}</span>
+            </div>
+          </div>
+
+          <div v-if="lightHoldings.via_assets.length" class="light-group">
+            <div class="light-group-title">随主机上的（间接关联）</div>
+            <div v-for="h in lightHoldings.via_assets" :key="h.id" class="light-row">
+              <div class="light-info">
+                <div class="light-name">{{ h.category_name }}</div>
+                <div class="light-sub">{{ viaSub(h) }}</div>
+              </div>
+              <span class="light-qty">×{{ h.quantity }}</span>
+            </div>
+          </div>
+        </template>
+
+        <div v-else-if="!lightLoading" class="none">
+          这个点位上看不到任何轻资产。<br />
+          要给某个工位配键鼠、或给某台主机加内存，到<a @click="openLightLedger">轻资产</a>里登记一次流转即可。
         </div>
       </div>
 
@@ -891,6 +1008,24 @@ function dash(v: string | null | undefined): string {
   text-align: center; font-size: 12px; color: #94a3b8; line-height: 1.8;
 }
 .none a { color: #2563eb; cursor: pointer; }
+
+/* ---------- 点位详情里的轻资产两组 ---------- */
+.light-group { margin-bottom: 10px; }
+.light-group-title {
+  font-size: 11px; color: #94a3b8; letter-spacing: 0.2px; margin-bottom: 5px;
+}
+.light-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 9px; margin-bottom: 4px;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  font-size: 12.5px; color: #1e293b;
+}
+/* 两行：主行 = 品类名（**这是什么东西**），副行 = 品牌规格 + 装在谁身上。
+   宿主（点位 / 主机）只出现在副行 —— 它在标题里已经说过一遍了。 */
+.light-info { flex: 1; min-width: 0; }
+.light-name { font-weight: 600; overflow-wrap: anywhere; }
+.light-sub { font-size: 11px; color: #94a3b8; margin-top: 1px; overflow-wrap: anywhere; }
+.light-qty { flex: none; color: #64748b; font-variant-numeric: tabular-nums; }
 
 .field { margin-bottom: 13px; }
 .field label {
