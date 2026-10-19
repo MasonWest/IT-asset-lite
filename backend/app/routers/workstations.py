@@ -163,11 +163,15 @@ def _serialize_one(db: Session, station: Workstation) -> WorkstationOut:
 
 
 def _station_label(station: Workstation) -> str:
+    """点位对外的单行称呼：编码 · 使用人。
+
+    ⚠️ **不再拼 `room`**（2026-10-19）：系统口径里只有点位 / 资产 / 人员三类对象，
+    没有"房间"这一维；而 `room` 在真实库 69 个点位里只有 2 条有值，
+    拼进来只会让审计文案忽长忽短。列仍留在表里（不迁移），界面也不再产生新值。
+    """
     parts = [station.code]
     if station.user_name:
         parts.append(station.user_name)
-    if station.room:
-        parts.append(station.room)
     return " · ".join(parts)
 
 
@@ -370,7 +374,6 @@ def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db
             f"批量生成 {len(created)} 个点位（{codes[0]}~{codes[-1]}），"
             f"起点 ({payload.origin_x},{payload.origin_y})，"
             f"{payload.cols} 列 × 间距 ({payload.step_x},{payload.step_y})"
-            + (f"，房间「{payload.room}」" if payload.room else "")
         ),
         operator=payload.operator,
         detail={

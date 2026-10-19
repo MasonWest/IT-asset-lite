@@ -293,7 +293,7 @@ const RELATION_LABEL: Record<string, string> = {
         <el-option
           v-for="s in targetCandidates"
           :key="s.id"
-          :label="`${s.code} · ${userLabel(s.user_name)}${s.room ? ' · ' + s.room : ''}`"
+          :label="`${s.code} · ${userLabel(s.user_name)}`"
           :value="s.id"
         />
       </el-select>

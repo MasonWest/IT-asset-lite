@@ -40,14 +40,15 @@
  */
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { apiMessage, inventoryApi, mapInventoryApi, metaApi, relationCheckApi, workstationApi } from '@/api'
+import { apiMessage, assetApi, inventoryApi, lightApi, mapInventoryApi, metaApi, relationCheckApi, workstationApi } from '@/api'
 import { appState } from '@/stores/app'
 import type {
   Asset,
   InventoryTask,
+  LightHolding,
   MapInventoryView,
   MapInventoryWorkstation,
   MapState,
@@ -68,6 +69,7 @@ import { matchByPinyin } from '@/utils/pinyin'
 import {
   buildExportPayload,
   clampToCanvas,
+  compareStationCode,
   DESK_H,
   DESK_W,
   FALLBACK_CANVAS,
@@ -179,7 +181,6 @@ const bulk = ref({
   step_y: 66,
   cols: 6,
   facing: 'alternate' as 'down' | 'up' | 'alternate',
-  room: '',
   start_code: '',
 })
 
@@ -214,7 +215,318 @@ const bulkPreview = computed(() => {
 })
 
 /* ---- 搜索 ---- */
+
+/**
+ * 空间地图的搜索框：**一个框、四个维度**（点位 / 人员 / 资产 / 轻资产）。
+ *
+ * ## 三条口径（2026-10-19 重构）
+ * 1. **不搜 `room`**。系统里只有「点位 / 资产 / 人员」，没有"房间"这一维；
+ *    真实库 69 个点位里 `room` 有值的只有 2 个（前台、总经理办公室），
+ *    留着它只会让用户搜到一个"别处都搜不到"的词。
+ * 2. **不跟任何图层开关联动**。关系层 / 轻资产层决定"画不画符号"，
+ *    搜索决定"找什么"；绑在一起就会出现「开了轻资产层搜人名却 0 命中」这种
+ *    看起来像坏了的现场。轻资产的命中与图层是否打开**完全无关**。
+ * 3. **索引懒加载**：进页面不请求，第一次聚焦搜索框才拉资产与轻资产各一次
+ *    （不搜索的人一个多余请求都不用发）。
+ *
+ * 命中集合是**纯派生**的：不落库、不写任何状态，清空搜索词即恢复原样。
+ */
 const searchQuery = ref('')
+const searchBoxEl = ref<HTMLElement | null>(null)
+const panelEl = ref<HTMLElement | null>(null)
+const panelOpen = ref(false)
+/** 浮层位置。用 fixed + 计算坐标，**不能靠 CSS 相对定位** ——
+ *  `.map-topbar` 是 `overflow-x: auto`，绝对定位的子元素会被裁掉。 */
+const panelPos = ref({ left: 0, top: 0, width: 380 })
+
+type SearchDim = 'station' | 'person' | 'asset' | 'light'
+
+interface SearchReason {
+  dim: SearchDim
+  /** 「这块为什么亮」的一句话，直接显示在结果行里 */
+  label: string
+}
+
+interface StationHit {
+  station: Workstation
+  reasons: SearchReason[]
+}
+
+/** 搜到了、但**不在地图上**的东西。不给出口的话，搜索结果就是在说谎。 */
+interface OffMapHit {
+  key: string
+  label: string
+  /** 为什么不在图上（未挂点位 / 在某人手上 / 库存） */
+  hint: string
+  to: string
+}
+
+/**
+ * 两个索引的条数上限 —— 是**接口的硬限制**（资产 `le=1000`、holdings `le=200`）。
+ * 一旦 `total` 超出，面板必须把"只搜了一部分"说出来，否则资产涨到一千多台时
+ * 搜索会静默漏结果，而界面一切正常（典型假绿）。
+ */
+const ASSET_INDEX_LIMIT = 1000
+const LIGHT_INDEX_LIMIT = 200
+
+const searchIndex = ref<{
+  assets: Asset[]
+  light: LightHolding[]
+  assetTotal: number
+  lightTotal: number
+} | null>(null)
+const searchLoading = ref(false)
+const searchLoadError = ref('')
+
+async function ensureSearchIndex() {
+  if (searchIndex.value || searchLoading.value) return
+  searchLoading.value = true
+  searchLoadError.value = ''
+  try {
+    const [assets, light] = await Promise.all([
+      assetApi.list({ page_size: ASSET_INDEX_LIMIT }),
+      lightApi.holdings({ page_size: LIGHT_INDEX_LIMIT }),
+    ])
+    searchIndex.value = {
+      assets: assets.items,
+      light: light.items,
+      assetTotal: assets.total,
+      lightTotal: light.total,
+    }
+  } catch (error) {
+    // 索引挂了不等于搜索挂了：点位 / 人员两个维度仍然可用，只是少了资产与轻资产。
+    searchLoadError.value = apiMessage(error)
+  } finally {
+    searchLoading.value = false
+  }
+}
+
+/**
+ * 丢弃索引。**迁移 / 换人之后必须调用** ——
+ * 索引里存的是 `assets.workstation_id`，迁移一改，缓存就指向旧点位了。
+ */
+function resetSearchIndex() {
+  searchIndex.value = null
+}
+
+/** 点位编码 → 点位 id。轻资产「装在主机里」那一支只给宿主编码，靠它换算成点位。 */
+const stationIdByCode = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const s of stations.value) out[s.code.toUpperCase()] = s.id
+  return out
+})
+
+/** 轻资产是否被搜索词命中：品类名 / 品牌 / 规格（"ssd"、"256GB" 都该命中） */
+function lightHoldingMatches(h: LightHolding, q: string, lower: string): boolean {
+  if (matchByPinyin(h.category_name || '', q)) return true
+  if (matchByPinyin(h.category_brand || '', q)) return true
+  return (h.category_spec || '').toLowerCase().includes(lower)
+}
+
+/**
+ * 一条配件在哪个点位 —— **只认后端已经算好的三种归属**：
+ *   · `kind='workstation'`：东西就固定在这个工位 → `ref_id` 就是点位 id；
+ *   · `kind='asset'`：装在主机里 → 主机**当前**所在点位（后端给 `host_workstation_code`）；
+ *   · `kind='stock'`：库房且存放位置文本恰好是点位编码 → 后端已解析成 `stock_location_station_id`。
+ *
+ * ⚠️ `kind='user'` **一律返回 null**。东西在人手上，没有位置；
+ * 绝不能拿这个人名下的工位去推断（轻资产红线：持有位置是"人"就不落点位）。
+ */
+function lightHoldingStationId(h: LightHolding): number | null {
+  if (h.kind === 'workstation') return h.ref_id
+  if (h.kind === 'asset') {
+    const code = (h.host_workstation_code || '').toUpperCase()
+    return code ? stationIdByCode.value[code] ?? null : null
+  }
+  if (h.kind === 'stock') return h.stock_location_station_id ?? null
+  return null
+}
+
+/**
+ * 一次遍历算出两件事：**哪些点位该亮（带原因）** 与 **哪些命中不在图上**。
+ *
+ * 合成一个 computed 而不是分两个：资产 / 轻资产要跑同一套拼音匹配，
+ * 分开算等于让 150 台资产每按键匹配两遍，还会给两处结果漂移的机会。
+ */
+const searchResult = computed<{ reasons: Map<number, SearchReason[]>; offMap: OffMapHit[] }>(() => {
+  const reasons = new Map<number, SearchReason[]>()
+  const offMap: OffMapHit[] = []
+  const q = searchQuery.value.trim()
+  if (!q) return { reasons, offMap }
+  const lower = q.toLowerCase()
+
+  const push = (id: number, reason: SearchReason) => {
+    const list = reasons.get(id)
+    if (!list) {
+      reasons.set(id, [reason])
+      return
+    }
+    // 同一个点位可能同时因"使用人"和"装了这台机器"命中，两条都留着 —— 那是两句话
+    if (!list.some((r) => r.dim === reason.dim && r.label === reason.label)) list.push(reason)
+  }
+
+  // ① 点位编码 + 点位使用人。使用人走拼音（与台账筛选、资产表单同一个函数），
+  //    编码走普通子串（w23 / W2 都该命中）。
+  for (const s of stations.value) {
+    if (s.code.toLowerCase().includes(lower)) push(s.id, { dim: 'station', label: `点位 ${s.code}` })
+    if (matchByPinyin(s.user_name || '', q)) push(s.id, { dim: 'person', label: `使用人 ${s.user_name}` })
+  }
+
+  // ② 资产：**只按编号与品牌**（用户口径：其他字段不要）。
+  //    资产编号 → 它当前挂在哪个点位。没挂点位的进「不在图上」，绝不猜。
+  for (const a of searchIndex.value?.assets ?? []) {
+    const codeHit = a.asset_code.toLowerCase().includes(lower)
+    const brandHit = matchByPinyin(a.brand || '', q)
+    if (!codeHit && !brandHit) continue
+    const label = a.brand ? `${a.asset_code} · ${a.brand}` : a.asset_code
+    if (a.workstation_id === null) {
+      offMap.push({
+        key: `asset-${a.id}`,
+        label,
+        hint: '未挂点位',
+        // 台账筛选后的画面：把编号当 keyword 带过去，用户看到的就是"这一台"。
+        // ⚠️ 台账列表的路由是 `/`（name='assets'），不是 `/assets` —— 后者只有详情页的 `/:id`。
+        to: `/?keyword=${encodeURIComponent(a.asset_code)}`,
+      })
+      continue
+    }
+    push(a.workstation_id, { dim: 'asset', label })
+  }
+
+  // ③ 轻资产：品类命中后，位置由后端给的归属换算（见 lightHoldingStationId）。
+  for (const h of searchIndex.value?.light ?? []) {
+    if (!lightHoldingMatches(h, q, lower)) continue
+    const label = `${h.category_label || h.category_name} ×${h.quantity}`
+    const stationId = lightHoldingStationId(h)
+    if (stationId === null) {
+      offMap.push({
+        key: `light-${h.id}`,
+        label,
+        hint:
+          h.kind === 'user'
+            ? `${h.user || '某人'} 持有（不记录点位）`
+            : h.stock_location
+              ? `库存 · ${h.stock_location}`
+              : '库存（未记录位置）',
+        // 轻资产没有单件详情，落到品类详情页 —— 那里能看到这条持有记录的全貌
+        to: `/light/${h.category_id}`,
+      })
+      continue
+    }
+    push(stationId, { dim: 'light', label })
+  }
+
+  return { reasons, offMap }
+})
+
+/** 命中原因表；模板里按点位 id 查 */
+const searchReasons = computed(() => searchResult.value.reasons)
+
+/** 仍然"亮"的点位 id。空集 = 有搜索词但一个都没命中 */
+const matchedIds = computed(() => new Set(searchReasons.value.keys()))
+
+/** 命中点位（按编码排，用项目里既有口径，别自己 localeCompare） */
+const stationHits = computed<StationHit[]>(() => {
+  const out: StationHit[] = []
+  for (const [id, reasons] of searchReasons.value) {
+    const station = stations.value.find((s) => s.id === id)
+    if (station) out.push({ station, reasons })
+  }
+  return out.sort((a, b) => compareStationCode(a.station.code, b.station.code))
+})
+
+const offMapHits = computed(() => searchResult.value.offMap)
+
+/** 索引没拉全时的实话实说 */
+const truncationNote = computed(() => {
+  const idx = searchIndex.value
+  if (!idx) return ''
+  const parts: string[] = []
+  if (idx.assetTotal > idx.assets.length)
+    parts.push(`资产共 ${idx.assetTotal} 台，仅搜了前 ${idx.assets.length} 台`)
+  if (idx.lightTotal > idx.light.length)
+    parts.push(`轻资产共 ${idx.lightTotal} 条，仅搜了前 ${idx.light.length} 条`)
+  return parts.join('；')
+})
+
+/** 有没有正在生效的搜索词。用来区分"没搜"和"搜了但没命中" */
+const hasQuery = computed(() => searchQuery.value.trim().length > 0)
+
+/** 结果浮层贴住搜索框。宽度在窄屏上自动收，避免贴边溢出。 */
+function placePanel() {
+  const el = searchBoxEl.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const width = Math.min(420, window.innerWidth - 24)
+  panelPos.value = {
+    left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+    top: Math.round(rect.bottom + 6),
+    width,
+  }
+}
+
+function openPanel() {
+  panelOpen.value = true
+  void nextTick(placePanel)
+}
+
+function onSearchFocus() {
+  void ensureSearchIndex()
+  if (hasQuery.value) openPanel()
+}
+
+function onSearchInput() {
+  void ensureSearchIndex()
+  openPanel()
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  panelOpen.value = false
+}
+
+function closePanel() {
+  panelOpen.value = false
+}
+
+/** 点到别处就收起浮层。用 document 上的 mousedown，而不是 input 的 blur ——
+ *  blur 会先于结果行的 click 触发，点结果会点空。 */
+function onDocMouseDown(event: MouseEvent) {
+  if (!panelOpen.value) return
+  const target = event.target as Node | null
+  if (!target) return
+  if (panelEl.value?.contains(target) || searchBoxEl.value?.contains(target)) return
+  closePanel()
+}
+
+watch(panelOpen, (open) => {
+  if (open) {
+    window.addEventListener('resize', placePanel)
+    // capture = true：顶栏自己横向滚动时也要重算，否则浮层会跟搜索框错位
+    window.addEventListener('scroll', placePanel, true)
+  } else {
+    window.removeEventListener('resize', placePanel)
+    window.removeEventListener('scroll', placePanel, true)
+  }
+})
+
+/** 点命中行：跳到那个点位并打开详情。**不自动居中** —— 只有用户点了才移动视图。 */
+function gotoStation(station: Workstation) {
+  closePanel()
+  centerOnStation(station)
+  void select(station)
+}
+
+function onSearchKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    clearSearch()
+    return
+  }
+  if (event.key === 'Enter' && stationHits.value.length) {
+    event.preventDefault()
+    gotoStation(stationHits.value[0].station)
+  }
+}
 
 /* ---- 点位关系层（有人 × 有资产）---- */
 
@@ -368,27 +680,6 @@ const selectedMap = computed<MapInventoryWorkstation | null>(() => {
 const selectedAssets = computed<Asset[]>(() =>
   selectedId.value === null ? [] : assetCache.value[selectedId.value] ?? [],
 )
-
-/** 按编码/使用人/房间过滤后仍然"亮"的点位 id。空集 = 有搜索词但一个都没命中 */
-const matchedIds = computed<Set<number>>(() => {
-  const q = searchQuery.value.trim()
-  if (!q) return new Set<number>()
-  const lower = q.toLowerCase()
-  const hit = new Set<number>()
-  for (const s of stations.value) {
-    const byCode = s.code.toLowerCase().includes(lower)
-    // 使用人与房间走**拼音匹配**，与台账筛选、资产表单里的使用人下拉是同一个函数 ——
-    // 「打首字母选人」是这个系统的既定习惯（决策 27/28），地图上只能打全名
-    // 会让人觉得这页是外人做的。编码仍走普通子串（w23 / W2 都该命中）。
-    const byName = matchByPinyin(s.user_name || '', q)
-    const byRoom = matchByPinyin(s.room || '', q)
-    if (byCode || byName || byRoom) hit.add(s.id)
-  }
-  return hit
-})
-
-/** 有没有正在生效的搜索词。用来区分"没搜"和"搜了但没命中" */
-const hasQuery = computed(() => searchQuery.value.trim().length > 0)
 
 /** 盘点态查表：workstation_id → state */
 const stateById = computed<Record<number, MapState>>(() => {
@@ -712,6 +1003,8 @@ function openRelocation(payload: { mode: 'assets' | 'station'; assetId?: number 
  */
 async function onRelocationApplied(result: RelocationApplyResult) {
   await loadMap()
+  // 资产的 `workstation_id` 变了 → 搜索索引里那份归属已经过期，丢掉重拉
+  resetSearchIndex()
   if (selectedId.value !== null) {
     await Promise.all([loadAssets(selectedId.value, true), loadRelationCheck(selectedId.value)])
     const mine = result.relation_checks.find((c) => c.workstation_id === selectedId.value)
@@ -1334,7 +1627,6 @@ async function runBulk() {
   try {
     const result = await workstationApi.bulk({
       ...bulk.value,
-      room: bulk.value.room.trim() || null,
       start_code: (bulk.value.start_code || '').trim() || null,
       operator: appState.operator || null,
     })
@@ -1623,6 +1915,8 @@ onMounted(async () => {
    * 这里跟着用 document 才符合拖拽的常规做法。
    */
   document.addEventListener('mouseup', onMouseUp)
+  // 搜索浮层「点到别处就收起」。用 mousedown 而不是 input 的 blur，理由见 onDocMouseDown
+  document.addEventListener('mousedown', onDocMouseDown)
 })
 
 onBeforeUnmount(() => {
@@ -1632,6 +1926,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('blur', onBlur)
   document.removeEventListener('mouseup', onMouseUp)
+  document.removeEventListener('mousedown', onDocMouseDown)
+  window.removeEventListener('resize', placePanel)
+  window.removeEventListener('scroll', placePanel, true)
 })
 
 /** 跨过 900px 断点：布局从"右侧常驻栏"变成"底部浮层抽屉"，画布占比变了，得重算 */
@@ -1719,10 +2016,91 @@ watch(selectedId, (id) => {
 
       <div class="vline" />
 
-      <div class="search-box">
-        <input v-model="searchQuery" type="text" placeholder="搜索姓名 / 点位 / 房间..." spellcheck="false" />
-        <button v-if="searchQuery" class="clear" @click="searchQuery = ''">×</button>
+      <div ref="searchBoxEl" class="search-box">
+        <input
+          v-model="searchQuery"
+          type="text"
+          :placeholder="compact ? '搜索…' : '姓名 / 点位 / 资产编号 / 轻资产'"
+          title="搜索点位编码、使用人、资产编号 / 品牌、轻资产品类（品牌 / 规格）"
+          spellcheck="false"
+          @focus="onSearchFocus"
+          @input="onSearchInput"
+          @keydown="onSearchKeydown"
+        />
+        <button v-if="searchQuery" class="clear" title="清空" @click="clearSearch">×</button>
       </div>
+
+      <!--
+        搜索结果浮层。
+
+        ⚠️ **必须 Teleport 到 body**：`.map-topbar` 是 `overflow-x: auto` 的横向滚动条，
+        绝对定位的子元素会被它裁掉（哪怕 top 写得再对）。所以这里用 fixed + 计算坐标，
+        且滚动顶栏时要整体重算（见 placePanel / 滚动监听）。
+
+        内容分两段：**图上的点位**（点一下跳过去）与**不在图上**（给出口）。
+        后者是这次重构的重点：轻资产有「在某人手上」这种不落点位的情况，
+        24 台资产也没挂点位 —— 只点亮地图的话，用户搜"键鼠"会看到 0 命中，
+        然后合理推断"系统里没有键鼠"。那是功能在说谎，不是体验问题。
+      -->
+      <Teleport to="body">
+        <div
+          v-if="panelOpen && hasQuery"
+          ref="panelEl"
+          class="search-panel"
+          :style="{ left: panelPos.left + 'px', top: panelPos.top + 'px', width: panelPos.width + 'px' }"
+        >
+          <div class="sp-head">
+            <span>
+              命中 <b>{{ stationHits.length }}</b> 个点位
+              <template v-if="offMapHits.length"> · 另有 <b>{{ offMapHits.length }}</b> 条不在图上</template>
+            </span>
+            <button class="sp-close" title="收起" @click="closePanel">×</button>
+          </div>
+
+          <div class="sp-body">
+            <button
+              v-for="hit in stationHits"
+              :key="hit.station.id"
+              class="sp-row"
+              @click="gotoStation(hit.station)"
+            >
+              <span class="sp-code">{{ hit.station.code }}</span>
+              <span class="sp-user">
+                {{ hasOwner(hit.station.user_name) ? userLabel(hit.station.user_name) : '空闲' }}
+              </span>
+              <span class="sp-why">
+                <span v-for="r in hit.reasons" :key="r.dim + r.label" class="sp-tag" :class="`d-${r.dim}`">
+                  {{ r.label }}
+                </span>
+              </span>
+            </button>
+
+            <div v-if="!stationHits.length && !offMapHits.length && !searchLoading" class="sp-empty">
+              没有匹配，图上无结果
+            </div>
+
+            <template v-if="offMapHits.length">
+              <div class="sp-sep">不在图上（{{ offMapHits.length }}）</div>
+              <RouterLink
+                v-for="hit in offMapHits"
+                :key="hit.key"
+                class="sp-row off"
+                :to="hit.to"
+                @click="closePanel"
+              >
+                <span class="sp-why"><span class="sp-tag d-off">{{ hit.label }}</span></span>
+                <span class="sp-hint">{{ hit.hint }}</span>
+              </RouterLink>
+            </template>
+          </div>
+
+          <div v-if="searchLoading || searchLoadError || truncationNote" class="sp-foot">
+            <span v-if="searchLoading">正在建立索引（资产 / 轻资产）…</span>
+            <span v-else-if="searchLoadError">资产 / 轻资产索引没加载成功：{{ searchLoadError }}</span>
+            <span v-else>{{ truncationNote }}</span>
+          </div>
+        </div>
+      </Teleport>
 
       <div class="btn-group">
         <button class="btn" :class="{ on: auditMode }" @click="toggleAuditMode()">
@@ -1932,7 +2310,6 @@ watch(selectedId, (id) => {
             </div>
           </div>
           <div class="bulk-grid">
-            <div class="bulk-row"><label>房间</label><input v-model="bulk.room" placeholder="可留空" /></div>
             <div class="bulk-row"><label>起始号</label><input v-model="bulk.start_code" placeholder="如 W63" /></div>
           </div>
 
@@ -2179,7 +2556,7 @@ watch(selectedId, (id) => {
             <span class="sw light" />轻资产件数
           </div>
           <div class="it hint">
-            <template v-if="hasQuery && !matchedIds.size">没有匹配的点位</template>
+            <template v-if="hasQuery && !matchedIds.size">没有匹配，图上无结果</template>
             <template v-else-if="relFilter !== 'all' && relLayer && !auditMode">点顶栏「全部」取消筛选</template>
             <template v-else-if="auditMode">点击点位可对单台设备盘点</template>
             <template v-else>点「调整位置」后可拖动点位</template>
@@ -2403,6 +2780,70 @@ watch(selectedId, (id) => {
   line-height: 1; font-size: 15px;
 }
 .search-box .clear:hover { background: var(--line); color: var(--ink); }
+
+/* ───────────────── 搜索结果浮层 ─────────────────
+   Teleport 到 body，所以这一段不受 `.map-topbar` 的 overflow 裁切。
+   位置由 placePanel() 算（fixed + left/top/width），这里只管长相。 */
+.search-panel {
+  position: fixed; z-index: 200;
+  display: flex; flex-direction: column;
+  max-height: min(52vh, 440px);
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+.sp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 12px; font-size: 11.5px; color: var(--ink-muted);
+  border-bottom: 1px solid var(--line); background: #f8fafc;
+}
+.sp-head b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.sp-close {
+  width: 20px; height: 20px; flex: none; border: none; border-radius: 50%;
+  background: transparent; color: var(--ink-muted); cursor: pointer;
+  line-height: 1; font-size: 15px;
+}
+.sp-close:hover { background: var(--line); color: var(--ink); }
+.sp-body { overflow-y: auto; padding: 4px; }
+.sp-row {
+  display: grid; grid-template-columns: 46px 1fr; align-items: center; gap: 2px 8px;
+  width: 100%; padding: 7px 8px; border: none; border-radius: 8px;
+  background: transparent; text-align: left; cursor: pointer; font: inherit;
+  text-decoration: none; color: var(--ink);
+}
+.sp-row:hover { background: #f1f5f9; }
+.sp-code { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sp-user {
+  font-size: 12px; color: var(--ink-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 命中原因是换行铺满整行的，不挤在某一列里 */
+.sp-why { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.sp-tag {
+  font-size: 10.5px; line-height: 1.6; padding: 0 6px; border-radius: 5px;
+  background: #f1f5f9; color: var(--ink-muted); border: 1px solid var(--line);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 四个维度的标记色：点位中性、人员蓝、资产绿、轻资产琥珀 */
+.sp-tag.d-station { background: #f8fafc; }
+.sp-tag.d-person { background: #eff6ff; border-color: #dbeafe; color: #1d4ed8; }
+.sp-tag.d-asset { background: #ecfdf5; border-color: #d1fae5; color: #047857; }
+.sp-tag.d-light { background: #fffbeb; border-color: #fde68a; color: #b45309; }
+/* 「不在图上」用中性灰而不是红色：它**不是错误**，只是"这条东西没有位置"。
+   红色在这页上已经被盘点异常占用了，借过来会让人以为出了问题。 */
+.sp-tag.d-off { background: #f8fafc; border-style: dashed; border-color: #cbd5e1; color: #475569; }
+.sp-row.off { grid-template-columns: 1fr auto; }
+.sp-row.off .sp-why { grid-column: auto; }
+.sp-hint { font-size: 10.5px; color: var(--ink-muted); white-space: nowrap; }
+.sp-sep {
+  padding: 8px 10px 4px; margin-top: 4px; border-top: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 700; color: var(--ink-muted); letter-spacing: 0.3px;
+}
+.sp-empty { padding: 14px 12px; font-size: 12px; color: var(--ink-muted); text-align: center; }
+.sp-foot {
+  padding: 6px 12px; border-top: 1px solid var(--line); background: #f8fafc;
+  font-size: 10.5px; color: var(--ink-muted);
+}
 
 .btn-group { display: flex; align-items: center; gap: 6px; flex: none; }
 
@@ -3026,9 +3467,13 @@ watch(selectedId, (id) => {
   .rstat .rg { font-size: 10px; }
   .rstat .rv { min-width: 10px; }
 
-  /* 搜索：与统计同行。窄屏下它是唯一的自由项，所以给 min-width 兜底别被压没 */
+  /* 搜索：与统计同行。窄屏下它是唯一的自由项，所以给 min-width 兜底别被压没。
+     ⚠️ **聚焦时不再变宽**（原来 `flex-basis: 150px`）：实测 390×844 上聚焦一次
+     就把工具条从 87px 顶到 131px、折成 3 行，C1 当场失守 —— 而这个变宽换来的
+     42px 一个字符都多显示不了几个，搜索结果本来就在下方浮层里。
+     输入框内文本横向滚动即可，浮层才是"看结果"的地方。 */
   .search-box { flex: 1 1 108px; width: auto; min-width: 88px; }
-  .search-box:focus-within { width: auto; flex-basis: 150px; }
+  .search-box:focus-within { width: auto; flex-basis: 108px; }
 
   /* 按钮组瘦身；编辑操作换成「更多」入口 */
   .btn-group { flex: none; gap: 6px; }

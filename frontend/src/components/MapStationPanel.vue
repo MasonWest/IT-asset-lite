@@ -91,9 +91,8 @@ const router = useRouter()
 const busy = computed(() => Boolean(props.station))
 const saving = ref(false)
 
-/* ---- 表单：改使用人 / 编码 / 房间 ---- */
+/* ---- 表单：改使用人 / 编码 ---- */
 const codeInput = ref('')
-const roomInput = ref('')
 
 /**
  * 点位使用人下拉。
@@ -120,7 +119,6 @@ watch(
   () => props.station,
   (s) => {
     codeInput.value = s?.code ?? ''
-    roomInput.value = s?.room ?? ''
     resetUserQuery()
   },
   { immediate: true },
@@ -264,9 +262,7 @@ async function saveBasics() {
   if (!s) return
   const payload: Record<string, string | null> = {}
   const code = codeInput.value.trim()
-  const room = roomInput.value.trim()
   if (code && code !== s.code) payload.code = code
-  if (room !== (s.room ?? '')) payload.room = room || null
   if (!Object.keys(payload).length) {
     ElMessage.info('没有改动')
     return
@@ -514,8 +510,7 @@ function dash(v: string | null | undefined): string {
         <div class="info">
           <div class="c">{{ station!.code }}</div>
           <div class="m">
-            {{ station!.room ? station!.room + ' · ' : '' }}坐标
-            {{ positionText(station!.x, station!.y) }}
+            坐标 {{ positionText(station!.x, station!.y) }}
           </div>
           <!--
             点位关系概况。**是概况不是状态** —— 它由「有没有归属的人」和
@@ -796,17 +791,12 @@ function dash(v: string | null | undefined): string {
           <el-input v-model="codeInput" maxlength="32" placeholder="例如 W23" />
         </div>
 
-        <div class="field">
-          <label>房间备注</label>
-          <el-input v-model="roomInput" maxlength="64" placeholder="例如 前台 / 总经理办公室" clearable />
-        </div>
-
         <div class="hint-row">
           朝向：{{ facingLabel(station!.facing) }} · 位置调整请用顶部「调整位置」拖动后保存布局
         </div>
 
         <div class="acts">
-          <el-button type="primary" :loading="saving" @click="saveBasics">保存编码 / 房间</el-button>
+          <el-button type="primary" :loading="saving" @click="saveBasics">保存编码</el-button>
           <el-button type="danger" plain @click="emit('removed', station!)">删除点位</el-button>
         </div>
       </div>

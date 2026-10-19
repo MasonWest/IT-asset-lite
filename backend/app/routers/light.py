@@ -1033,10 +1033,11 @@ def search_holders(
         stmt = select(Workstation).where(Workstation.active.is_(True))
         if kw:
             like = f"%{kw}%"
+            # 只按编码 / 使用人搜 —— **不含 room**（2026-10-19 口径收口）：
+            # 系统里没有"房间"这个维度，真实库 69 个点位只有 2 条 room 有值，
+            # 留着它只会让同一个词在别处搜不到、在这里搜得到。
             stmt = stmt.where(
-                Workstation.code.ilike(like)
-                | Workstation.user_name.ilike(like)
-                | Workstation.room.ilike(like)
+                Workstation.code.ilike(like) | Workstation.user_name.ilike(like)
             )
         stmt = stmt.order_by(Workstation.code.asc())
         if limit > 0:
@@ -1046,9 +1047,9 @@ def search_holders(
             LightHolderCandidate(
                 id=w.id,
                 code=w.code,
-                # 点位没有"名字"列，编码就是它对外的主标识（room 只是备注）
+                # 点位没有"名字"列，编码就是它对外的主标识
                 label=w.code,
-                hint=w.user_name or w.room or "",
+                hint=w.user_name or "",
                 kind="workstation",
             )
             for w in rows
