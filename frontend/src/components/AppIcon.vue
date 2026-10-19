@@ -2,53 +2,63 @@
 /**
  * 极简线性图标（内联 SVG，不引任何图标库）。
  *
- * 为什么不用 emoji：全站的设备类型图标走 `utils/format.ts::typeIcon()` 返回 emoji，
- * 但 emoji 在**统计卡**这种"数字旁边的说明符号"位置上观感很差 —— 彩色、字重不齐、
- * 跨平台渲染不一致，容易把克制的信息卡读成表情包（轻资产第一版的统计卡就是这样）。
- * 所以这里用一套统一描边的线性图标。
+ * ## 为什么不用 emoji
  *
- * 只用 `currentColor`、`stroke-width` 固定 —— 颜色由外层 CSS 决定（语义色由卡片类控制）。
+ * 全站曾有三套图标来源：`utils/format.ts::typeIcon()` 返回 emoji、各组件写死的 emoji、
+ * 以及少量内联 `<svg>`。emoji 有三类真实问题：
+ * ① **大部分设备类 emoji 码点默认是"文本呈现"**（`Emoji_Presentation=No`），
+ *    要靠不可见的 `FE0F` 变体选择符才彩色显示，字体回退一变就成豆腐块 □；
+ * ② 靠系统字体渲染，headless / 精简版 Windows 上直接缺失；
+ * ③ 彩色、字重不齐，在统计卡这种"数字旁边的说明符号"位置上观感差，
+ *    容易把克制的信息卡读成表情包（轻资产第一版的统计卡就是这样，见 CHANGELOG）。
+ *
+ * 现在全站统一用这一套描边图标：
+ * - 本地 SVG，随前端一起打包，**不依赖系统 emoji 字体**；
+ * - 不请求第三方图标 API，也不引入完整图标库（只存路径字符串）；
+ * - 只用 `currentColor`，颜色由外层 CSS 决定（语义色由卡片类控制）。
+ *
+ * ## 路径表在哪
+ *
+ * 在 `utils/icons.ts::ICON_PATHS`（**全站唯一来源**）。图标选择器也从同一份派生候选，
+ * 所以"界面上能选到的图标"与"这里渲染得出来的图标"必然一致。
  */
-withDefaults(
+import { ICON_PATHS, FALLBACK_ICON } from '@/utils/icons'
+import type { IconName } from '@/utils/icons'
+
+const props = withDefaults(
   defineProps<{
+    /** 图标名。传未登记的值时退成兜底盒子，不会渲染成空白 */
     name: string
     size?: number
   }>(),
   { size: 16 },
 )
 
-// 图标路径表。key 就是用法里的 name。
-const PATHS: Record<string, string> = {
-  // 品类 / 设备
-  box: 'M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z M3.5 7.5 12 12l8.5-4.5 M12 12v9',
-  keyboard: 'M2.5 6.5h19v11h-19z M6 10h.01 M9.5 10h.01 M13 10h.01 M16.5 10h.01 M8 13.5h8',
-  chip: 'M7 7h10v10H7z M10 3v3 M14 3v3 M10 18v3 M14 18v3 M3 10h3 M3 14h3 M18 10h3 M18 14h3',
-  // 人 / 归属
-  user: 'M12 4.6a3.4 3.4 0 1 1 0 6.8 3.4 3.4 0 0 1 0-6.8z M4.8 20c.6-3.9 3.6-6 7.2-6s6.6 2.1 7.2 6',
-  users: 'M9 5.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6z M2.8 19.5c.5-3.4 3-5.4 6.2-5.4s5.7 2 6.2 5.4 M16.5 6.2a3 3 0 0 1 0 5.6 M17.5 14.6c2.1.5 3.5 2.2 3.8 4.9',
-  // 位置
-  pin: 'M12 21s6.5-5.6 6.5-10a6.5 6.5 0 1 0-13 0C5.5 15.4 12 21 12 21z M12 8.8a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4z',
-  screen: 'M2.5 4.5h19v12h-19z M9 20h6 M12 16.5V20',
-  // 动作
-  plus: 'M12 5v14 M5 12h14',
-  arrowIn: 'M12 3.5v10 M8 10l4 3.5 4-3.5 M4.5 17v2.5h15V17',
-  arrowOut: 'M12 14.5v-10 M8 8l4-3.5L16 8 M4.5 17v2.5h15V17',
-  swap: 'M4 8.5h13 M13.5 5l3.5 3.5-3.5 3.5 M20 15.5H7 M10.5 12 7 15.5 10.5 19',
-  wrench: 'M15.5 4.5a5 5 0 0 0-6.1 6.6L3.5 17v3.5H7l5.9-5.9a5 5 0 0 0 6.6-6.1l-3 3-2.5-2.5z',
-  trash: 'M4 7h16 M9.5 7V4.8h5V7 M6.5 7l1 13h9l1-13',
-  undo: 'M4 10h11a5 5 0 0 1 0 10H8 M7.5 6.5 4 10l3.5 3.5',
-  edit: 'M4 20h4l10-10-4-4L4 16z M14 6l4 4',
-  close: 'M6 6l12 12 M18 6 6 18',
-  check: 'M4.5 12.5 9.5 17.5 19.5 6.5',
-  // 统计
-  list: 'M8 6h13 M8 12h13 M8 18h13 M3.5 6h.01 M3.5 12h.01 M3.5 18h.01',
-  grid: 'M3.5 3.5h7v7h-7z M13.5 3.5h7v7h-7z M3.5 13.5h7v7h-7z M13.5 13.5h7v7h-7z',
-  alert: 'M12 3.6 21 19.5H3z M12 10v4 M12 17h.01',
-  doc: 'M6.5 3.5h7l5 5v12h-12z M13.5 3.5v5h5',
-  download: 'M12 3.5v11 M7.5 10 12 14.5 16.5 10 M4.5 18.5h15',
-  info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 11v5 M12 8h.01',
-  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7.5V12l3 2',
-  sum: 'M17.5 4.5h-11l5.5 7.5-5.5 7.5h11',
+/** 认不出的名字一律给盒子：界面不该因为数据多了一种可能就空一块 */
+function pathOf(name: string): string {
+  const key = name as IconName
+  return ICON_PATHS[key] ?? ICON_PATHS[FALLBACK_ICON]
+}
+
+/**
+ * 描边宽度（用户单位）。**必须随尺寸补偿，不能固定 1.7。**
+ *
+ * 24×24 视口按 1.7 画出来，缩到 16px 时实际只有 `1.7 × 16/24 ≈ 1.13` 物理像素 ——
+ * 在普通屏上会渲染成发虚的浅灰（实测：小尺寸那一排整体"发飘"）。
+ * 所以尺寸越小，用户单位下的描边越要粗，落到屏幕上才是稳定的 ~1.5px：
+ *
+ * | size | stroke-width | 实际像素 |
+ * | --- | --- | --- |
+ * | 14 | 2.6 | 1.52 |
+ * | 16 | 2.3 | 1.53 |
+ * | 20 | 1.9 | 1.58 |
+ * | ≥24 | 1.7 | ≥1.7 |
+ */
+function strokeOf(size: number): number {
+  if (size <= 14) return 2.6
+  if (size <= 16) return 2.3
+  if (size <= 20) return 1.9
+  return 1.7
 }
 </script>
 
@@ -60,12 +70,12 @@ const PATHS: Record<string, string> = {
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    stroke-width="1.7"
+    :stroke-width="strokeOf(props.size)"
     stroke-linecap="round"
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <path :d="PATHS[name] ?? PATHS.box" />
+    <path :d="pathOf(name)" />
   </svg>
 </template>
 

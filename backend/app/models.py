@@ -135,14 +135,6 @@ class AssetOperation:
         RESTORE: "恢复入库",
     }
 
-    ICONS: dict[str, str] = {
-        CHECKOUT: "📤",
-        RETURN: "📥",
-        REPAIR: "🔧",
-        REPAIR_DONE: "✅",
-        SCRAP: "🗑️",
-        RESTORE: "♻️",
-    }
 
     ALL: tuple[str, ...] = (CHECKOUT, RETURN, REPAIR, REPAIR_DONE, SCRAP, RESTORE)
 
@@ -361,45 +353,52 @@ class AuditAction:
         AUDIT_EXPORT: "导出审计日志",
     }
 
+    #: 审计动作 → **图标标识**（前端 `utils/icons.ts::ICON_PATHS` 的 key）。
+    #:
+    #: ⚠️ **这里返回的是标识，不是图标字符**（2026-10-19 改）。
+    #: 原来存的是 emoji，于是 emoji 事实上成了接口的展示协议 ——
+    #: 前端收到一个 emoji 字符串却没法保证它在别的系统字体下长什么样，
+    #: 而且前端当时根本没用它（自己另有一份 18 项的映射，38 个动作里有 20 个没图标）。
+    #: 现在后端只给"这是哪个图标"，怎么画由前端那张唯一路径表决定。
     ICONS: dict[str, str] = {
-        ASSET_CREATE: "✨",
-        ASSET_UPDATE: "✏️",
-        ASSET_DELETE: "🗑️",
-        ASSET_OPERATE: "🔁",
-        ASSET_PAIR: "🔗",
-        ASSET_UNPAIR: "✂️",
-        ASSET_REBIND: "🔀",
-        ASSET_IMPORT: "📥",
-        ASSET_EXPORT: "📤",
-        RELOCATION_APPLY: "🚚",
-        ASSET_LINKAGE: "🤝",
-        ASSET_UNLINK: "🔓",
-        RELATION_EXCEPTION_CONFIRM: "🤝",
-        RELATION_EXCEPTION_REVOKE: "↩️",
-        INVENTORY_CREATE: "🧭",
-        INVENTORY_MARK: "📋",
-        INVENTORY_CLOSE: "🏁",
-        INVENTORY_REOPEN: "↩️",
-        INVENTORY_DELETE: "🗑️",
-        TYPE_CREATE: "🏷️",
-        TYPE_UPDATE: "🏷️",
-        TYPE_DELETE: "🏷️",
-        WORKSTATION_CREATE: "🪑",
-        WORKSTATION_UPDATE: "🪑",
-        WORKSTATION_MOVE: "🧭",
-        WORKSTATION_DELETE: "🗑️",
-        MAP_CREATE: "🗺️",
-        MAP_UPDATE: "🗺️",
-        MAP_DELETE: "🗺️",
-        LIGHT_CATEGORY_CREATE: "📦",
-        LIGHT_CATEGORY_UPDATE: "📦",
-        LIGHT_CATEGORY_DELETE: "📦",
-        LIGHT_ITEM_CREATE: "🔩",
-        LIGHT_ITEM_UPDATE: "🔩",
-        LIGHT_ITEM_DELETE: "🔩",
-        LIGHT_OPERATE: "🔄",
-        LIGHT_IMPORT: "📥",
-        AUDIT_EXPORT: "📤",
+        ASSET_CREATE: "sparkles",
+        ASSET_UPDATE: "edit",
+        ASSET_DELETE: "trash",
+        ASSET_OPERATE: "refresh",
+        ASSET_PAIR: "link",
+        ASSET_UNPAIR: "scissors",
+        ASSET_REBIND: "shuffle",
+        ASSET_IMPORT: "download",
+        ASSET_EXPORT: "upload",
+        RELOCATION_APPLY: "truck",
+        ASSET_LINKAGE: "handshake",
+        ASSET_UNLINK: "unlock",
+        RELATION_EXCEPTION_CONFIRM: "handshake",
+        RELATION_EXCEPTION_REVOKE: "undo",
+        INVENTORY_CREATE: "compass",
+        INVENTORY_MARK: "clipboard",
+        INVENTORY_CLOSE: "flag",
+        INVENTORY_REOPEN: "undo",
+        INVENTORY_DELETE: "trash",
+        TYPE_CREATE: "tag",
+        TYPE_UPDATE: "tag",
+        TYPE_DELETE: "tag",
+        WORKSTATION_CREATE: "chair",
+        WORKSTATION_UPDATE: "chair",
+        WORKSTATION_MOVE: "compass",
+        WORKSTATION_DELETE: "trash",
+        MAP_CREATE: "map",
+        MAP_UPDATE: "map",
+        MAP_DELETE: "map",
+        LIGHT_CATEGORY_CREATE: "box",
+        LIGHT_CATEGORY_UPDATE: "box",
+        LIGHT_CATEGORY_DELETE: "box",
+        LIGHT_ITEM_CREATE: "chip",
+        LIGHT_ITEM_UPDATE: "chip",
+        LIGHT_ITEM_DELETE: "chip",
+        LIGHT_OPERATE: "refresh",
+        LIGHT_IMPORT: "download",
+        AUDIT_EXPORT: "upload",
     }
 
     #: 筛选下拉里的分组顺序，前端直接照这个渲染
@@ -442,7 +441,7 @@ class AuditAction:
 
     @classmethod
     def icon(cls, action: str) -> str:
-        return cls.ICONS.get(action, "•")
+        return cls.ICONS.get(action, "dot")
 
 
 class AuditTarget:
@@ -500,6 +499,16 @@ class DeviceType(Base):
     category: Mapped[str] = mapped_column(
         String(16), nullable=False, default=DeviceCategory.OTHER, server_default=DeviceCategory.OTHER
     )
+    #: 界面图标标识（`frontend/src/utils/icons.ts::ICON_PATHS` 的 key，如 `tower`）。
+    #:
+    #: **刻意存标识而不是 emoji、也不是 SVG 源码**：图标换一套视觉时不必动库，
+    #: 前端也只需要一张路径表。允许为空 —— 空值表示"用户还没确认过图标"，
+    #: 界面据此按名称推断一个**建议**图标（只显示、不写库，见 format.ts::typeIcon）。
+    #:
+    #: ⚠️ 与 `category` 同样的理由：**图标不按名字自动判断**。
+    #: 用户完全可以把「主机」改名成「工控机」，靠名字猜图标同样会一改就废。
+    icon: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
 
     assets: Mapped[list["Asset"]] = relationship(back_populates="device_type")
@@ -1224,6 +1233,19 @@ class LightCategory(Base):
     unit: Mapped[str] = mapped_column(String(16), nullable=False, default="件", server_default="件")
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: 界面图标标识（`frontend/src/utils/icons.ts::ICON_PATHS` 的 key，如 `keyboardMouse`）。
+    #:
+    #: **刻意存标识** —— 不存 emoji、也不存 SVG 源码：换一套视觉时不必动库，
+    #: 前端也只有一张路径表。允许为空：空值表示"用户还没确认过图标"，
+    #: 界面据此按品类名给一个**建议**图标（只显示、不写库，见
+    #: `utils/light.ts::lightCategoryIcon`）。
+    #:
+    #: ⚠️ **绝不能靠名称正则去猜**（第一版就是那样，`catIcon()` 拿
+    #: `/键鼠|键盘|鼠标|套装/` 去匹配名称 + 规格）：用户把品类改个名、或者规格里
+    #: 恰好带了"套装"二字，图标就悄悄变了；而且同一个品类在列表页和资产详情页
+    #: 用了两套判断，键鼠套装在一边显示键盘、另一边显示芯片。
+    icon: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     #: 软删 —— 与 workstations / floor_maps 同一设计（编码/名称不释放）。
     #: 被流水引用时不允许硬删（应用层 409 + 人话；流程走软删）。

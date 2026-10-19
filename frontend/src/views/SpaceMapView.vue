@@ -39,6 +39,7 @@
  * **直接用同一份数字**，地图与原盘点页的进度天然相等。
  */
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AppIcon from '@/components/AppIcon.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -1905,7 +1906,7 @@ watch(selectedId, (id) => {
           <span>批量生成点位</span>
           <button class="bulk-close" title="收起" @click="toggleBulkPanel">×</button>
         </div>
-        <p class="bulk-warn">⚠ 会<span>立刻写进数据库</span>，不用点保存。生成后可撤销。</p>
+        <p class="bulk-warn"><AppIcon name="circleAlert" :size="13" /> 会<span>立刻写进数据库</span>，不用点保存。生成后可撤销。</p>
         <div class="bulk-form">
           <div class="bulk-row">
             <label>总数</label>

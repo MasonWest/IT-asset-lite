@@ -6,6 +6,7 @@
  * 边调条件边实时显示「这次会盘到几台」，避免手一抖把整库圈进来。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import AppIcon from '@/components/AppIcon.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -279,19 +280,19 @@ onMounted(async () => {
 
     <div class="stat-row">
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>🔄</span>进行中</div>
+        <div class="k"><span><AppIcon name="refresh" :size="14" /></span>进行中</div>
         <div class="v">{{ counts.open }}<small>个</small></div>
       </div>
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>✅</span>已结束</div>
+        <div class="k"><span><AppIcon name="check" :size="14" /></span>已结束</div>
         <div class="v">{{ counts.closed }}<small>个</small></div>
       </div>
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>📦</span>累计盘点设备</div>
+        <div class="k"><span><AppIcon name="box" :size="14" /></span>累计盘点设备</div>
         <div class="v">{{ counts.devices }}<small>台次</small></div>
       </div>
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>⚠️</span>累计异常</div>
+        <div class="k"><span><AppIcon name="circleAlert" :size="14" /></span>累计异常</div>
         <div class="v">{{ counts.abnormal }}<small>台</small></div>
       </div>
     </div>
@@ -367,7 +368,7 @@ onMounted(async () => {
       </article>
 
       <div v-if="!loading && !shown.length" class="empty-state">
-        <div class="big">📋</div>
+        <div class="big"><AppIcon name="clipboard" :size="44" /></div>
         <div class="title">{{ tab === 'open' ? '没有进行中的盘点' : '还没有盘点记录' }}</div>
         <div>点右上角「+ 发起盘点」，选好范围就能开始盘了。</div>
         <div style="margin-top: 16px">
@@ -455,7 +456,7 @@ onMounted(async () => {
           <span>正在统计范围内的设备…</span>
         </template>
         <template v-else-if="previewCount === 0">
-          <span>⚠️ 这个条件下没有设备，换个范围再发起</span>
+          <span><AppIcon name="circleAlert" :size="13" /> 这个条件下没有设备，换个范围再发起</span>
         </template>
         <template v-else>
           <span class="num">{{ previewCount }}</span>

@@ -60,7 +60,7 @@ def serialize_log(entry: AuditLog) -> AuditLogOut:
         ip=entry.ip,
         action=entry.action,
         action_label=AuditAction.label(entry.action),
-        action_icon=AuditAction.icon(entry.action),
+        action_icon_name=AuditAction.icon(entry.action),
         target_type=entry.target_type,
         target_type_label=AuditTarget.LABELS.get(entry.target_type, entry.target_type),
         target_id=entry.target_id,
@@ -213,7 +213,11 @@ def get_meta(db: Session = Depends(get_db)):
             AuditGroup(
                 name=name,
                 options=[
-                    AuditActionOption(value=key, label=AuditAction.label(key), icon=AuditAction.icon(key))
+                    AuditActionOption(
+                        value=key,
+                        label=AuditAction.label(key),
+                        icon_name=AuditAction.icon(key),
+                    )
                     for key in keys
                 ],
             )

@@ -36,6 +36,7 @@ def _serialize(dtype: DeviceType, counts: dict[int, int]) -> DeviceTypeOut:
         sort_order=dtype.sort_order,
         category=dtype.category,
         category_label=DeviceCategory.LABELS.get(dtype.category, dtype.category),
+        icon=dtype.icon,
         asset_count=counts.get(dtype.id, 0),
     )
 
@@ -60,7 +61,8 @@ def create_device_type(
         raise HTTPException(status_code=409, detail=f"设备类型「{payload.name}」已存在")
 
     category = payload.category or DeviceCategory.guess(payload.name)
-    dtype = DeviceType(name=payload.name, sort_order=payload.sort_order, category=category)
+    icon = (payload.icon or "").strip() or None
+    dtype = DeviceType(name=payload.name, sort_order=payload.sort_order, category=category, icon=icon)
     db.add(dtype)
     db.flush()
     record_audit(
@@ -71,7 +73,7 @@ def create_device_type(
         target_label=f"设备类型：{dtype.name}",
         summary=f"新增设备类型「{dtype.name}」，类别 {DeviceCategory.LABELS.get(category, category)}",
         operator=operator,
-        detail={"name": dtype.name, "category": category},
+        detail={"name": dtype.name, "category": category, "icon": icon},
     )
     db.commit()
     db.refresh(dtype)
@@ -89,7 +91,12 @@ def update_device_type(
     if dtype is None:
         raise HTTPException(status_code=404, detail=f"设备类型 #{type_id} 不存在")
 
-    before = {"name": dtype.name, "category": dtype.category, "sort_order": dtype.sort_order}
+    before = {
+        "name": dtype.name,
+        "category": dtype.category,
+        "sort_order": dtype.sort_order,
+        "icon": dtype.icon,
+    }
     data = payload.model_dump(exclude_unset=True)
     if "name" in data and data["name"]:
         dup = db.execute(
@@ -102,6 +109,10 @@ def update_device_type(
         dtype.sort_order = data["sort_order"]
     if data.get("category"):
         dtype.category = data["category"]
+    if "icon" in data:
+        # 显式传空串 = 清掉图标（回到"按名称给建议图标"的状态）；
+        # 不传这个字段 = 不动它（`exclude_unset` 已经保证了这一点）
+        dtype.icon = (data["icon"] or "").strip() or None
 
     changes = []
     if before["name"] != dtype.name:
@@ -113,6 +124,8 @@ def update_device_type(
         )
     if before["sort_order"] != dtype.sort_order:
         changes.append(f"排序 {before['sort_order']} → {dtype.sort_order}")
+    if before["icon"] != dtype.icon:
+        changes.append(f"图标 {before['icon'] or '（未设置）'} → {dtype.icon or '（未设置）'}")
 
     record_audit(
         db,

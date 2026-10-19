@@ -7,6 +7,8 @@
  */
 
 import type { LightHolderKind, LightOp } from '@/types'
+import { isIconName, FALLBACK_ICON } from '@/utils/icons'
+import type { IconName } from '@/utils/icons'
 
 /** 引用类型在界面上的称呼。`none` = 系统外部 / 已注销（入库的来源、报损的去向） */
 export const HOLDER_KIND_META: Record<LightHolderKind, { label: string; hint: string }> = {
@@ -154,4 +156,81 @@ export function holderIconName(kind: string | null | undefined): string {
     default:
       return 'box'
   }
+}
+
+/**
+ * 按品类名猜一个**建议**图标（供未确认的品类显示）。
+ *
+ * ⚠️ **这是"建议"，不是配置** —— 结果只用于显示，绝不写库
+ * （把推断写进库等于替用户做了他没做过的决定，而推断本身会错：
+ * 规格里恰好带"套装"二字、或者品类改名"随行电源"→"电源适配器"，都会变）。
+ *
+ * ⚠️ 与第一版 `catIcon()` 的关键区别：**它只在一个地方被调用**（下面的
+ * `lightCategoryIcon()`），不再由各页面各写一份正则 —— 那正是"键鼠套装在
+ * 列表页显示键盘、在资产详情页显示芯片"的根因。
+ */
+export function suggestLightCategoryIcon(name?: string | null, spec?: string | null): IconName {
+  const s = `${name ?? ''} ${spec ?? ''}`.toLowerCase()
+  // 顺序有意义：先认"套装"（它同时含键盘和鼠标），再拆到单个外设
+  if (/套装|键鼠|键盘鼠标/.test(s)) return 'keyboardMouse'
+  if (/键盘/.test(s)) return 'keyboard'
+  if (/鼠标/.test(s)) return 'mouse'
+  if (/ssd|固态|硬盘|内存|芯片|m\.2|nvme/.test(s)) return 'chip'
+  if (/耳机|耳麦|话筒/.test(s)) return 'headset'
+  if (/音响|音箱|扬声/.test(s)) return 'speaker'
+  if (/摄像头|摄像|相机/.test(s)) return 'camera'
+  if (/坞|底座|支架/.test(s)) return 'dock'
+  if (/线|缆|转接|适配/.test(s)) return 'cable'
+  return FALLBACK_ICON
+}
+
+/** 取图标时真正需要的最小信息（与 `utils/format.ts::IconSource` 同构） */
+export interface LightIconSource {
+  name?: string | null
+  spec?: string | null
+  icon?: string | null
+}
+
+/**
+ * 取某个轻资产品类该用的图标 —— **全站唯一入口**。
+ *
+ * 与设备类型的 `typeIcon()` 同一套分层规则（顺序不能变）：
+ * 1. **库里已确认的图标**（`light_categories.icon`）—— 唯一"配置"；
+ * 2. **按名称推断的建议图标** —— 未确认时的显示值，**不写库**；
+ * 3. **兜底盒子**。
+ *
+ * ⚠️ **所有**需要品类图标的地方都必须走这里：轻资产列表卡片、列表视图、
+ * 品类详情页、**正式资产详情页的「关联轻资产」面板**、**点位侧栏的配件区**。
+ * 少走一处就会退回"同一品类两种图标"的老问题。
+ */
+export function lightCategoryIcon(category?: LightIconSource | null): IconName {
+  if (!category) return FALLBACK_ICON
+  const saved = category.icon
+  if (saved && isIconName(saved)) return saved
+  return suggestLightCategoryIcon(category.name, category.spec)
+}
+
+/**
+ * 从一条**持有记录**（`LightHolding`）取品类图标。
+ *
+ * 为什么要这个适配函数：持有记录上的字段是 `category_name` / `category_spec` /
+ * `category_icon`（前缀 `category_`，因为它同时还带着宿主字段），
+ * 与品类对象本身（`name` / `spec` / `icon`）不同名。各页面各写一遍
+ * `{ name: h.category_name, ... }` 迟早漏字段 —— 一漏就退回"猜图标"，
+ * 于是同一品类又长出两种图标（正是这次要修的那个 bug）。
+ */
+export function holdingCategoryIcon(holding?: {
+  category_name?: string | null
+  category_spec?: string | null
+  category_icon?: string | null
+} | null): IconName {
+  if (!holding) return FALLBACK_ICON
+  const saved = holding.category_icon
+  if (saved && isIconName(saved)) return saved
+  return suggestLightCategoryIcon(holding.category_name, holding.category_spec)
+}
+
+/** 这个品类有没有"已确认的图标"（维护界面用它决定要不要显示"未确认"标记） */
+export function hasConfirmedLightIcon(category?: LightIconSource | null): boolean {
+  return Boolean(category?.icon && isIconName(category.icon))
 }

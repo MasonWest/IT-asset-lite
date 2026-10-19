@@ -14,7 +14,8 @@ import { apiMessage, assetApi, pairingApi } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { Asset, AssetBrief, Relation } from '@/types'
-import { formatDate, hasOwner, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
+import AppIcon from '@/components/AppIcon.vue'
+import { formatDate, hasOwner, iconOf, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
 
 const props = defineProps<{
   asset: Asset
@@ -97,7 +98,7 @@ async function submitPicker() {
   }
   const op = operator()
   if (!op) {
-    ElMessage.warning('请先在右上角 ⚙ 里设置操作人，或者到设备详情执行一次操作后再试')
+    ElMessage.warning('请先在右上角的设置里填操作人，或者到设备详情执行一次操作后再试')
     return
   }
 
@@ -176,7 +177,7 @@ watch(() => props.asset.id, loadRelations, { immediate: true })
     <div v-if="isHost" class="pair-body">
       <div v-if="monitors.length" class="pair-list">
         <div v-for="m in monitors" :key="m.id" class="pair-item">
-          <span class="type-badge sm">{{ typeIcon(m.device_type_name) }}</span>
+          <span class="type-badge sm"><AppIcon :name="typeIcon(iconOf(m))" :size="17" /></span>
           <div class="info" @click="openAsset(m)">
             <div class="c1">{{ m.asset_code }}</div>
             <div class="c2">
@@ -218,7 +219,7 @@ watch(() => props.asset.id, loadRelations, { immediate: true })
     <div v-else-if="isMonitor" class="pair-body">
       <div v-if="host" class="pair-list">
         <div class="pair-item highlight">
-          <span class="type-badge sm">{{ typeIcon(host.device_type_name) }}</span>
+          <span class="type-badge sm"><AppIcon :name="typeIcon(iconOf(host))" :size="17" /></span>
           <div class="info" @click="openAsset(host)">
             <div class="c1">{{ host.asset_code }}</div>
             <div class="c2">

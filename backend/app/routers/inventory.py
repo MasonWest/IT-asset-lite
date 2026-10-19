@@ -619,6 +619,7 @@ def map_view(task_id: int, db: Session = Depends(get_db)):
                     asset_id=asset.id,
                     asset_code=asset.asset_code,
                     device_type_name=asset.device_type.name if asset.device_type else "",
+                    device_type_icon=asset.device_type.icon if asset.device_type else None,
                     brand=asset.brand,
                     model=asset.model,
                     status=asset.status,

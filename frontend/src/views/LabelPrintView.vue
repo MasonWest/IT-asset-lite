@@ -7,7 +7,8 @@ import { assetApi, metaApi } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { assetDetailUrl, loadSystemInfo, qrImageSrc } from '@/stores/app'
 import type { Asset, DeviceType } from '@/types'
-import { orDash, statusMeta, typeIcon } from '@/utils/format'
+import AppIcon from '@/components/AppIcon.vue'
+import { iconOf, orDash, statusMeta, typeIcon } from '@/utils/format'
 
 const route = useRoute()
 /** 从台账来的退回台账（带着筛选），从设备详情来的退回那台设备 */
@@ -239,8 +240,8 @@ watch(
             @click="toggle(a.id)"
           >
             <el-checkbox :model-value="isChecked(a.id)" @click.stop @change="toggle(a.id)" />
-            <span class="type-badge" style="width: 28px; height: 28px; font-size: 14px">
-              {{ typeIcon(a.device_type_name) }}
+            <span class="type-badge" style="width: 28px; height: 28px">
+              <AppIcon :name="typeIcon(iconOf(a))" :size="16" />
             </span>
             <div class="info">
               <div class="c1">{{ a.asset_code }}</div>

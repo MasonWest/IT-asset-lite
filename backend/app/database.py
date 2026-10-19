@@ -235,6 +235,27 @@ def _add_category_column(conn) -> bool:
     return True
 
 
+def _add_icon_column(conn, table: str) -> bool:
+    """给 `device_types` / `light_categories` 补 `icon` 列（图标标识）。返回是否真的补了。
+
+    **为什么必须写这段代码**：`create_all()` 只建缺的**表**，不会给已存在的表补**列**
+    （同 `_add_workstation_id_column` 的说明）。
+
+    **为什么不需要回填**：这一列全 NULL 就是正确语义 —— NULL = "用户还没确认过图标"，
+    界面会按名称推断一个**建议**图标显示出来（不写库）。
+    ⚠️ **刻意不回填**：把推断结果写进库，等于替用户做了他没做过的决定；
+    用户哪天把「主机」改名成「工控机」，一个已写死的推断图标就成了错的配置。
+    想批量确认走界面上的「套用建议图标」按钮（用户点了才写）。
+
+    因此这里没有 UPDATE、也不用记账：ALTER 本身幂等（列已存在就直接返回 False）。
+    """
+    if "icon" in _existing_columns(conn, table):
+        return False
+
+    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN icon VARCHAR(32)")
+    return True
+
+
 def _add_workstation_id_column(conn) -> bool:
     """第四阶段：给 assets 补 workstation_id 列（点位关联）。返回是否真的补了。
 
@@ -506,7 +527,9 @@ def ensure_schema() -> dict[str, object]:
       3. 给第四阶段之前的老库补 assets.workstation_id 列；
       4. 给第五阶段之前的老库补 workstations.floor_map_id 列，
          并建默认平面图、把现有点位回填上去；
-      5. 给第三阶段之前的老库把 UTC 时间戳校正成本地时间。
+      5. 给第三阶段之前的老库把 UTC 时间戳校正成本地时间；
+      6. 给图标改造之前的老库补 device_types.icon / light_categories.icon 列
+         （**不回填** —— NULL 就是"用户还没确认过图标"的正确语义）。
     不引入 Alembic —— 约束里明确要求不提前引依赖，这几处改动不值得把迁移框架搬进来。
     新库走 create_all 时列就齐了，前几步会自动跳过。
 
@@ -521,6 +544,8 @@ def ensure_schema() -> dict[str, object]:
             "category_added": False,
             "workstation_column_added": False,
             "floor_map_column_added": False,
+            "device_type_icon_added": False,
+            "light_category_icon_added": False,
             "default_floor_map_id": None,
             "default_floor_map_created": False,
             "default_floor_map_name": DEFAULT_FLOOR_NAME,
@@ -537,11 +562,16 @@ def ensure_schema() -> dict[str, object]:
         floor_map_column_added = _add_floor_map_id_column(conn)
         floor_map = _recognize_default_floor_map(conn)
         shifted, offset_minutes = _shift_legacy_utc_timestamps(conn)
+        # 图标：纯展示属性，不加约束、不回填，放在最后（与前面的顺序没有依赖）
+        device_type_icon_added = _add_icon_column(conn, "device_types")
+        light_category_icon_added = _add_icon_column(conn, "light_categories")
 
     return {
         "category_added": category_added,
         "workstation_column_added": workstation_column_added,
         "floor_map_column_added": floor_map_column_added,
+        "device_type_icon_added": device_type_icon_added,
+        "light_category_icon_added": light_category_icon_added,
         "default_floor_map_id": floor_map["id"],
         "default_floor_map_created": floor_map["created"],
         "default_floor_map_name": DEFAULT_FLOOR_NAME,

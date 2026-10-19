@@ -101,6 +101,10 @@ class HoldingOut(HolderOut):
     category_unit: str = ""
     #: 「名称 · 品牌 规格」单行版，给只有一行位置的地方（title / 窄屏）
     category_label: str = ""
+    #: 品类图标标识（为空 = 未确认，前端按名称给建议图标）。
+    #: ⚠️ **必须带** —— 点位侧栏 / 资产详情页的关联配件面板都靠它显示品类图标；
+    #: 少了它，同一个品类在列表页和这里就会长出两种图标（这正是 2026-10-19 修的那处）。
+    category_icon: Optional[str] = None
     quantity: int = 0
     since: Optional[datetime] = None
     note: Optional[str] = None
@@ -135,6 +139,9 @@ class LightCategoryCreate(BaseModel):
     spec: Optional[str] = Field(default=None, max_length=128)
     unit: str = Field(default="件", min_length=1, max_length=16)
     notes: Optional[str] = None
+    #: 图标标识（`frontend/src/utils/icons.ts::ICON_PATHS` 的 key）。
+    #: 留空 = "还没确认过"，界面按品类名给一个**建议**图标（只显示、不写库）。
+    icon: Optional[str] = Field(default=None, max_length=32)
     operator: Optional[str] = Field(default=None, max_length=64)
 
     _clean = field_validator("name", "brand", "spec", "unit", "notes", mode="before")(_blank_to_none)
@@ -146,6 +153,8 @@ class LightCategoryUpdate(BaseModel):
     spec: Optional[str] = Field(default=None, max_length=128)
     unit: Optional[str] = Field(default=None, min_length=1, max_length=16)
     notes: Optional[str] = None
+    #: 传空串 = 清掉图标（回到"按名称给建议图标"）；不传 = 不动它
+    icon: Optional[str] = Field(default=None, max_length=32)
     active: Optional[bool] = None
     operator: Optional[str] = Field(default=None, max_length=64)
 
@@ -173,6 +182,8 @@ class LightCategoryOut(BaseModel):
     spec: Optional[str] = None
     unit: str = "件"
     notes: Optional[str] = None
+    #: 已确认的图标标识；为空 = 用户还没选过（前端据此展示建议图标）
+    icon: Optional[str] = None
     active: bool = True
     created_at: datetime
     updated_at: datetime

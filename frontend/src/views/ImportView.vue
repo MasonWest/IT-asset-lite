@@ -7,6 +7,7 @@ import { downloadUrl, transferApi } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { ImportMode, ImportPreview, ImportResult, ImportRow } from '@/types'
+import AppIcon from '@/components/AppIcon.vue'
 import { importActionMeta, orDash } from '@/utils/format'
 
 const router = useRouter()
@@ -155,9 +156,9 @@ function goAudit() {
         </div>
       </div>
       <div class="tip-row">
-        <span class="tip">💡 只有 <b>IT资产编号</b> 和 <b>设备类型</b> 是必填，其余留空即可</span>
-        <span class="tip">💡 更新已有设备时，留空表示「保持原值不变」；想清空某格就写一个减号 <code>-</code></span>
-        <span class="tip">💡 本系统导出的表格列与模板完全一致，可以直接改了再导回来</span>
+        <span class="tip">只有 <b>IT资产编号</b> 和 <b>设备类型</b> 是必填，其余留空即可</span>
+        <span class="tip">更新已有设备时，留空表示「保持原值不变」；想清空某格就写一个减号 <code>-</code></span>
+        <span class="tip">本系统导出的表格列与模板完全一致，可以直接改了再导回来</span>
       </div>
     </section>
 
@@ -186,12 +187,12 @@ function goAudit() {
           @change="(e) => pickFile((e.target as HTMLInputElement).files?.[0] ?? null)"
         />
         <template v-if="!picked">
-          <div class="dz-icon">📄</div>
+          <div class="dz-icon"><AppIcon name="doc" :size="30" /></div>
           <div class="dz-title">把 .xlsx / .csv 文件拖到这里，或点击选择</div>
           <div class="dz-sub">还没填模板？先点上面「下载 Excel 模板」</div>
         </template>
         <template v-else>
-          <div class="dz-icon">📗</div>
+          <div class="dz-icon"><AppIcon name="list" :size="30" /></div>
           <div class="dz-title">{{ picked.name }}</div>
           <div class="dz-sub">{{ formatSize(picked.size) }} · 点击可换一个文件</div>
         </template>
@@ -284,23 +285,23 @@ function goAudit() {
 
       <div class="stat-row compact">
         <div class="stat-card" :class="{ active: !onlyProblems }" @click="onlyProblems = false">
-          <div class="k"><span>📄</span>总行数</div>
+          <div class="k"><span><AppIcon name="doc" :size="14" /></span>总行数</div>
           <div class="v">{{ preview.total }}<small>行</small></div>
         </div>
         <div class="stat-card">
-          <div class="k"><span>✨</span>将新增</div>
+          <div class="k"><span><AppIcon name="sparkles" :size="14" /></span>将新增</div>
           <div class="v good">{{ preview.create }}<small>条</small></div>
         </div>
         <div class="stat-card">
-          <div class="k"><span>✏️</span>将更新</div>
+          <div class="k"><span><AppIcon name="edit" :size="14" /></span>将更新</div>
           <div class="v info">{{ preview.update }}<small>条</small></div>
         </div>
         <div class="stat-card">
-          <div class="k"><span>➖</span>无变化</div>
+          <div class="k"><span><AppIcon name="minus" :size="14" /></span>无变化</div>
           <div class="v muted">{{ preview.unchanged }}<small>条</small></div>
         </div>
         <div class="stat-card" :class="{ active: onlyProblems }" @click="onlyProblems = true">
-          <div class="k"><span>⚠️</span>错误</div>
+          <div class="k"><span><AppIcon name="circleAlert" :size="14" /></span>错误</div>
           <div class="v" :class="{ bad: preview.error > 0 }">{{ preview.error }}<small>条</small></div>
         </div>
       </div>
@@ -335,7 +336,8 @@ function goAudit() {
                 borderColor: importActionMeta(row.action).border,
               }"
             >
-              {{ importActionMeta(row.action).icon }} {{ row.action_label }}
+              <AppIcon :name="importActionMeta(row.action).icon" :size="13" />
+              {{ row.action_label }}
             </span>
           </template>
         </el-table-column>
@@ -386,7 +388,7 @@ function goAudit() {
     <!-- ---------------------------------------------------------------- -->
     <section v-if="result" class="panel step">
       <div class="step-head">
-        <span class="idx done">✓</span>
+        <span class="idx done"><AppIcon name="check" :size="13" /></span>
         <div>
           <h2>导入完成</h2>
           <p><b>{{ result.filename }}</b> · {{ result.mode_label }}</p>
@@ -399,19 +401,19 @@ function goAudit() {
 
       <div class="stat-row compact">
         <div class="stat-card">
-          <div class="k"><span>✨</span>新增成功</div>
+          <div class="k"><span><AppIcon name="sparkles" :size="14" /></span>新增成功</div>
           <div class="v good">{{ result.created }}<small>条</small></div>
         </div>
         <div class="stat-card">
-          <div class="k"><span>✏️</span>更新成功</div>
+          <div class="k"><span><AppIcon name="edit" :size="14" /></span>更新成功</div>
           <div class="v info">{{ result.updated }}<small>条</small></div>
         </div>
         <div class="stat-card">
-          <div class="k"><span>➖</span>无变化跳过</div>
+          <div class="k"><span><AppIcon name="minus" :size="14" /></span>无变化跳过</div>
           <div class="v muted">{{ result.unchanged }}<small>条</small></div>
         </div>
         <div class="stat-card">
-          <div class="k"><span>⚠️</span>导入失败</div>
+          <div class="k"><span><AppIcon name="circleAlert" :size="14" /></span>导入失败</div>
           <div class="v" :class="{ bad: result.failed > 0 }">{{ result.failed }}<small>条</small></div>
         </div>
       </div>

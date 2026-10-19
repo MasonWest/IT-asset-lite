@@ -32,6 +32,9 @@ class DeviceTypeCreate(BaseModel):
     category: Optional[DeviceCategoryLiteral] = Field(
         default=None, description="留空则按类型名自动猜一个"
     )
+    #: 图标标识（`frontend/src/utils/icons.ts::ICON_PATHS` 的 key）。
+    #: 留空 = "还没确认过图标"，界面按名称给一个**建议**图标（只显示、不写库）。
+    icon: Optional[str] = Field(default=None, max_length=32)
 
     _norm_name = field_validator("name")(lambda v: v.strip())
 
@@ -40,6 +43,7 @@ class DeviceTypeUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=50)
     sort_order: Optional[int] = None
     category: Optional[DeviceCategoryLiteral] = None
+    icon: Optional[str] = Field(default=None, max_length=32)
 
     _norm = field_validator("name")(lambda v: v.strip() if isinstance(v, str) else v)
 
@@ -52,6 +56,8 @@ class DeviceTypeOut(BaseModel):
     sort_order: int
     category: str = "other"
     category_label: str = ""
+    #: 已确认的图标标识；为空表示用户还没选过（前端据此展示建议图标）
+    icon: Optional[str] = None
     asset_count: int = 0
 
 
@@ -139,6 +145,8 @@ class DeviceTypeBrief(BaseModel):
     id: int
     name: str
     category: str = "other"
+    #: 已确认的图标标识（为空 = 未确认）；与 DeviceTypeOut.icon 同一列
+    icon: Optional[str] = None
 
 
 class AssetBrief(BaseModel):
@@ -150,6 +158,8 @@ class AssetBrief(BaseModel):
     asset_code: str
     device_type_name: str = ""
     device_type_id: int = 0
+    #: 已确认的图标标识（为空 = 未确认，前端按名称推断一个建议图标）
+    device_type_icon: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
     serial_number: Optional[str] = None
@@ -167,6 +177,8 @@ class AssetOut(BaseModel):
     finance_code: Optional[str] = None
     device_type_id: int
     device_type_name: str = ""
+    #: 已确认的图标标识（为空 = 未确认，前端按名称推断一个建议图标）
+    device_type_icon: Optional[str] = None
     device_category: str = "other"
     device_type: Optional[DeviceTypeBrief] = None
     brand: Optional[str] = None
@@ -566,7 +578,11 @@ class AuditLogOut(BaseModel):
     ip: Optional[str] = None
     action: str
     action_label: str
-    action_icon: str = "•"
+    #: 图标标识（前端 `utils/icons.ts::ICON_PATHS` 的 key）。
+    #: ⚠️ 2026-10-19 起这里**不再是 emoji**：字段名也从 `action_icon` 改成
+    #: `action_icon_name`，好让任何还按旧语义消费它的地方直接编译/解析报错，
+    #: 而不是静默拿到一个"看起来像名字的字符串"。
+    action_icon_name: str = "dot"
     target_type: str
     target_type_label: str = ""
     target_id: Optional[int] = None
@@ -588,7 +604,8 @@ class AuditPage(BaseModel):
 class AuditActionOption(BaseModel):
     value: str
     label: str
-    icon: str = "•"
+    #: 图标标识（不是 emoji）。见 AuditLogOut.action_icon_name 的说明。
+    icon_name: str = "dot"
 
 
 class AuditGroup(BaseModel):

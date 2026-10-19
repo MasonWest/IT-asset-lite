@@ -5,11 +5,12 @@ import type { LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import AssetFormDialog from '@/components/AssetFormDialog.vue'
+import AppIcon from '@/components/AppIcon.vue'
 import DeviceTypeDialog from '@/components/DeviceTypeDialog.vue'
 import { assetApi, downloadUrl, metaApi, transferApi } from '@/api'
 import { appState, loadSystemInfo } from '@/stores/app'
 import type { Asset, AssetGroup, AssetQuery, FilterOptions } from '@/types'
-import { formatDate, orDash, statusMeta, typeIcon } from '@/utils/format'
+import { formatDate, iconOf, orDash, statusMeta, typeIcon } from '@/utils/format'
 import { matchByPinyin } from '@/utils/pinyin'
 
 const route = useRoute()
@@ -220,15 +221,15 @@ type StatCard = {
 }
 
 const statCards: StatCard[] = [
-  { dim: 'status', key: '', label: '全部设备', icon: '📦' },
-  { dim: 'status', key: 'in_use', label: '在用', icon: '✅' },
-  { dim: 'status', key: 'idle', label: '在库', icon: '🗄️' },
-  { dim: 'status', key: 'repair', label: '维修中', icon: '🔧' },
+  { dim: 'status', key: '', label: '全部设备', icon: 'box' },
+  { dim: 'status', key: 'in_use', label: '在用', icon: 'check' },
+  { dim: 'status', key: 'idle', label: '在库', icon: 'box' },
+  { dim: 'status', key: 'repair', label: '维修中', icon: 'wrench' },
   {
     dim: 'workstation',
     key: 'none',
     label: '无点位资产',
-    icon: '🎯',
+    icon: 'target',
     tip: '还没落到空间地图点位上的资产。点一下只看这些，然后去地图上把它们挂到对应点位。',
   },
 ]
@@ -750,7 +751,12 @@ onMounted(async () => {
       >
         <div class="top">
           <div class="type-badge">
-            {{ g.kind === 'bundle' ? '🧩' : typeIcon(g.primary.device_type_name) }}
+            <AppIcon
+              v-if="g.kind !== 'bundle'"
+              :name="typeIcon(iconOf(g.primary))"
+              :size="22"
+            />
+            <AppIcon v-else name="layers" :size="22" />
           </div>
           <div class="id-block">
             <div class="code">
@@ -771,15 +777,15 @@ onMounted(async () => {
 
         <div class="meta">
           <div class="row">
-            <span class="ic">👤</span>
+            <span class="ic"><AppIcon name="user" :size="13" /></span>
             <span class="val">{{ orDash(g.primary.user_name) }}</span>
           </div>
           <div class="row">
-            <span class="ic">📍</span>
+            <span class="ic"><AppIcon name="pin" :size="13" /></span>
             <span class="val">{{ orDash(g.primary.location) }}</span>
           </div>
           <div class="row">
-            <span class="ic">🎯</span>
+            <span class="ic"><AppIcon name="target" :size="13" /></span>
             <!--
               这里原本显示 SN。真实库里 142 台资产的 serial_number **全是空的**，
               一行「SN 未登记」等于没信息；点位编码有 89 台有值、直接对应地图上的格子，
@@ -790,13 +796,13 @@ onMounted(async () => {
             </span>
           </div>
           <div class="row">
-            <span class="ic">🛡️</span>
+            <span class="ic"><AppIcon name="shield" :size="13" /></span>
             <span class="val">
               保修 {{ g.primary.warranty_until ? formatDate(g.primary.warranty_until) : '未登记' }}
             </span>
           </div>
           <div class="row">
-            <span class="ic">🔗</span>
+            <span class="ic"><AppIcon name="link" :size="13" /></span>
             <span class="val" :class="{ muted: !hasPairing(g) }">{{ pairingText(g) }}</span>
             <!-- 表格视图的状态列也有同一个提示，两种视图口径必须一致 -->
             <el-tooltip
@@ -804,7 +810,7 @@ onMounted(async () => {
               placement="top"
               content="套装内设备状态不一致（主机与显示器状态不同），仅提示，不会自动改状态"
             >
-              <span class="warn-dot">⚠️</span>
+              <span class="warn-dot"><AppIcon name="circleAlert" :size="13" /></span>
             </el-tooltip>
           </div>
         </div>
@@ -819,7 +825,7 @@ onMounted(async () => {
             :title="`${m.device_type_name} · ${m.status_label} · ${orDash(m.location)}`"
             @click="openDetail(m)"
           >
-            🖥️ {{ m.asset_code }}
+            <AppIcon name="monitor" :size="13" style="margin-right:3px" />{{ m.asset_code }}
             <em v-if="m.status !== g.primary.status">{{ m.status_label }}</em>
           </span>
           <span v-if="!g.monitors.length" class="member-chip muted">这一组暂无显示器成员</span>
@@ -916,7 +922,7 @@ onMounted(async () => {
               placement="top"
               content="套装内设备状态不一致（主机与显示器状态不同），仅提示，不会自动改状态"
             >
-              <span class="warn-dot">⚠️</span>
+              <span class="warn-dot"><AppIcon name="circleAlert" :size="13" /></span>
             </el-tooltip>
           </template>
         </el-table-column>
@@ -969,7 +975,7 @@ onMounted(async () => {
     </div>
 
     <div v-if="!loading && !groups.length" class="empty-state" style="margin-top: 16px">
-      <div class="big">📦</div>
+      <div class="big"><AppIcon name="box" :size="44" /></div>
       <div class="title">{{ hasFilter ? '没有符合条件的设备' : '还没有录入任何设备' }}</div>
       <div>
         {{ hasFilter ? '换个筛选条件试试，或者点右上角「重置」' : '点右上角「+ 新增资产」开始建立台账' }}

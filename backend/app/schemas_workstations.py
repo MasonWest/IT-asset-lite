@@ -247,6 +247,8 @@ class MapInventoryAsset(BaseModel):
     asset_id: int
     asset_code: str
     device_type_name: str = ""
+    #: 已确认的图标标识（为空 = 未确认，前端按名称推断）
+    device_type_icon: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
     status: str = ""

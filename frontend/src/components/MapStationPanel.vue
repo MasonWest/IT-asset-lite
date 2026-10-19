@@ -39,7 +39,9 @@ import type {
   StationRelationCheck,
   Workstation,
 } from '@/types'
-import { hasOwner, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
+import AppIcon from '@/components/AppIcon.vue'
+import { hasOwner, iconOf, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
+import { holdingCategoryIcon } from '@/utils/light'
 import RelationCheckCard from '@/components/RelationCheckCard.vue'
 import LinkSuggestDialog from '@/components/LinkSuggestDialog.vue'
 import {
@@ -577,11 +579,11 @@ function dash(v: string | null | undefined): string {
       <!-- 盘点快捷条 -->
       <div v-if="auditMode && station!.asset_count > 0 && !neutral" class="audit-box">
         <div class="audit-title">
-          <span>⚡ 点位快捷盘点</span>
+          <span><AppIcon name="zap" :size="14" /> 点位快捷盘点</span>
           <span class="st">{{ state ? stateMeta(state).label : '' }}</span>
         </div>
         <button class="pass-all" :disabled="!mapRow?.assets.length" @click="markAllPassed">
-          🟢 把这个点位的设备全部标为已盘
+          <AppIcon name="circleCheck" :size="14" /> 把这个点位的设备全部标为已盘
         </button>
       </div>
 
@@ -595,7 +597,9 @@ function dash(v: string | null | undefined): string {
           :class="{ ok: row.result === 'checked', bad: row.result === 'abnormal' }"
         >
           <div class="asset-top">
-            <div class="asset-icon">🖥️</div>
+            <div class="asset-icon">
+              <AppIcon :name="typeIcon({ name: row.device_type_name, icon: row.device_type_icon })" :size="17" />
+            </div>
             <div class="asset-info">
               <div class="asset-title">{{ row.asset_code }}</div>
               <div class="asset-sub">
@@ -612,7 +616,7 @@ function dash(v: string | null | undefined): string {
                 「账上写着是谁用的」和「现在是谁用的」不一致，正是要找的东西。
               -->
               <div v-if="row.changed_since" class="changed">
-                ⚠️ 盘点后账面已变更（原为 {{ dash(row.snapshot_user) }}）
+                <AppIcon name="circleAlert" :size="12" /> 盘点后账面已变更（原为 {{ dash(row.snapshot_user) }}）
               </div>
             </div>
           </div>
@@ -623,7 +627,7 @@ function dash(v: string | null | undefined): string {
               :disabled="isMarking(row.asset_id)"
               @click="emit('mark', row.asset_id, 'checked')"
             >
-              🟢 正常在位
+              <AppIcon name="circleCheck" :size="14" /> 正常在位
             </button>
             <button
               class="abtn danger"
@@ -631,7 +635,7 @@ function dash(v: string | null | undefined): string {
               :disabled="isMarking(row.asset_id)"
               @click="markAbnormal(row)"
             >
-              🔴 标记异常
+              <AppIcon name="circleAlert" :size="14" /> 标记异常
             </button>
           </div>
         </div>
@@ -656,7 +660,7 @@ function dash(v: string | null | undefined): string {
 
         <div v-if="assets.length" class="asset-plain-list">
           <div v-for="asset in assets" :key="asset.id" class="plain-row">
-            <span class="ic">{{ typeIcon(asset.device_type_name) }}</span>
+            <span class="ic"><AppIcon :name="typeIcon(iconOf(asset))" :size="15" /></span>
             <div class="txt">
               <a class="code" @click="openAsset(asset)">{{ asset.asset_code }}</a>
               <div class="sub">
@@ -720,6 +724,7 @@ function dash(v: string | null | undefined): string {
           <div v-if="lightHoldings.direct.length" class="light-group">
             <div class="light-group-title">固定在此工位（直接关联）</div>
             <div v-for="h in lightHoldings.direct" :key="h.id" class="light-row">
+              <span class="light-ic"><AppIcon :name="holdingCategoryIcon(h)" :size="14" /></span>
               <div class="light-info">
                 <div class="light-name">{{ h.category_name }}</div>
                 <div class="light-sub">
@@ -734,6 +739,7 @@ function dash(v: string | null | undefined): string {
           <div v-if="lightHoldings.via_assets.length" class="light-group">
             <div class="light-group-title">随主机上的（间接关联）</div>
             <div v-for="h in lightHoldings.via_assets" :key="h.id" class="light-row">
+              <span class="light-ic"><AppIcon :name="holdingCategoryIcon(h)" :size="14" /></span>
               <div class="light-info">
                 <div class="light-name">{{ h.category_name }}</div>
                 <div class="light-sub">{{ viaSub(h) }}</div>
@@ -1022,6 +1028,7 @@ function dash(v: string | null | undefined): string {
 }
 /* 两行：主行 = 品类名（**这是什么东西**），副行 = 品牌规格 + 装在谁身上。
    宿主（点位 / 主机）只出现在副行 —— 它在标题里已经说过一遍了。 */
+.light-ic { flex: none; display: flex; align-items: center; color: #64748b; }
 .light-info { flex: 1; min-width: 0; }
 .light-name { font-weight: 600; overflow-wrap: anywhere; }
 .light-sub { font-size: 11px; color: #94a3b8; margin-top: 1px; overflow-wrap: anywhere; }

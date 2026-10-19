@@ -7,7 +7,8 @@ import { auditApi, downloadUrl } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState } from '@/stores/app'
 import type { AuditLog, AuditMeta, AuditQuery } from '@/types'
-import { auditVisual, formatDateTime, relativeTime, toIsoDate } from '@/utils/format'
+import AppIcon from '@/components/AppIcon.vue'
+import { auditTone, formatDateTime, relativeTime, toIsoDate } from '@/utils/format'
 
 const router = useRouter()
 /** 从审计点进设备 / 盘点任务，返回时要回到审计页（带着当时的筛选） */
@@ -349,15 +350,15 @@ onMounted(async () => {
     <!-- 三张卡是单选组：点一下就切到那个视图，蓝框只跟着当前视图走（判定见 activeView） -->
     <div class="stat-row">
       <div class="stat-card" :class="{ active: activeView === 'all' }" @click="resetFilters">
-        <div class="k"><span>📜</span>全部记录</div>
+        <div class="k"><span><AppIcon name="scroll" :size="14" /></span>全部记录</div>
         <div class="v">{{ meta?.total ?? 0 }}<small>条</small></div>
       </div>
       <div class="stat-card" :class="{ active: activeView === 'today' }" @click="quickToday">
-        <div class="k"><span>📅</span>今日操作</div>
+        <div class="k"><span><AppIcon name="calendar" :size="14" /></span>今日操作</div>
         <div class="v">{{ meta?.today ?? 0 }}<small>条</small></div>
       </div>
       <div class="stat-card" :class="{ active: activeView === 'failed' }" @click="quickFailed">
-        <div class="k"><span>⚠️</span>失败操作</div>
+        <div class="k"><span><AppIcon name="circleAlert" :size="14" /></span>失败操作</div>
         <div class="v">{{ meta?.failed ?? 0 }}<small>条</small></div>
       </div>
     </div>
@@ -398,8 +399,12 @@ onMounted(async () => {
     <div v-loading="loading" class="audit-panel">
       <ol v-if="items.length" class="audit-feed">
         <li v-for="entry in items" :key="entry.id" class="audit-item" :class="{ failed: !entry.ok }">
-          <div class="mark" :style="{ background: auditVisual(entry.action).bg, color: auditVisual(entry.action).color }">
-            {{ auditVisual(entry.action).icon }}
+          <!--
+            图标由**后端下发**（`action_icon_name`），配色留在前端（`auditTone`）。
+            这样 38 个审计动作全部有图标 —— 以前前端只认 18 个，另外 20 个掉兜底点。
+          -->
+          <div class="mark" :style="{ background: auditTone(entry.action).bg, color: auditTone(entry.action).color }">
+            <AppIcon :name="entry.action_icon_name" :size="15" />
           </div>
           <div class="body">
             <div class="line-1">
@@ -420,9 +425,9 @@ onMounted(async () => {
 
             <div class="line-3">
               <span class="chip" :class="{ muted: !entry.operator }">
-                👤 {{ entry.operator || '未填写操作人' }}
+                <AppIcon name="user" :size="12" style="margin-right:3px" />{{ entry.operator || '未填写操作人' }}
               </span>
-              <span class="chip mono">🌐 {{ entry.ip || '—' }}</span>
+              <span class="chip mono"><AppIcon name="globe" :size="12" style="margin-right:3px" />{{ entry.ip || '—' }}</span>
               <span class="chip">{{ formatDateTime(entry.created_at) }}</span>
               <span v-if="!entry.ok" class="chip bad">{{ entry.status_label }}</span>
               <span class="spacer" />
@@ -442,7 +447,7 @@ onMounted(async () => {
       </ol>
 
       <div v-else-if="!loading" class="empty-state">
-        <div class="big">📜</div>
+        <div class="big"><AppIcon name="scroll" :size="44" /></div>
         <div class="title">{{ hasAnyRecord ? '这段时间没有符合条件的操作' : '还没有任何操作记录' }}</div>
         <div>
           {{

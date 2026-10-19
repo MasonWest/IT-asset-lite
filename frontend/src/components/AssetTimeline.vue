@@ -8,6 +8,7 @@ import { computed, ref, watch } from 'vue'
 
 import { assetApi } from '@/api'
 import type { AssetEvent } from '@/types'
+import AppIcon from '@/components/AppIcon.vue'
 import { eventMeta, formatShortDateTime, relativeTime } from '@/utils/format'
 
 const props = defineProps<{
@@ -103,7 +104,7 @@ watch(() => [props.assetId, props.refreshKey], load, { immediate: true })
         :class="{ on: filter === c.type }"
         @click="filter = c.type"
       >
-        {{ eventMeta(c.type).icon }} {{ c.label }} {{ c.count }}
+        {{ c.label }} {{ c.count }}
       </button>
     </div>
 
@@ -117,7 +118,7 @@ watch(() => [props.assetId, props.refreshKey], load, { immediate: true })
           class="node"
           :style="{ background: eventMeta(e.event_type).bg, color: eventMeta(e.event_type).color }"
         >
-          {{ eventMeta(e.event_type).icon }}
+          <AppIcon :name="eventMeta(e.event_type).icon" :size="14" />
         </span>
         <div class="body">
           <div class="head">

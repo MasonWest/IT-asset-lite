@@ -3,95 +3,161 @@ import type {
   AssetOperation,
   AssetStatus,
   DeviceCategory,
+  DeviceType,
   InventoryResult,
 } from '@/types'
+import { isIconName, FALLBACK_ICON } from '@/utils/icons'
+import type { IconName } from '@/utils/icons'
 
 /**
- * 设备类型 → emoji（不依赖任何图标包）。
+ * 设备类型 → **图标标识**（`utils/icons.ts::ICON_PATHS` 的 key）。
  *
- * ⚠️ 两个坑，2026-09-24 用真实 Chromium 实测出来的（Windows / Segoe UI Emoji）：
+ * ## 取值分三层（顺序不能变）
  *
- * 1. **主机和显示器绝对不能共用同一个码点。** 原先主机写 `U+1F5A5` + 变体选择符 `FE0F`、
- *    显示器写裸 `U+1F5A5` —— 看着是两个不同的字符，其实是一个码点。Chromium 对这两种写法
- *    fallback 到不同字体，结果**主机画出来是一台显示器、显示器画出来是一台立式设备**，
- *    整个错位。现在两者换成完全不同的码点。
+ * 1. **库里已确认的图标**（`device_types.icon`）—— 用户选过就用它，这是唯一"配置"；
+ * 2. **按名称推断的建议图标** —— 用户还没选过时给一个像样的默认值。
+ *    ⚠️ **推断结果只用于显示，绝不写回数据库**：把推断写进库等于替用户做了
+ *    他没做过的决定，而推断本身会错（"NAS 存储"能认出来，改名成"阵列柜"就废了）。
+ *    维护界面据此打"未确认"标记，用户确认后才落到第 1 层。
+ * 3. **兜底盒子** —— 名称里一个关键字都没命中。
  *
- * 2. **这几个码点在 Windows 上是豆腐块（□），别当候选**：
- *    `U+1F5B5`(SCREEN)、`U+1F5B4`(HARD DISK)、`U+1F5C5`(空文件柜)、`U+1F5C6`(空卡片盒)。
- *    它们名字看着最贴切，实际渲染不出来。
+ * ## 为什么图标不再直接映射成 emoji
  *
- * 分配口径：Unicode 里**只有一张「电脑屏幕」图**（`U+1F5A5`），
- * 主机 / 显示器 / 一体机 / 电视 四个类型抢它一个，必然有让位 —— **谁最像就归谁**：
- * 显示器拿它（画面就是一块屏），主机改用立式柜体（机箱感），
- * 一体机改用屏键一体的老式电脑，电视用唯一的电视机符号。
+ * 原来这里返回的是 emoji 字符，有三个真实问题（2026-09-24 实测记录）：
+ * ① **大部分设备类 emoji 码点默认是"文本呈现"**（`Emoji_Presentation=No`），
+ *   要靠不可见的 `FE0F` 变体选择符才显示成彩色，字体回退一变就成豆腐块 □；
+ * ② emoji 靠系统字体渲染，headless / 精简版 Windows 上直接缺失（`AppIcon.vue` 的注释记过）；
+ * ③ 按名字匹配意味着**用户改名等于丢图标**。
+ * 现在统一返回 SVG 标识、由 `AppIcon` 渲染，并且优先读库里那个与名称解耦的配置。
  */
-const TYPE_ICONS: Record<string, string> = {
+const TYPE_ICONS: Record<string, IconName> = {
   // —— 整机类 ——
-  主机: '🗄️',
-  台式机: '🗄️',
-  笔记本: '💻',
-  一体机: '🖳',
-  服务器: '🖧',
+  主机: 'tower',
+  台式机: 'tower',
+  笔记本: 'laptop',
+  一体机: 'aio',
+  服务器: 'server',
   // —— 显示类 ——
-  显示器: '🖥️',
-  电视: '📺',
-  投影仪: '📽️',
+  显示器: 'monitor',
+  电视: 'tv',
+  投影仪: 'projector',
   // —— 外设 ——
-  键盘: '⌨️',
-  鼠标: '🖱️',
-  打印机: '🖨️',
-  扫描仪: '📠',
-  摄像头: '📷',
-  音箱: '🔊',
+  键盘: 'keyboard',
+  鼠标: 'mouse',
+  打印机: 'printer',
+  扫描仪: 'scanner',
+  摄像头: 'camera',
+  音箱: 'speaker',
   // —— 网络设备 ——
-  路由器: '📶',
-  交换机: '📡',
+  路由器: 'router',
+  交换机: 'switch',
   // —— 移动设备 ——
-  手机: '📱',
-  平板: '📱',
+  手机: 'smartphone',
+  平板: 'tablet',
   // —— 其他 ——
-  家具: '🪑',
-  装饰摆件: '🖼️',
+  家具: 'chair',
+  装饰摆件: 'frame',
 }
 
 /**
  * 类型名没精确命中时，按关键字兜底。
  *
- * 用户能自己建设备类型（「显示器（曲面）」「NAS 存储」…），
- * 一张精确表盖不住 —— 但也不该全都退成 📦，那等于没图标。
+ * 用户能自己建设备类型（「显示器（曲面）」「NAS 存储」…），一张精确表盖不住 ——
+ * 但也不该全都退成盒子，那等于没图标。
+ *
+ * ⚠️ **这张表只是"建议图标"的来源**（第 2 层），不是最终配置。
+ * 顺序有意义：先匹配到的赢，所以更具体的词要排在前面。
  */
-const TYPE_KEYWORDS: [string[], string][] = [
-  [['一体机', '一体', 'all-in-one'], '🖳'],
-  [['笔记本', '手提', 'laptop', 'macbook'], '💻'],
-  [['主机', '台式', '塔式', '工控机'], '🗄️'],
-  [['服务器', '存储', 'nas', '机架'], '🖧'],
-  [['显示', '屏幕', 'monitor', '曲面'], '🖥️'],
-  [['电视', 'tv', '智慧屏'], '📺'],
-  [['投影'], '📽️'],
-  [['打印'], '🖨️'],
-  [['扫描'], '📠'],
-  [['键盘'], '⌨️'],
-  [['鼠标', '轨迹'], '🖱️'],
-  [['路由', '网关', 'ap'], '📶'],
-  [['交换', '防火墙'], '📡'],
-  [['摄像', '相机', '监控'], '📷'],
-  [['音', '扬声', '耳'], '🔊'],
-  [['手机', '电话'], '📱'],
-  [['平板'], '📱'],
-  [['桌', '椅', '柜', '家具'], '🪑'],
-  [['摆件', '装饰', '画'], '🖼️'],
+const TYPE_KEYWORDS: [string[], IconName][] = [
+  [['一体机', '一体', 'all-in-one'], 'aio'],
+  [['笔记本', '手提', 'laptop', 'macbook'], 'laptop'],
+  [['主机', '台式', '塔式', '工控机'], 'tower'],
+  [['服务器', '存储', 'nas', '机架'], 'server'],
+  [['显示', '屏幕', 'monitor', '曲面'], 'monitor'],
+  [['电视', 'tv', '智慧屏'], 'tv'],
+  [['投影'], 'projector'],
+  [['打印'], 'printer'],
+  [['扫描'], 'scanner'],
+  [['键盘'], 'keyboard'],
+  [['鼠标', '轨迹'], 'mouse'],
+  [['路由', '网关', 'ap'], 'router'],
+  [['交换', '防火墙'], 'switch'],
+  [['摄像', '相机', '监控'], 'camera'],
+  [['音', '扬声', '耳'], 'speaker'],
+  [['手机', '电话'], 'smartphone'],
+  [['平板'], 'tablet'],
+  [['桌', '椅', '柜', '家具'], 'chair'],
+  [['摆件', '装饰', '画'], 'frame'],
 ]
 
-export function typeIcon(name?: string | null): string {
-  if (!name) return '📦'
+/**
+ * 按名称猜一个**建议**图标（第 2 层）。
+ *
+ * 单独导出：维护界面要区分"显示的是建议还是已确认"，得知道自己拿到的是哪一层。
+ */
+export function suggestTypeIcon(name?: string | null): IconName {
+  if (!name) return FALLBACK_ICON
   const exact = TYPE_ICONS[name]
   if (exact) return exact
   const lower = name.toLowerCase()
   for (const [words, icon] of TYPE_KEYWORDS) {
     if (words.some((w) => lower.includes(w))) return icon
   }
-  return '📦'
+  return FALLBACK_ICON
 }
+
+/**
+ * 取图标时真正需要的最小信息。
+ *
+ * 各接口给的是**扁平字段**（`device_type_name` / `device_type_icon`），
+ * 不是嵌套的 `DeviceType` 对象，所以这里按结构收类型，不强制调用方去拼对象。
+ */
+export interface IconSource {
+  name?: string | null
+  icon?: string | null
+}
+
+/**
+ * 取某一台设备类型该用的图标 —— **全站唯一入口**。
+ *
+ * 接受的三种形态：
+ * - `DeviceType` / `{name, icon}` —— 有已确认图标就用它；
+ * - 纯名称字符串 —— 只能走推断（老调用点的兜底）；
+ * - 空 —— 兜底盒子。
+ */
+export function typeIcon(deviceType?: DeviceType | IconSource | string | null): IconName {
+  if (!deviceType) return FALLBACK_ICON
+  if (typeof deviceType === 'string') return suggestTypeIcon(deviceType)
+  const saved = deviceType.icon
+  if (saved && isIconName(saved)) return saved
+  // 库里存了前端不认识的标识（旧版本写入、或手工改库）→ 退回名称推断。
+  // 不直接给盒子：名称往往还猜得出来，那比空白更有用。
+  return suggestTypeIcon(deviceType.name)
+}
+
+/**
+ * 从任意"带设备类型字段"的行里取出图标源。
+ *
+ * 为什么要这个函数：各接口给的是**扁平字段**（`device_type_name` /
+ * `device_type_icon`），字段名在 `Asset` / `AssetBrief` / `MapInventoryAsset`
+ * 上是同一套，但每个页面各写一遍 `{ name: x.device_type_name, icon: x.device_type_icon }`
+ * 迟早会有人漏掉 `icon` 那一半 —— 那样用户配好的图标就白配了（静默退回推断）。
+ * 收敛到一处，模板里只写 `typeIcon(iconOf(row))`。
+ */
+export function iconOf(row?: { device_type_name?: string | null; device_type_icon?: string | null } | null): IconSource {
+  return { name: row?.device_type_name, icon: row?.device_type_icon }
+}
+
+/**
+ * 这台设备类型有没有"已确认的图标"。
+ *
+ * 维护界面用它决定要不要显示"未确认"标记；业务页面**不需要**关心这个 ——
+ * 展示上"建议"和"已确认"长得一样，不该把技术状态泄漏成用户可见的噪音。
+ */
+export function hasConfirmedIcon(deviceType?: DeviceType | IconSource | null): boolean {
+  return Boolean(deviceType?.icon && isIconName(deviceType.icon))
+}
+
 
 export interface StatusMeta {
   label: string
@@ -114,11 +180,17 @@ export function statusMeta(status: string): StatusMeta {
 // --------------------------------------------------------------------------- //
 // 设备类别
 // --------------------------------------------------------------------------- //
-export const CATEGORY_META: Record<DeviceCategory, { label: string; icon: string; color: string; bg: string }> = {
-  // 图标与 TYPE_ICONS 里「主机 / 显示器」保持一致 —— 类别和类型看着是同一个东西，不能两套图
-  host: { label: '主机类', icon: '🗄️', color: '#1f5fd0', bg: '#eaf2ff' },
-  display: { label: '显示类', icon: '🖥️', color: '#7a4bd0', bg: '#f2ecff' },
-  other: { label: '其他', icon: '📦', color: '#646a73', bg: '#f2f3f5' },
+/**
+ * 设备类别（host / display / other）的展示元数据。
+ *
+ * ⚠️ **这里刻意没有 icon**：类别是"能不能参与配对"的业务判定，
+ * 不是给人挑图标的维度。图标挂在**设备类型**上（`DeviceType.icon`），
+ * 类别只给配色与文案。（早先这里放过三个 emoji，但全站从来没人渲染 —— 已删。）
+ */
+export const CATEGORY_META: Record<DeviceCategory, { label: string; color: string; bg: string }> = {
+  host: { label: '主机类', color: '#1f5fd0', bg: '#eaf2ff' },
+  display: { label: '显示类', color: '#7a4bd0', bg: '#f2ecff' },
+  other: { label: '其他', color: '#646a73', bg: '#f2f3f5' },
 }
 
 export function categoryMeta(category?: string | null) {
@@ -144,7 +216,7 @@ export interface OperationMeta {
 export const OPERATION_META: Record<AssetOperation, OperationMeta> = {
   checkout: {
     label: '领用',
-    icon: '📤',
+    icon: 'upload',
     tone: 'primary',
     needUser: true,
     confirm: false,
@@ -152,7 +224,7 @@ export const OPERATION_META: Record<AssetOperation, OperationMeta> = {
   },
   return: {
     label: '归还',
-    icon: '📥',
+    icon: 'download',
     tone: 'default',
     needUser: false,
     confirm: false,
@@ -160,7 +232,7 @@ export const OPERATION_META: Record<AssetOperation, OperationMeta> = {
   },
   repair: {
     label: '送修',
-    icon: '🔧',
+    icon: 'wrench',
     tone: 'warning',
     needUser: false,
     confirm: false,
@@ -168,7 +240,7 @@ export const OPERATION_META: Record<AssetOperation, OperationMeta> = {
   },
   repair_done: {
     label: '维修完成',
-    icon: '✅',
+    icon: 'check',
     tone: 'primary',
     needUser: false,
     confirm: false,
@@ -176,7 +248,7 @@ export const OPERATION_META: Record<AssetOperation, OperationMeta> = {
   },
   scrap: {
     label: '报废',
-    icon: '🗑️',
+    icon: 'trash',
     tone: 'danger',
     needUser: false,
     confirm: true,
@@ -184,7 +256,7 @@ export const OPERATION_META: Record<AssetOperation, OperationMeta> = {
   },
   restore: {
     label: '恢复入库',
-    icon: '♻️',
+    icon: 'recycle',
     tone: 'default',
     needUser: false,
     confirm: false,
@@ -213,22 +285,22 @@ export interface EventMeta {
 }
 
 export const EVENT_META: Record<string, EventMeta> = {
-  create: { icon: '✨', color: '#1f5fd0', bg: '#eaf2ff' },
-  update: { icon: '✏️', color: '#646a73', bg: '#f2f3f5' },
-  status: { icon: '🔁', color: '#a15c00', bg: '#fff4e6' },
-  pair: { icon: '🔗', color: '#7a4bd0', bg: '#f2ecff' },
-  unpair: { icon: '✂️', color: '#7a7f87', bg: '#f2f3f5' },
-  inventory: { icon: '📋', color: '#0f7b3f', bg: '#e8f7ee' },
-  checkout: { icon: '📤', color: '#0f7b3f', bg: '#e8f7ee' },
-  return: { icon: '📥', color: '#0b6bcb', bg: '#eaf2ff' },
-  repair: { icon: '🔧', color: '#a15c00', bg: '#fff4e6' },
-  repair_done: { icon: '✅', color: '#0f7b3f', bg: '#e8f7ee' },
-  scrap: { icon: '🗑️', color: '#d54941', bg: '#fdecea' },
-  restore: { icon: '♻️', color: '#0b6bcb', bg: '#eaf2ff' },
+  create: { icon: 'sparkles', color: '#1f5fd0', bg: '#eaf2ff' },
+  update: { icon: 'edit', color: '#646a73', bg: '#f2f3f5' },
+  status: { icon: 'refresh', color: '#a15c00', bg: '#fff4e6' },
+  pair: { icon: 'link', color: '#7a4bd0', bg: '#f2ecff' },
+  unpair: { icon: 'scissors', color: '#7a7f87', bg: '#f2f3f5' },
+  inventory: { icon: 'clipboard', color: '#0f7b3f', bg: '#e8f7ee' },
+  checkout: { icon: 'upload', color: '#0f7b3f', bg: '#e8f7ee' },
+  return: { icon: 'download', color: '#0b6bcb', bg: '#eaf2ff' },
+  repair: { icon: 'wrench', color: '#a15c00', bg: '#fff4e6' },
+  repair_done: { icon: 'check', color: '#0f7b3f', bg: '#e8f7ee' },
+  scrap: { icon: 'trash', color: '#d54941', bg: '#fdecea' },
+  restore: { icon: 'recycle', color: '#0b6bcb', bg: '#eaf2ff' },
   // 点位迁移：与通用「信息变更」分开，一次搬十几台时履历上能一眼认出来
-  relocate: { icon: '🔀', color: '#0b6bcb', bg: '#eaf2ff' },
+  relocate: { icon: 'shuffle', color: '#0b6bcb', bg: '#eaf2ff' },
   // 关系例外：这是"关于这台设备的一条业务决定"，不是设备被改了 —— 所以用中性灰蓝，不用红
-  relation_exception: { icon: '🩹', color: '#7a7f87', bg: '#f2f3f5' },
+  relation_exception: { icon: 'bandage', color: '#7a7f87', bg: '#f2f3f5' },
 }
 
 export function eventMeta(eventType: string): EventMeta {
@@ -261,9 +333,9 @@ export interface InventoryResultMeta extends StatusMeta {
 }
 
 export const INVENTORY_RESULT_META: Record<InventoryResult, InventoryResultMeta> = {
-  pending: { label: '未盘', icon: '⏳', color: '#7a7f87', bg: '#f2f3f5', border: '#dcdee3' },
-  checked: { label: '已盘', icon: '✅', color: '#0f7b3f', bg: '#e8f7ee', border: '#b7e6c9' },
-  abnormal: { label: '异常', icon: '⚠️', color: '#d54941', bg: '#fdecea', border: '#f7c5c1' },
+  pending: { label: '未盘', icon: 'clock', color: '#7a7f87', bg: '#f2f3f5', border: '#dcdee3' },
+  checked: { label: '已盘', icon: 'check', color: '#0f7b3f', bg: '#e8f7ee', border: '#b7e6c9' },
+  abnormal: { label: '异常', icon: 'circleAlert', color: '#d54941', bg: '#fdecea', border: '#f7c5c1' },
 }
 
 export function inventoryResultMeta(result: string): InventoryResultMeta {
@@ -280,34 +352,46 @@ export interface AuditVisual {
 }
 
 /**
- * 审计动作 → 图标与配色。
+ * 审计动作 → **配色**。
  *
- * 不跟后端要图标 —— 后端只给业务标签（那是数据的一部分），
- * 配色和图标是纯展示层的事，换一套视觉不该动接口。
+ * ⚠️ **图标不在这里**（2026-10-19 改）。图标标识由后端下发
+ * （`AuditLogOut.action_icon_name` / `AuditActionOption.icon_name`，见
+ * `backend/app/models.py::AuditAction.ICONS`）—— 一处定义覆盖全部 38 个动作。
+ *
+ * 以前这里另存了一份 18 项的图标映射，与后端的 38 项并存：
+ * 多出来的 20 个动作（点位迁移、关联同步、平面图、轻资产…）全部掉到兜底 `•`，
+ * 审计页有一整批记录根本没有图标。**同一件事存两处，必然漏。**
+ *
+ * 现在分工明确：
+ * - **图标**是"这是什么动作"的语义 → 跟动作枚举一起定义，由接口给；
+ * - **配色**是纯视觉关注点 → 留在前端，换一套配色不该动接口。
  */
-const AUDIT_VISUALS: Record<string, AuditVisual> = {
-  asset_create: { icon: '✨', color: '#1f5fd0', bg: '#eaf2ff' },
-  asset_update: { icon: '✏️', color: '#646a73', bg: '#f2f3f5' },
-  asset_delete: { icon: '🗑️', color: '#d54941', bg: '#fdecea' },
-  asset_operate: { icon: '🔁', color: '#a15c00', bg: '#fff4e6' },
-  asset_pair: { icon: '🔗', color: '#7a4bd0', bg: '#f2ecff' },
-  asset_unpair: { icon: '✂️', color: '#7a7f87', bg: '#f2f3f5' },
-  asset_rebind: { icon: '🔀', color: '#7a4bd0', bg: '#f2ecff' },
-  asset_import: { icon: '📥', color: '#0f7b3f', bg: '#e8f7ee' },
-  asset_export: { icon: '📤', color: '#0b6bcb', bg: '#eaf2ff' },
-  inventory_create: { icon: '🧭', color: '#1f5fd0', bg: '#eaf2ff' },
-  inventory_mark: { icon: '📋', color: '#0f7b3f', bg: '#e8f7ee' },
-  inventory_close: { icon: '🏁', color: '#646a73', bg: '#f2f3f5' },
-  inventory_reopen: { icon: '↩️', color: '#a15c00', bg: '#fff4e6' },
-  inventory_delete: { icon: '🗑️', color: '#d54941', bg: '#fdecea' },
-  type_create: { icon: '🏷️', color: '#1f5fd0', bg: '#eaf2ff' },
-  type_update: { icon: '🏷️', color: '#646a73', bg: '#f2f3f5' },
-  type_delete: { icon: '🏷️', color: '#d54941', bg: '#fdecea' },
-  audit_export: { icon: '📤', color: '#0b6bcb', bg: '#eaf2ff' },
+const AUDIT_TONES: Record<string, { color: string; bg: string }> = {
+  asset_create: { color: '#1f5fd0', bg: '#eaf2ff' },
+  asset_update: { color: '#646a73', bg: '#f2f3f5' },
+  asset_delete: { color: '#d54941', bg: '#fdecea' },
+  asset_operate: { color: '#a15c00', bg: '#fff4e6' },
+  asset_pair: { color: '#7a4bd0', bg: '#f2ecff' },
+  asset_unpair: { color: '#7a7f87', bg: '#f2f3f5' },
+  asset_rebind: { color: '#7a4bd0', bg: '#f2ecff' },
+  asset_import: { color: '#0f7b3f', bg: '#e8f7ee' },
+  asset_export: { color: '#0b6bcb', bg: '#eaf2ff' },
+  inventory_create: { color: '#1f5fd0', bg: '#eaf2ff' },
+  inventory_mark: { color: '#0f7b3f', bg: '#e8f7ee' },
+  inventory_close: { color: '#646a73', bg: '#f2f3f5' },
+  inventory_reopen: { color: '#a15c00', bg: '#fff4e6' },
+  inventory_delete: { color: '#d54941', bg: '#fdecea' },
+  type_create: { color: '#1f5fd0', bg: '#eaf2ff' },
+  type_update: { color: '#646a73', bg: '#f2f3f5' },
+  type_delete: { color: '#d54941', bg: '#fdecea' },
+  audit_export: { color: '#0b6bcb', bg: '#eaf2ff' },
 }
 
-export function auditVisual(action: string): AuditVisual {
-  return AUDIT_VISUALS[action] ?? { icon: '•', color: '#646a73', bg: '#f2f3f5' }
+/**
+ * 审计动作的配色。**图标请用接口给的 `action_icon_name`**，不要在这里找。
+ */
+export function auditTone(action: string): { color: string; bg: string } {
+  return AUDIT_TONES[action] ?? { color: '#646a73', bg: '#f2f3f5' }
 }
 
 // --------------------------------------------------------------------------- //
@@ -317,10 +401,10 @@ export const IMPORT_ACTION_META: Record<
   string,
   { label: string; color: string; bg: string; border: string; icon: string }
 > = {
-  create: { label: '新增', icon: '✨', color: '#0f7b3f', bg: '#e8f7ee', border: '#b7e6c9' },
-  update: { label: '更新', icon: '✏️', color: '#0b6bcb', bg: '#eaf2ff', border: '#bed6ff' },
-  unchanged: { label: '无变化', icon: '➖', color: '#7a7f87', bg: '#f2f3f5', border: '#dcdee3' },
-  error: { label: '错误', icon: '⚠️', color: '#d54941', bg: '#fdecea', border: '#f7c5c1' },
+  create: { label: '新增', icon: 'sparkles', color: '#0f7b3f', bg: '#e8f7ee', border: '#b7e6c9' },
+  update: { label: '更新', icon: 'edit', color: '#0b6bcb', bg: '#eaf2ff', border: '#bed6ff' },
+  unchanged: { label: '无变化', icon: 'minus', color: '#7a7f87', bg: '#f2f3f5', border: '#dcdee3' },
+  error: { label: '错误', icon: 'circleAlert', color: '#d54941', bg: '#fdecea', border: '#f7c5c1' },
 }
 
 export function importActionMeta(action: string) {

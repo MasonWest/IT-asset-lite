@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import AssetFormDialog from '@/components/AssetFormDialog.vue'
+import AppIcon from '@/components/AppIcon.vue'
 import AssetLightAssetsPanel from '@/components/AssetLightAssetsPanel.vue'
 import AssetOperationDialog from '@/components/AssetOperationDialog.vue'
 import AssetRelationsPanel from '@/components/AssetRelationsPanel.vue'
@@ -17,6 +18,7 @@ import {
   copyText,
   downloadImage,
   formatDate,
+  iconOf,
   orDash,
   operationMeta,
   statusMeta,
@@ -214,7 +216,7 @@ async function onRelationsChanged() {
     </div>
 
     <div v-if="notFound && !loading" class="empty-state">
-      <div class="big">🔍</div>
+      <div class="big"><AppIcon name="search" :size="44" /></div>
       <div class="title">没有找到这台设备</div>
       <div>它可能已经被删除了，或者链接不对。</div>
       <div style="margin-top: 16px">
@@ -232,7 +234,7 @@ async function onRelationsChanged() {
       />
 
       <div class="detail-hero">
-        <div class="type-badge">{{ typeIcon(asset.device_type_name) }}</div>
+        <div class="type-badge"><AppIcon :name="typeIcon(iconOf(asset))" :size="28" /></div>
         <div style="flex: 1; min-width: 0">
           <div class="code">
             {{ asset.asset_code }}
@@ -247,10 +249,10 @@ async function onRelationsChanged() {
               {{ asset.status_label }}
             </span>
             <span v-if="asset.monitor_count" class="status-pill linked">
-              🖥 {{ asset.monitor_count }} 台显示器
+              <AppIcon name="monitor" :size="13" style="margin-right:3px" />{{ asset.monitor_count }} 台显示器
             </span>
             <span v-else-if="asset.host_code" class="status-pill linked">
-              🔗 挂在 {{ asset.host_code }}
+              <AppIcon name="link" :size="13" style="margin-right:3px" />挂在 {{ asset.host_code }}
             </span>
           </div>
           <p class="sub">
@@ -271,7 +273,8 @@ async function onRelationsChanged() {
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item v-for="a in asset.actions" :key="a" :command="a">
-                  {{ operationMeta(a).icon }} {{ operationMeta(a).label }}
+                  <AppIcon :name="operationMeta(a).icon" :size="14" style="margin-right: 6px" />
+                  {{ operationMeta(a).label }}
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>

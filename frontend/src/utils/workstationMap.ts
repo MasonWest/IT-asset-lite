@@ -41,13 +41,21 @@ export interface StateMeta {
   label: string
   /** 角标文字（画在格子上） */
   badge: string
+  /**
+   * 角标前的图标标识（`utils/icons.ts` 的 key）。
+   *
+   * ⚠️ 2026-10-19 从"文字里带 ✓ / ⚠️"改成独立字段：把图标塞进字符串里，
+   * 调用方就没法换 SVG 渲染了（只能原样输出字符）。现在文字与图标分开，
+   * 渲染处自己决定要不要画图标。
+   */
+  badgeIcon?: string
   color: string
   soft: string
 }
 
 export const STATE_META: Record<MapState, StateMeta> = {
-  checked: { label: '已盘', badge: '✓ 正常', color: '#10b981', soft: '#ecfdf5' },
-  abnormal: { label: '异常', badge: '⚠️ 异常', color: '#ef4444', soft: '#fef2f2' },
+  checked: { label: '已盘', badge: '正常', badgeIcon: 'check', color: '#10b981', soft: '#ecfdf5' },
+  abnormal: { label: '异常', badge: '异常', badgeIcon: 'circleAlert', color: '#ef4444', soft: '#fef2f2' },
   pending: { label: '待盘', badge: '待盘', color: '#f59e0b', soft: '#fffbeb' },
   empty: { label: '空位', badge: '空位', color: '#94a3b8', soft: '#f8fafc' },
   not_in_scope: { label: '不在本次范围', badge: '本次不盘', color: '#a1a1aa', soft: '#fafafa' },

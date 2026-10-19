@@ -117,6 +117,31 @@ const router = createRouter({
       meta: { title: '审计日志' },
     },
     {
+      /**
+       * vgpu / WebGPU 视觉实验（技术验证）。
+       *
+       * 刻意**不进主导航**、不挂任何业务数据 —— 它是一次可独立移除的探针，
+       * 而不是一个功能页面。移除方式见 src/lab/vgpu/README.md。
+       */
+      path: '/lab/vgpu',
+      name: 'lab-vgpu',
+      component: () => import('@/lab/vgpu/VgpuLabView.vue'),
+      meta: { title: 'WebGPU 实验' },
+    },
+    {
+      /**
+       * 图标预览（开发期工具页）。
+       *
+       * 与 `/lab/vgpu` 同样的性质：**不进主导航、不挂业务数据**，
+       * 是一次可独立移除的探针。用途是图标改造期用真实浏览器核对
+       * 全部图标在 16/20/30px 下的形状 —— 改完即可删。
+       */
+      path: '/lab/icons',
+      name: 'lab-icons',
+      component: () => import('@/lab/icons/IconLabView.vue'),
+      meta: { title: '图标预览' },
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/',
     },

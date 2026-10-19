@@ -15,6 +15,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiMessage, inventoryApi } from '@/api'
 import { appState, saveOperator } from '@/stores/app'
 import type { InventoryContext, InventoryResult } from '@/types'
+import AppIcon from '@/components/AppIcon.vue'
 import { inventoryResultMeta, relativeTime } from '@/utils/format'
 
 const props = defineProps<{
@@ -101,12 +102,14 @@ watch(() => [props.assetId, props.refreshKey], load, { immediate: true })
 <template>
   <div v-if="context" class="inv-bar" :style="{ borderColor: meta.border }">
     <div class="lead">
-      <span class="ic" :style="{ background: meta.bg, color: meta.color }">📋</span>
+      <span class="ic" :style="{ background: meta.bg, color: meta.color }">
+        <AppIcon name="clipboard" :size="14" />
+      </span>
       <div class="text">
         <div class="line1">
           盘点任务《{{ context.task_name }}》
           <span class="state" :style="{ color: meta.color, background: meta.bg, borderColor: meta.border }">
-            {{ meta.icon }} {{ context.result_label }}
+            {{ context.result_label }}
           </span>
         </div>
         <div class="line2">
@@ -139,7 +142,7 @@ watch(() => [props.assetId, props.refreshKey], load, { immediate: true })
         :loading="acting"
         @click="mark('checked')"
       >
-        ✅ 标记已盘
+        <AppIcon name="check" :size="13" /> 标记已盘
       </el-button>
       <el-button
         v-if="context.result !== 'abnormal'"
@@ -148,7 +151,7 @@ watch(() => [props.assetId, props.refreshKey], load, { immediate: true })
         class="abn"
         @click="mark('abnormal')"
       >
-        ⚠️ 异常
+        <AppIcon name="circleAlert" :size="13" /> 异常
       </el-button>
       <el-button
         v-if="marked"

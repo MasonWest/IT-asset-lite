@@ -15,7 +15,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiMessage, pairingApi } from '@/api'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { AssetBrief, PairingBoard, Relation } from '@/types'
-import { formatDate, hasOwner, isNoUser, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
+import AppIcon from '@/components/AppIcon.vue'
+import { formatDate, hasOwner, iconOf, isNoUser, orDash, statusMeta, typeIcon, userLabel } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -351,19 +352,19 @@ onMounted(async () => {
 
     <div class="stat-row">
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>🖥️</span>主机</div>
+        <div class="k"><span><AppIcon name="tower" :size="14" /></span>主机</div>
         <div class="v">{{ stats.hosts ?? 0 }}<small>台</small></div>
       </div>
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>🖥</span>显示器</div>
+        <div class="k"><span><AppIcon name="monitor" :size="14" /></span>显示器</div>
         <div class="v">{{ stats.monitors ?? 0 }}<small>台</small></div>
       </div>
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>🔗</span>已配对</div>
+        <div class="k"><span><AppIcon name="link" :size="14" /></span>已配对</div>
         <div class="v">{{ stats.paired_monitors ?? 0 }}<small>台</small></div>
       </div>
       <div class="stat-card" style="cursor: default">
-        <div class="k"><span>📦</span>待配对</div>
+        <div class="k"><span><AppIcon name="box" :size="14" /></span>待配对</div>
         <div class="v">{{ stats.unpaired_monitors ?? 0 }}<small>台</small></div>
       </div>
       <div
@@ -371,7 +372,7 @@ onMounted(async () => {
         style="cursor: default"
         title="全库统计，不受上方「只看没配显示器的」和过滤开关影响"
       >
-        <div class="k"><span>⚠️</span>没配显示器的主机</div>
+        <div class="k"><span><AppIcon name="circleAlert" :size="14" /></span>没配显示器的主机</div>
         <div class="v">{{ stats.hosts_without_monitor ?? 0 }}<small>台</small></div>
       </div>
     </div>
@@ -435,7 +436,7 @@ onMounted(async () => {
         </div>
         <div v-for="h in visibleHosts" :key="h.host.id" class="host-card panel">
           <div class="host-row">
-            <span class="type-badge">{{ typeIcon(h.host.device_type_name) }}</span>
+            <span class="type-badge"><AppIcon :name="typeIcon(iconOf(h.host))" :size="20" /></span>
             <div class="info" @click="openAsset(h.host.id)">
               <div class="c1">
                 {{ h.host.asset_code }}
@@ -464,7 +465,7 @@ onMounted(async () => {
               class="chip"
               :style="{ borderColor: statusMeta(m.status).border }"
             >
-              <span class="ic">{{ typeIcon(m.device_type_name) }}</span>
+              <span class="ic"><AppIcon :name="typeIcon(iconOf(m))" :size="14" /></span>
               <a @click="openAsset(m.id)">{{ m.asset_code }}</a>
               <span class="model">{{ orDash(m.brand) }} {{ m.model || '' }}</span>
               <button class="x" title="解绑" :disabled="acting" @click="unbind(h.host, m)">×</button>
@@ -474,7 +475,7 @@ onMounted(async () => {
         </div>
 
         <div v-if="!loading && !visibleHosts.length" class="empty-state">
-          <div class="big">🖥️</div>
+          <div class="big"><AppIcon name="monitor" :size="44" /></div>
           <template v-if="onlyUnpairedHosts && matchedHosts.length">
             <div class="title">所有主机都配上显示器了</div>
             <div>取消勾选「只看没配显示器的」，就能看到全部 {{ matchedHosts.length }} 台主机。</div>
@@ -502,7 +503,7 @@ onMounted(async () => {
           :key="m.id"
           class="monitor-card panel"
         >
-          <span class="type-badge">{{ typeIcon(m.device_type_name) }}</span>
+          <span class="type-badge"><AppIcon :name="typeIcon(iconOf(m))" :size="20" /></span>
           <div class="info" @click="openAsset(m.id)">
             <div class="c1">{{ m.asset_code }}</div>
             <div class="c2">{{ orDash(m.brand) }} {{ m.model || '' }}</div>
@@ -534,7 +535,7 @@ onMounted(async () => {
         </div>
 
         <div v-if="!loading && !visibleUnpaired.length" class="empty-state">
-          <div class="big">📦</div>
+          <div class="big"><AppIcon name="box" :size="44" /></div>
           <div class="title">没有待配对的显示器</div>
           <div>所有显示器都有归属了，或者还没有录入显示类设备。</div>
         </div>
@@ -548,7 +549,7 @@ onMounted(async () => {
       width="min(560px, 92vw)"
     >
       <div v-if="!allMonitors.length" class="empty-state">
-        <div class="big">🖥</div>
+        <div class="big"><AppIcon name="monitor" :size="44" /></div>
         <div class="title">还没有任何显示类设备</div>
         <div>先到「资产台账」录入显示器，并确认它的设备类型类别是显示类。</div>
       </div>

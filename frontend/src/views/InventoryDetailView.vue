@@ -15,8 +15,10 @@ import { apiMessage, assetApi, inventoryApi, inventoryExportUrl } from '@/api'
 import { useBackNav } from '@/composables/useBackNav'
 import { appState, loadSystemInfo, saveOperator } from '@/stores/app'
 import type { InventoryItem, InventoryResult, InventoryTaskDetail } from '@/types'
+import AppIcon from '@/components/AppIcon.vue'
 import {
   formatDateTime,
+  iconOf,
   inventoryResultMeta,
   orDash,
   statusMeta,
@@ -228,10 +230,10 @@ function openAsset(id: number) {
 const resultCards = computed(() => {
   const t = task.value
   return [
-    { key: '' as const, label: '全部', value: t?.total ?? 0, icon: '📦' },
-    { key: 'checked' as const, label: '已盘', value: t?.checked ?? 0, icon: '✅' },
-    { key: 'abnormal' as const, label: '异常', value: t?.abnormal ?? 0, icon: '⚠️' },
-    { key: 'pending' as const, label: '未盘', value: t?.pending ?? 0, icon: '⏳' },
+    { key: '' as const, label: '全部', value: t?.total ?? 0, icon: 'box' },
+    { key: 'checked' as const, label: '已盘', value: t?.checked ?? 0, icon: 'check' },
+    { key: 'abnormal' as const, label: '异常', value: t?.abnormal ?? 0, icon: 'circleAlert' },
+    { key: 'pending' as const, label: '未盘', value: t?.pending ?? 0, icon: 'clock' },
   ]
 })
 
@@ -251,7 +253,7 @@ watch(() => route.params.id, load)
     </div>
 
     <div v-if="notFound && !loading" class="empty-state">
-      <div class="big">🔍</div>
+      <div class="big"><AppIcon name="search" :size="44" /></div>
       <div class="title">没有这个盘点任务</div>
       <div>它可能已经被删除了，或者链接不对。</div>
       <div style="margin-top: 16px">
@@ -295,7 +297,7 @@ watch(() => route.params.id, load)
       <!-- 扫码标记 -->
       <div v-if="task.status === 'open'" class="panel scan-panel">
         <div class="scan-head">
-          <span class="ic">📷</span>
+          <span class="ic"><AppIcon name="camera" :size="13" /></span>
           <div>
             <div class="t1">扫码标记</div>
             <div class="t2">
@@ -334,7 +336,7 @@ watch(() => route.params.id, load)
           :class="{ active: resultFilter === c.key }"
           @click="resultFilter = c.key"
         >
-          <div class="k"><span>{{ c.icon }}</span>{{ c.label }}</div>
+          <div class="k"><span><AppIcon :name="c.icon" :size="14" /></span>{{ c.label }}</div>
           <div class="v">{{ c.value }}<small>台</small></div>
         </div>
       </div>
@@ -372,7 +374,7 @@ watch(() => route.params.id, load)
 
       <div v-else-if="task.status === 'closed'" class="panel" style="padding: 14px 18px; margin-bottom: 14px">
         <span style="font-size: 13px; color: #0f7b3f">
-          ✅ 这轮盘点全部盘到，没有差异。
+          <AppIcon name="circleCheck" :size="13" style="margin-right:3px" />这轮盘点全部盘到，没有差异。
         </span>
       </div>
 
@@ -400,7 +402,7 @@ watch(() => route.params.id, load)
 
         <div v-for="i in filtered" :key="i.id" class="inv-row">
           <div class="c1">
-            <span class="type-badge sm">{{ typeIcon(i.asset.device_type_name) }}</span>
+            <span class="type-badge sm"><AppIcon :name="typeIcon(iconOf(i.asset))" :size="17" /></span>
             <div class="info" @click="openAsset(i.asset_id)">
               <div class="code">{{ i.asset.asset_code }}</div>
               <div class="model">{{ orDash(i.asset.brand) }} {{ i.asset.model || '' }}</div>
@@ -444,7 +446,8 @@ watch(() => route.params.id, load)
                 borderColor: inventoryResultMeta(i.result).border,
               }"
             >
-              {{ inventoryResultMeta(i.result).icon }} {{ i.result_label }}
+              <AppIcon :name="inventoryResultMeta(i.result).icon" :size="13" />
+              {{ i.result_label }}
             </span>
             <div v-if="i.operator" class="meta">by {{ i.operator }}</div>
             <div v-if="i.checked_at" class="meta">{{ formatDateTime(i.checked_at) }}</div>

@@ -55,13 +55,13 @@ export function severityMeta(severity: string): SeverityMeta {
 
 /** 每条规则的图标。让一堆规则卡能靠形状区分，而不是只能读字。 */
 const RULE_ICONS: Record<string, string> = {
-  station_vs_asset_user: '👥',
-  asset_user_unregistered: '❓',
-  asset_unbound: '📍',
-  asset_on_deleted_station: '🗑️',
-  relation_exception_stale: '🩹',
+  station_vs_asset_user: 'users',
+  asset_user_unregistered: 'help',
+  asset_unbound: 'pin',
+  asset_on_deleted_station: 'trash',
+  relation_exception_stale: 'bandage',
 }
 
 export function ruleIcon(rule: InsightRule | string): string {
-  return RULE_ICONS[rule] ?? '•'
+  return RULE_ICONS[rule] ?? 'dot'
 }

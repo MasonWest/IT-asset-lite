@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import AppIcon from '@/components/AppIcon.vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 
@@ -83,7 +84,7 @@ async function refreshInfo() {
 
       <div class="right">
         <button class="operator-chip" :class="{ unset: !appState.operator }" @click="openSettings">
-          <span class="ic">👤</span>
+          <span class="ic"><AppIcon name="user" :size="15" /></span>
           <span class="txt">{{ appState.operator || '设置操作人' }}</span>
         </button>
         <span class="net-chip" :title="`扫码地址：${baseDisplay}`">
@@ -91,7 +92,7 @@ async function refreshInfo() {
           {{ baseDisplay.replace(/^https?:\/\//, '') }}
         </span>
         <el-button link :title="'系统信息 / 操作人 / 扫码地址设置'" @click="openSettings">
-          <span style="font-size: 16px">⚙</span>
+          <AppIcon name="settings" :size="16" />
         </el-button>
       </div>
     </header>

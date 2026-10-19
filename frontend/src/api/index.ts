@@ -164,12 +164,14 @@ export const deviceTypeApi = {
   list: () => get<DeviceType[]>('/device-types'),
   // operator 走 query：只影响审计日志里的「操作人」，不参与业务
   create: (
-    payload: { name: string; sort_order?: number; category?: DeviceCategory },
+    payload: { name: string; sort_order?: number; category?: DeviceCategory; icon?: string | null },
     operator?: string | null,
   ) => post<DeviceType>('/device-types', payload, operator ? { operator } : undefined),
   update: (
     id: number,
-    payload: { name?: string; sort_order?: number; category?: DeviceCategory },
+    // icon 传 null / '' = 清掉图标（回到"按名称给建议图标"）；
+    // 不传这个 key = 不动它（后端用 exclude_unset 区分）
+    payload: { name?: string; sort_order?: number; category?: DeviceCategory; icon?: string | null },
     operator?: string | null,
   ) => put<DeviceType>(`/device-types/${id}`, payload, operator ? { operator } : undefined),
   remove: (id: number, operator?: string | null) =>
@@ -644,9 +646,12 @@ export const lightApi = {
 
   /**
    * 搜索可关联的正式资产 / 点位（流转对话框选宿专用）。
-   * 不给全量列表 —— 150 台设备全塞进下拉纯浪费，要什么搜什么。
+   *
+   * `limit = 0`（默认）= **不截断**，一次返回全部候选：点位 ~70、资产 ~150，
+   * 打开下拉就能一直往下滚。早先写死 20，下拉只露前 20 条、用户以为"就这么点"。
+   * 搜关键词时也只返回匹配项，所以"全量"只在没输入时发生。
    */
-  holders: (kind: 'asset' | 'workstation', keyword = '', limit = 20) =>
+  holders: (kind: 'asset' | 'workstation', keyword = '', limit = 0) =>
     get<LightHolderCandidate[]>('/light/holders', pruneParams({ kind, keyword, limit })),
 }
 

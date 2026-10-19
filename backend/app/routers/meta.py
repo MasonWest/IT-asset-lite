@@ -77,6 +77,7 @@ def get_filters(db: Session = Depends(get_db)):
                 sort_order=t.sort_order,
                 category=t.category,
                 category_label=DeviceCategory.LABELS.get(t.category, t.category),
+                icon=t.icon,
                 asset_count=type_counts.get(t.id, 0),
             )
             for t in types

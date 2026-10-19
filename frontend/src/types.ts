@@ -23,6 +23,13 @@ export interface DeviceType {
   sort_order: number
   category: DeviceCategory
   category_label: string
+  /**
+   * 已确认的图标标识（`utils/icons.ts::ICON_PATHS` 的 key），如 `tower`。
+   *
+   * **为空 = 用户还没确认过图标**，界面据此按名称给一个**建议**图标
+   * （只显示、不写库）。判断"该不该显示未确认标记"也靠它。
+   */
+  icon: string | null
   asset_count: number
 }
 
@@ -30,6 +37,8 @@ export interface DeviceTypeBrief {
   id: number
   name: string
   category: DeviceCategory
+  /** 同 `DeviceType.icon`：可能为空（未确认） */
+  icon?: string | null
 }
 
 /** 配对关系里用的精简设备结构 */
@@ -38,6 +47,11 @@ export interface AssetBrief {
   asset_code: string
   device_type_id: number
   device_type_name: string
+  /**
+   * 已确认的图标标识（`utils/icons.ts::ICON_PATHS` 的 key）。
+   * 为空 = 用户还没确认过，界面按名称给一个**建议**图标（只显示、不写库）。
+   */
+  device_type_icon?: string | null
   brand: string | null
   model: string | null
   serial_number: string | null
@@ -53,6 +67,11 @@ export interface Asset {
   finance_code: string | null
   device_type_id: number
   device_type_name: string
+  /**
+   * 已确认的图标标识（`utils/icons.ts::ICON_PATHS` 的 key）。
+   * 为空 = 用户还没确认过，界面按名称给一个**建议**图标（只显示、不写库）。
+   */
+  device_type_icon?: string | null
   device_category: DeviceCategory
   device_type: DeviceTypeBrief | null
   brand: string | null
@@ -434,7 +453,11 @@ export interface AuditLog {
   ip: string | null
   action: string
   action_label: string
-  action_icon: string
+  /**
+   * 图标标识（`utils/icons.ts::ICON_PATHS` 的 key），**不是 emoji**。
+   * 由后端按动作枚举统一给出，覆盖全部 38 个审计动作。
+   */
+  action_icon_name: string
   target_type: AuditTargetType
   target_type_label: string
   target_id: number | null
@@ -646,6 +669,11 @@ export interface MapInventoryAsset {
   asset_id: number
   asset_code: string
   device_type_name: string
+  /**
+   * 已确认的图标标识（`utils/icons.ts::ICON_PATHS` 的 key）。
+   * 为空 = 用户还没确认过，界面按名称给一个**建议**图标（只显示、不写库）。
+   */
+  device_type_icon?: string | null
   brand: string | null
   model: string | null
   status: AssetStatus
@@ -1093,6 +1121,12 @@ export interface LightHolding extends LightHolder {
   category_unit: string
   /** 「名称 · 品牌 规格」单行版 —— 只有一行位置的地方用它，别自己再拼一遍 */
   category_label: string
+  /**
+   * 品类图标标识（为空 = 未确认）。
+   * ⚠️ **必须有** —— 点位侧栏与资产详情页的关联配件面板都靠它显示品类图标；
+   * 少了它，同一品类在这些地方就会退回"猜出来的图标"，与列表页不一致。
+   */
+  category_icon: string | null
   quantity: number
   since: string | null
   note: string | null
@@ -1123,6 +1157,13 @@ export interface LightCategory {
   spec: string | null
   unit: string
   notes: string | null
+  /**
+   * 已确认的图标标识（`utils/icons.ts::ICON_PATHS` 的 key），如 `keyboardMouse`。
+   *
+   * **为空 = 用户还没确认过图标**，界面据此按品类名给一个**建议**图标
+   * （只显示、不写库）。判断"该不该显示未确认标记"也靠它。
+   */
+  icon: string | null
   active: boolean
   created_at: string
   updated_at: string
@@ -1250,6 +1291,8 @@ export interface LightCategoryPayload {
   spec?: string | null
   unit?: string
   notes?: string | null
+  /** 图标标识。传 null / '' = 清掉（回到"按名称给建议图标"）；不传 = 不动它 */
+  icon?: string | null
   operator?: string | null
 }
 

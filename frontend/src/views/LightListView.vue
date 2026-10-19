@@ -33,7 +33,7 @@ import LightImportDialog from '@/components/LightImportDialog.vue'
 import { apiMessage, lightApi } from '@/api'
 import { appState } from '@/stores/app'
 import type { LightCategory, LightSummary } from '@/types'
-import { holderIconName } from '@/utils/light'
+import { holderIconName, lightCategoryIcon } from '@/utils/light'
 
 const router = useRouter()
 
@@ -124,13 +124,7 @@ async function deactivate(row: LightCategory) {
   }
 }
 
-/** 品类图标：键鼠 / 芯片 / 通用盒子 —— 按名字猜，猜不到用盒子 */
-function catIcon(row: LightCategory): string {
-  const s = `${row.name} ${row.spec ?? ''}`.toLowerCase()
-  if (/键鼠|键盘|鼠标|套装/.test(s)) return 'keyboard'
-  if (/ssd|固态|硬盘|内存|芯片|m\.2|nvme/.test(s)) return 'chip'
-  return 'box'
-}
+/** 品类图标统一走 `utils/light.ts::lightCategoryIcon()` —— 本地不再各写一份判断 */
 
 /** 库存展示："有历史流水却没做过期初"时显示「未登记」而不是 0（不推断真实库存） */
 function stockText(row: LightCategory): string {
@@ -288,7 +282,7 @@ onMounted(load)
       >
         <div class="top">
           <span class="thumb">
-            <AppIcon :name="catIcon(row)" :size="20" />
+            <AppIcon :name="lightCategoryIcon(row)" :size="20" />
           </span>
           <div class="title">
             <div class="name">{{ row.name }}</div>
@@ -371,7 +365,7 @@ onMounted(load)
         <el-table-column label="品类" min-width="250">
           <template #default="{ row }">
             <div class="cat-cell">
-              <span class="ic"><AppIcon :name="catIcon(row)" :size="17" /></span>
+              <span class="ic"><AppIcon :name="lightCategoryIcon(row)" :size="17" /></span>
               <div class="ct">
                 <div class="nm">
                   <span class="nm-t">{{ row.name }}</span>
@@ -447,7 +441,7 @@ onMounted(load)
 
         <template #empty>
           <div class="empty-state">
-            <div class="big">📦</div>
+            <div class="big"><AppIcon name="box" :size="44" /></div>
             <div class="title">还没有轻资产品类</div>
             <div>键鼠套装、SSD、内存这类不纳入正式台账的配件，建成品类就能开始记账。</div>
             <div style="margin-top: 16px">

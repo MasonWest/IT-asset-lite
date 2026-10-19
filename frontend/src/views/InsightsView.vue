@@ -21,6 +21,7 @@
  * 就意味着背后有一个会过期的状态字段。
  */
 import { computed, onMounted, ref } from 'vue'
+import AppIcon from '@/components/AppIcon.vue'
 import { useRouter } from 'vue-router'
 
 import { apiMessage, insightsApi } from '@/api'
@@ -294,7 +295,7 @@ onMounted(loadSummary)
 
     <!-- 空状态：不是一片空白，要说清"这是被查出来的" -->
     <section v-else-if="summary && !rules.length" class="empty">
-      <div class="empty-ic">✓</div>
+      <div class="empty-ic"><AppIcon name="check" :size="26" /></div>
       <h3>没有需要处理的关系问题</h3>
       <p class="empty-line">
         检查了 <b>{{ checked.stations }}</b> 个点位、<b>{{ checked.assets }}</b> 台设备。

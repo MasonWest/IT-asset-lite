@@ -25,6 +25,7 @@ import LightMovementDialog from '@/components/LightMovementDialog.vue'
 import { apiMessage, lightApi } from '@/api'
 import type { Asset, AssetLightHoldings, LightCategory, LightHolding } from '@/types'
 import { formatDate } from '@/utils/format'
+import { holdingCategoryIcon } from '@/utils/light'
 
 const props = defineProps<{ asset: Asset }>()
 
@@ -113,7 +114,7 @@ function onSaved() {
 
     <div v-if="items.length" class="light-list">
       <div v-for="row in items" :key="row.id" class="light-row">
-        <span class="ic"><AppIcon name="chip" :size="15" /></span>
+        <span class="ic"><AppIcon :name="holdingCategoryIcon(row)" :size="15" /></span>
         <div class="txt">
           <!--
             ⚠️ **主行是品类名，不是 `row.display`**。这条记录的持有位置就是本机自己，

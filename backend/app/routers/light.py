@@ -179,6 +179,8 @@ def create_category(payload: LightCategoryCreate, db: Session = Depends(get_db))
 
     data = payload.model_dump()
     operator = data.pop("operator", None)
+    # 空白图标标识归一成 None（= "还没确认过"），避免库里出现空串
+    data["icon"] = (data.get("icon") or "").strip() or None
     category = LightCategory(**data)
     db.add(category)
     db.flush()
@@ -196,6 +198,7 @@ def create_category(payload: LightCategoryCreate, db: Session = Depends(get_db))
             "brand": category.brand,
             "spec": category.spec,
             "unit": category.unit,
+            "icon": category.icon,
         },
     )
     db.commit()
@@ -226,6 +229,11 @@ def update_category(category_id: int, payload: LightCategoryUpdate, db: Session 
             if clash is not None:
                 raise HTTPException(status_code=409, detail=f"已经有一个叫「{name}」的轻资产品类了")
             data["name"] = name
+
+    # 图标：显式传空串 = 清掉（回到"按名称给建议图标"）；不传 = 不动它。
+    # 统一归一成 None，避免库里出现空串与 NULL 两种"空"。
+    if "icon" in data:
+        data["icon"] = (data["icon"] or "").strip() or None
 
     changes = {}
     for key, value in data.items():
@@ -1003,12 +1011,22 @@ def search_holders(
     db: Session = Depends(get_db),
     kind: str = Query("asset", description="asset = 正式资产 / workstation = 资产点位"),
     keyword: str = Query("", description="按编码 / 名称 / 使用人模糊搜索"),
-    limit: int = Query(20, ge=1, le=50),
+    limit: int = Query(
+        0,
+        ge=0,
+        le=2000,
+        description="返回条数上限；0 = 不限制（下拉要能一直滚到底）",
+    ),
 ):
     """流转对话框选宿主用。**只搜、不建** —— 正式资产和点位仍归各自模块管。
 
     已报废的设备刻意排除：往报废机器上装配件没有意义，
     真出现了也是先走正式资产那边的流程。
+
+    ⚠️ `limit` 默认 **0（全部）**，不是某个小数字。原先默认 20：
+    点位有 ~70 个、资产 ~150 台，打开下拉只看得到前 20 条 —— 用户反馈
+    「只能显示前 20，不能下滑看到全部」。这里的数据量本来就不大，
+    一次拉完比"让人反复打关键词去猜"好；真到需要分页时再说。
     """
     kw = (keyword or "").strip()
     if kind == "workstation":
@@ -1020,7 +1038,10 @@ def search_holders(
                 | Workstation.user_name.ilike(like)
                 | Workstation.room.ilike(like)
             )
-        rows = db.execute(stmt.order_by(Workstation.code.asc()).limit(limit)).scalars().all()
+        stmt = stmt.order_by(Workstation.code.asc())
+        if limit > 0:
+            stmt = stmt.limit(limit)
+        rows = db.execute(stmt).scalars().all()
         return [
             LightHolderCandidate(
                 id=w.id,
@@ -1043,7 +1064,10 @@ def search_holders(
             | Asset.model.ilike(like)
             | Asset.serial_number.ilike(like)
         )
-    rows = db.execute(stmt.order_by(Asset.asset_code.asc()).limit(limit)).scalars().all()
+    stmt = stmt.order_by(Asset.asset_code.asc())
+    if limit > 0:
+        stmt = stmt.limit(limit)
+    rows = db.execute(stmt).scalars().all()
     return [
         LightHolderCandidate(
             id=a.id,
