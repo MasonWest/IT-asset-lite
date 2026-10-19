@@ -9,6 +9,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { apiMessage, assetApi } from '@/api'
+import AppIcon from '@/components/AppIcon.vue'
 import { appState, saveOperator } from '@/stores/app'
 import type { Asset, AssetOperation, AssetStatus } from '@/types'
 import { OPERATION_META, operationMeta, statusMeta } from '@/utils/format'
@@ -170,7 +171,7 @@ const CHAIN: AssetStatus[] = ['idle', 'in_use', 'repair', 'scrapped']
           :class="[`tone-${OPERATIONS[a].tone}`, { on: form.action === a }]"
           @click="form.action = a"
         >
-          <span class="ic">{{ OPERATIONS[a].icon }}</span>
+          <span class="ic"><AppIcon :name="OPERATIONS[a].icon" :size="18" /></span>
           <span class="nm">{{ OPERATIONS[a].label }}</span>
         </button>
       </div>

@@ -191,7 +191,7 @@ onMounted(loadSummary)
         :class="[group.pending ? group.severity : 'cleared', { open: hasExpanded(group.rule) }]"
       >
         <div class="rule-top">
-          <span class="ic">{{ ruleIcon(group.rule) }}</span>
+          <span class="ic"><AppIcon :name="ruleIcon(group.rule)" :size="17" /></span>
           <div class="rule-title-wrap">
             <div class="rule-title">
               {{ group.label }}

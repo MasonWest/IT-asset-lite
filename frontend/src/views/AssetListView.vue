@@ -639,7 +639,10 @@ onMounted(async () => {
         :title="c.tip"
         @click="pickCard(c)"
       >
-        <div class="k"><span>{{ c.icon }}</span>{{ c.label }}</div>
+        <div class="k">
+          <AppIcon :name="c.icon" :size="14" />
+          <span>{{ c.label }}</span>
+        </div>
         <div class="v">
           {{ cardValue(c) }}
           <small>台</small>

@@ -200,6 +200,27 @@
 差异只在"是否附带本轮盘点结果"——那是附加信息，不是图标要表达的不同语义。
 现在统一走设备类型图标：同一台打印机不该因为出现在哪个区块就换个图标。
 
+### 修复 —— 三处「图标名当文本渲染」（验收时被抓出来的）
+
+改造完成后界面里有三处把图标标识**当普通文字**画了出来：台账统计卡显示 `box` / `check`
+`wrench` / `target`，问题中心的规则卡显示 `help` / `pin` / `bandage`，状态流转弹窗的操作卡
+显示 `arrowIn` / `wrench` / `trash`。原因只有一个：模板里写成了文本插值，而不是组件。
+
+| 位置 | 改动前（错） | 改动后 |
+| --- | --- | --- |
+| `AssetListView.vue` 统计卡 | `<span>{{ c.icon }}</span>` | `<AppIcon :name="c.icon" :size="14" />` |
+| `InsightsView.vue` 规则卡 | `<span class="ic">{{ ruleIcon(group.rule) }}</span>` | `<span class="ic"><AppIcon :name="ruleIcon(group.rule)" :size="17" /></span>` |
+| `AssetOperationDialog.vue` 操作卡 | `<span class="ic">{{ OPERATIONS[a].icon }}</span>` | `<span class="ic"><AppIcon :name="OPERATIONS[a].icon" :size="18" /></span>` |
+
+三处的数据源（`statCards[].icon`、`issueMeta.ts::RULE_ICONS`、`OPERATION_META[].icon`）
+本来就是对的，图标名也全部在资源表里登记过 —— **错的只是渲染方式**。
+所以「改常量表 → 全站换 `AppIcon`」这一步，凡是漏掉一处插值，界面上就会直接出现英文字母。
+
+> **这次的验收盲区值得记下来**：原先那条「真实浏览器渲染 258 个 SVG、0 个空 path」的断言
+> 只数了**已经存在的 `<svg>`**。而这三处**根本没有 svg**，因此一条都抓不到。
+> 教训：统计「该有的东西有多少」永远不如统计「不该有的东西有没有」——
+> 现在补了一条独立断言：**每个路由页面上，可见文本恰好等于某个图标名的叶子元素必须为 0**。
+
 ### 验证
 
 - `npm run type-check` / `npm run build` 通过。
@@ -213,6 +234,12 @@
 - 接口层写入/读取/改名不丢图标/显式清除/超长值 422/审计留痕 全部通过。
 - **业务红线**：资产总数 150、设备类型 12、配对统计（hosts 60 / monitors 61 /
   paired 56）改造前后完全一致。
+- **三处文本化图标修复的复验**（临时实例 8099 + 库副本，只读；17 项断言全过）：
+  统计卡 5/5、规则卡 3/3、操作卡 3/3 各自都有 1 个非空 `path` 的 `svg.app-icon`，
+  且图标容器文本里不含任何图标名英文。
+- **全站 13 个路由的独立扫描**（`/` `/insights` `/light` `/light-help` `/map` `/pairings`
+  `/inventory` `/inventory/:id` `/labels` `/import` `/audit` `/asset/:id` `/light/:id`）：
+  「可见文本恰好等于某个图标名的叶子元素」**全部为 0**（78 个图标名逐个比对）。
 
 ---
 
