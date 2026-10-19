@@ -430,6 +430,24 @@ function applyPresetTarget() {
   holderCandidates.value = [candidate]
 }
 
+/**
+ * 「装到某台机器 ↔ 放到某个点位」的切换 —— **顺手把已选对象清掉**。
+ *
+ * `toRefId` 是资产表与点位表**共用**的一个 id 空间，两边 id 会撞车：
+ * 选好一台机器（asset#12）再切到「放到某个点位」，`toRefId` 还留着 12，
+ * 而候选已经整批换成点位 —— `el-select` 找不到对应 option，就把 id 原样
+ * 显示成 `12`；更糟的是**点「登记」会照着 12 号点位提交**：不报错，但对象是错的。
+ *
+ * ⚠️ 清空只能放在**这里**（用户手动切换的那一下），不能塞进 `applyAction()`：
+ * 那条路径同时也被 `applyPresetTarget()` 走（资产详情页把对象带进来），
+ * 在 `applyAction()` 里清会把预置的去向一起抹掉。
+ */
+function switchTargetStation(station: boolean) {
+  if (targetStation.value === station) return
+  targetStation.value = station
+  toRefId.value = null
+}
+
 watch(sourceKey, () => {
   if (step.value === 'form') applyAction()
 })
@@ -714,8 +732,8 @@ function timeNow(): string {
       <!-- 装到机器 / 放到点位 -->
       <div v-if="!isReplace && picked.key === 'mount'">
         <div class="mode-pick">
-          <button :class="{ on: !targetStation }" @click="targetStation = false">装到某台机器</button>
-          <button :class="{ on: targetStation }" @click="targetStation = true">放到某个点位</button>
+          <button :class="{ on: !targetStation }" @click="switchTargetStation(false)">装到某台机器</button>
+          <button :class="{ on: targetStation }" @click="switchTargetStation(true)">放到某个点位</button>
         </div>
       </div>
 

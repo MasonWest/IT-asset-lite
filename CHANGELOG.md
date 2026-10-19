@@ -288,6 +288,33 @@
 一边弹「现在没有任何分配记录」。`opening_done` 只是"提示用"的标记，当不了空态判据。
 现在显式写成 `v-else-if="!holdings.length"`。
 
+### 修复 —— 卡片 / 列表切换按钮没有样式（图标与文字堆成两行）
+
+「当前分配」顶部那个切换控件在提交时**漏掉了 CSS**：`.view-toggle` 一条规则都没有，
+于是渲染成两个原生 `<button>` —— `AppIcon` 是 `display:block` 的 svg，会独占一行，
+文字被顶到第二行（决策 88 记的就是这个坑），而且 `.on` 没有对应规则，**选中态完全看不出来**。
+
+现在按流转弹窗 `.mode-pick` 的分段控件语言补上：灰底槽 + 白色活动块，按钮 `inline-flex`。
+实测按钮内容垂直跨度 **26px**（单行；旧形态约 39px），选中项背景 `rgb(255,255,255)`。
+
+### 移除 —— `/lab/vgpu` 实验路由
+
+vgpu / WebGPU 视觉实验已放弃，不再维护。**这个实验还曾把 `origin/main` 变成构建不了的仓库**：
+上一个提交带上了 `router/index.ts` 里 `import('@/lab/vgpu/VgpuLabView.vue')`，
+但 `src/lab/vgpu/` 整个目录没提交（`vite.config.ts` 的 wgsl 插件、`package.json` 的 `vgpu` 依赖也没提交）。
+
+实证（从 `origin/main` 拉一个干净工作树直接构建）：
+
+```
+[vite:load-fallback] Could not load ...\src/lab/vgpu\VgpuLabView.vue
+(imported by src/router/index.ts): ENOENT: no such file or directory
+```
+
+也就是说 **`git clone` 之后 `npm run build` 是必败的**。现在把路由、`vite.config.ts` 的
+wgsl 插件、`package.json` / `package-lock.json` 的 `vgpu` 依赖一并撤掉，`/lab/icons` 保留
+（它只用已入库的 `IconLabView.vue`）。盘上的 `frontend/src/lab/vgpu/` 与 `wgsl-env.d.ts`
+未跟踪、未删除，留待用户处置。
+
 ### 验收
 
 新增 `e2e-light-hold-picker-1016.js`（**25 项全绿**，用真库的**只读克隆** `.tmp/light-hold-1016/`）：
@@ -304,6 +331,15 @@
 
 ⚠️ 这批断言**只在候选数 > 20 时才有变红的机会** —— 库小的时候"返回全部"与"取前 20"结果一样，
 那是假绿。脚本开头因此断言"点位 / 资产必须 > 20"，不成立直接 `exit 2`。
+
+**补跑（2026-10-19，补 CSS 之后）**：`.tmp/verify-listview.js`，临时实例 8099 + 库副本，**15 项全绿**。
+取值不写死：先打接口挑"持有记录最多"的品类（本次是 #2，8 条），再拿它当真值逐条对账 ——
+卡片 8 / 表格 8 / 接口 8，持有方 8 条**顺序逐条一致**；切换视图期间 `/api/light` 请求 **0 次**；
+切换按钮内容跨度 **26px**、svg 未溢出按钮、选中项背景 `rgb(255,255,255)`。
+
+> ⚠️ 上述 `e2e-light-hold-picker-1016.js` 的**脚本文件在本机已不存在**（`.tmp/` 被清理过），
+> 只剩负向确认文本与截图。本次补跑的是另写的精简版（只覆盖列表视图与切换控件，
+> **不含**下拉 69/150 那组），两者不能互相替代。
 
 ### 实测
 

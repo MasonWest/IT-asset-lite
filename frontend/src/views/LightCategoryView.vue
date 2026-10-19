@@ -38,6 +38,13 @@ const movementFilters = reactive({ op: '', origin: '', keyword: '' })
 const movementPage = ref(1)
 const movementPageSize = ref(20)
 const activeTab = ref<'hold' | 'flow'>('hold')
+/**
+ * 「当前分配」的两种排法，同一份 `stat.holdings` 换个排法而已（**不重新请求**）。
+ *
+ * 卡片看"每条是谁、能对它做什么"；列表看"一共几条、谁排在前面、数量对不对得上"——
+ * 分配记录一多，卡片要横向扫一大片才数得清。默认仍是卡片（现状不变）。
+ */
+const holdViewMode = ref<'card' | 'table'>('card')
 
 /* ---------------- 对话框 ---------------- */
 const movementDialogOpen = ref(false)
@@ -327,7 +334,23 @@ function flowIconName(op: string): string {
     <el-tabs v-model="activeTab">
       <!-- 当前分配：直接读 light_holdings 的快照 -->
       <el-tab-pane label="当前分配" name="hold">
-        <div v-if="category.stat.holdings.length" class="hold-grid">
+        <!-- 同一份 holdings 的两种排法，切换不重新请求 -->
+        <div v-if="category.stat.holdings.length" class="hold-toolbar">
+          <span class="hold-count">共 {{ category.stat.holdings.length }} 条持有记录</span>
+          <div class="view-toggle">
+            <button :class="{ on: holdViewMode === 'card' }" @click="holdViewMode = 'card'">
+              <AppIcon name="grid" :size="14" />卡片
+            </button>
+            <button :class="{ on: holdViewMode === 'table' }" @click="holdViewMode = 'table'">
+              <AppIcon name="list" :size="14" />列表
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="category.stat.holdings.length && holdViewMode === 'card'"
+          class="hold-grid"
+        >
           <div v-for="row in category.stat.holdings" :key="row.id" class="hold-card">
             <span class="av">
               <AppIcon :name="holderIconName(row.kind)" :size="17" />
@@ -358,6 +381,64 @@ function flowIconName(op: string): string {
         </div>
 
         <!--
+          列表视图：与「轻资产台账」「正式资产台账」的表格同一套语言 ——
+          无外框 / 无竖线 / 无斑马纹，只留横向细线，外面包一层白面板。
+          它就是上面那堆卡片的另一种排法（**不重新请求**），
+          分配记录一多，卡片要横向扫一大片才数得清"一共几条"。
+        -->
+        <div v-else class="panel table-panel">
+          <el-table :data="category.stat.holdings" row-key="id">
+            <el-table-column label="持有方" min-width="200">
+              <template #default="{ row }">
+                <div class="hold-cell">
+                  <span class="ic"><AppIcon :name="holderIconName(row.kind)" :size="16" /></span>
+                  <span class="nm">{{ row.display }}</span>
+                  <el-tag v-if="!row.alive" type="danger" size="small" effect="plain">
+                    宿主已删除
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="位置说明" min-width="230">
+              <template #default="{ row }">
+                <span class="sub-t">{{ holdingSub(row) }}</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="起始时间" width="150">
+              <template #default="{ row }">
+                <span v-if="row.since" class="date">{{ formatDateTime(row.since) }}</span>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="数量" width="100" align="right">
+              <template #default="{ row }">
+                <span class="num">{{ row.quantity }}<small>{{ category.unit }}</small></span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="操作" min-width="230" align="right">
+              <template #default="{ row }">
+                <div v-if="category.active" class="row-acts">
+                  <button
+                    v-for="a in rowActions(row)"
+                    :key="a.key"
+                    class="lk"
+                    :class="{ danger: a.danger }"
+                    @click="openMovement(row.id, a.action)"
+                  >
+                    {{ a.label }}
+                  </button>
+                </div>
+                <span v-else class="muted">品类已停用</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <!--
           已经有分配记录了，所以那条"去做期初"的提示会收起来（设计 §6.1）——
           但**期初允许补录 / 重做**（漏录了品类、盘点发现数量不对），
           所以这里留一个低调的入口，别让"允许补录"只停留在接口层面。
@@ -371,8 +452,13 @@ function flowIconName(op: string): string {
           <span>只想改数量请用「登记流转 → 调整（盘盈 / 盘亏）」，那样会留审计。</span>
         </div>
 
-        <!-- 空态：给出路，不是只解释 -->
-        <div v-else class="empty-box">
+        <!-- 空态：给出路，不是只解释。
+             ⚠️ 条件必须显式写 `!holdings.length` —— 原来这里是个光秃秃的 `v-else`，
+             绑在上面「hold-foot」那条 `v-if="holdings.length && opening_done"` 上，
+             于是**有分配记录、但没做过期初确认**（比如第一笔就是"日常采购入库"）时，
+             界面会一边列着持有方、一边弹「现在没有任何分配记录」。
+             `opening_done` 只是"提示用"的标记（见 types.ts），当不了空态判据。 -->
+        <div v-else-if="!category.stat.holdings.length" class="empty-box">
           <div class="icon"><AppIcon name="box" :size="23" /></div>
           <h3>现在没有任何分配记录</h3>
           <p>
@@ -617,6 +703,54 @@ h1 {
 .light-stat.tone-amber { color: var(--el-color-warning); }
 .light-stat.tone-green { color: #34c724; }
 
+/* ---------- 当前分配：工具条（卡片 / 列表 切换） ---------- */
+.hold-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.hold-count {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+/*
+ * 卡片 / 列表 切换 —— 与流转弹窗的 `.mode-pick` 同一套分段控件语言
+ * （灰底槽 + 白色活动块），这两处都是"同一份数据换个排法"，长得该一样。
+ *
+ * ⚠️ 按钮必须 `inline-flex`：`AppIcon` 渲染的是 `display:block` 的 svg，
+ * 放进普通 `<button>` 会独占一行、文字被顶到第二行（决策 88）。
+ */
+.view-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: #f2f3f5;
+  border-radius: var(--radius-sm);
+}
+.view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.view-toggle button.on {
+  background: var(--panel);
+  color: var(--text-1);
+  box-shadow: var(--shadow-sm);
+  font-weight: 500;
+}
+
 /* ---------- 分配卡片 ---------- */
 .hold-grid {
   display: grid;
@@ -667,13 +801,6 @@ h1 {
   font-size: 12px;
   padding: 2px 7px;
 }
-/* 报损：给个克制的红，别和旁边三条中性动作混成一个观感 */
-.hold-card .acts .lk.danger {
-  color: var(--el-color-danger);
-}
-.hold-card .acts .lk.danger:hover {
-  background: var(--el-color-danger-light-9);
-}
 .hold-card .cnt {
   font-size: 18px;
   font-weight: 600;
@@ -703,6 +830,69 @@ h1 {
 .hold-foot .lk:disabled {
   color: var(--text-3);
   cursor: not-allowed;
+}
+
+/* ---------- 当前分配的列表视图 ----------
+   与「轻资产台账」「正式资产台账」的表格同一套语言：无外框 / 无竖线 / 无斑马纹
+   （`border stripe` 是上一版的做法，满屏网格 + 条纹），只留横向细线，
+   外面包一层白色面板。同一份 holdings，只是换个排法。 */
+.table-panel {
+  padding: 4px 4px 0;
+}
+/* 行高比 Element 默认舒展一点：一行就是一条持有记录，别挤成一团 */
+.table-panel :deep(.el-table__cell) {
+  padding: 11px 0;
+}
+
+.hold-cell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.hold-cell .ic {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.hold-cell .nm {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.sub-t {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.date {
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.num {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.num small {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-3);
+  margin-left: 2px;
+}
+/* 操作列右对齐 + 允许换行（`asset` 类有四个动作，窄屏会折成两行） */
+.row-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
 }
 
 /* ---------- 空态：给出路，不是只解释 ---------- */
@@ -889,6 +1079,13 @@ h1 {
 }
 .lk:hover {
   background: var(--el-color-primary-light-9);
+}
+/* 报损这类破坏性动作：给个克制的红 —— 卡片与列表两处共用同一份 */
+.lk.danger {
+  color: var(--el-color-danger);
+}
+.lk.danger:hover {
+  background: var(--el-color-danger-light-9);
 }
 
 .pager {
