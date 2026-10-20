@@ -2707,7 +2707,7 @@ map-ux 23/23 · banner 42/42 · pinch 26/26 · station-relation 31/31。
 - 审计归档：按时间导出后清理
 - 登录与权限（如果确实需要 —— 会打破当前「不做登录」的设计）
 - 主机 ↔ 显示器自动匹配提示：**已完成数据体检与方案设计，暂缓实现**（见
-  [`设计方案-自动配对提示.md`](设计方案-自动配对提示.md)）。存量只有 2 组可捞回、规则复杂度高，
+  [`docs/design/unbuilt/auto-pairing-hints.md`](docs/design/unbuilt/auto-pairing-hints.md)）。存量只有 2 组可捞回、规则复杂度高，
   待资产录入量增大或使用人数据清洗完成后再评估
 
 ---

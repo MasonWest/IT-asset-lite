@@ -200,13 +200,13 @@ const hasAnyLight = computed(() => {
  * ⚠️ **主行必须是品类名（`category_name`），不是 `display`**。`display` 是**宿主**：
  * 在这两组里它分别等于点位编码和主机编号 —— 也就是"东西放在哪"，不是"这是什么东西"。
  * 2026-10-16 用户实测报障：原来两行都渲染 `display`，界面上只剩
- * 「B022-03-00038 ×1」，根本看不出装的是块固态硬盘。
+ * 「A100-03-00038 ×1」，根本看不出装的是块固态硬盘。
  */
 function catSpec(h: LightHolding): string {
   return [h.category_brand, h.category_spec].filter(Boolean).join(' ')
 }
 
-/** 「随主机」那一组的副行：`品牌 规格 · 装在 B022-03-00038 上`（前半段没有就不留分隔点） */
+/** 「随主机」那一组的副行：`品牌 规格 · 装在 A100-03-00038 上`（前半段没有就不留分隔点） */
 function viaSub(h: LightHolding): string {
   return [catSpec(h), `装在 ${h.display} 上`].filter(Boolean).join(' · ')
 }

@@ -1086,11 +1086,11 @@ export interface LightHolder {
   ref_code: string | null
   ref_label: string | null
   user: string | null
-  /** 现成的展示文案（"库存" / "张三" / "B022-03-00001"） */
+  /** 现成的展示文案（"库存" / "张三" / "A100-03-00001"） */
   display: string
   /** 引用的宿主是否还在（资产/点位被删后为 false） */
   alive: boolean
-  /** 一行简短说明（"随 B022-03-00001" / "在某人手上，未记录固定位置"…） */
+  /** 一行简短说明（"随 A100-03-00001" / "在某人手上，未记录固定位置"…） */
   hint: string
   /** 以下只在 kind='asset' 时填：宿主**当前**的使用人 / 点位 / 状态（现读，不落库） */
   host_user: string | null
@@ -1118,7 +1118,7 @@ export interface LightHolding extends LightHolder {
   /**
    * 品类信息。⚠️ **必须有** —— `LightHolder` 那半边只回答"在哪"（`display` 是宿主，
    * 资产页上就是那台机器自己的编号）。少了这几个字段，界面就只能显示
-   * "装在 B022-03-00038 上 ×1"，看不出装的是什么东西。
+   * "装在 A100-03-00038 上 ×1"，看不出装的是什么东西。
    */
   category_name: string
   category_brand: string | null

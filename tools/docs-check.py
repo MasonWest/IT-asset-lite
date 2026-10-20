@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -201,8 +202,31 @@ def check_links() -> None:
 
 
 # ------------------------------------------------------------- 5. 无孤儿文档
+def git_ignored(paths: list[Path]) -> set[Path]:
+    """哪些文件被 .gitignore 排除。
+
+    被排除的文件**不算入链目标**：它们在仓库里根本不存在，clone 下来的人看不到，
+    用"能不能从 README 走到"去要求它们，只会逼出"给一个 clone 后就 404 的链接"。
+    """
+    if not paths:
+        return set()
+    rel = [p.relative_to(ROOT).as_posix() for p in paths]
+    # 注意：必须传 bytes。用 text=True 时 Windows 会把 "\n" 翻成 "\r\n"，
+    # git 收到的路径尾部带 \r，一个都匹配不上（表现为"全都没被忽略"）。
+    r = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        cwd=ROOT, input="\n".join(rel).encode("utf-8"), capture_output=True,
+    )
+    if r.returncode not in (0, 1):  # 0=有命中 1=全没命中
+        return set()
+    out = r.stdout.decode("utf-8", "replace")
+    return {(ROOT / line.strip()).resolve() for line in out.splitlines() if line.strip()}
+
+
 def check_orphans() -> None:
     files = md_files()
+    ignored = git_ignored(files)
+    files = [p for p in files if p.resolve() not in ignored]
     index = {p.resolve(): p for p in files}
     edges: dict[Path, set[Path]] = {p.resolve(): set() for p in files}
     for p in files:
@@ -305,19 +329,29 @@ def check_size(strict: bool) -> None:
 
 
 # --------------------------------------------- 8. 设计稿要有且只有一行状态横幅
+#
+# 横幅的合法前缀（顺序即匹配优先级）。允许"前缀 + 括号补充"，但不允许自由发挥 ——
+# 否则半年后会出现「状态：大概做了一半」这种既不能筛也不能搜的值。
+BANNER_PREFIXES = ("已取代", "已实施", "部分实施", "设计", "素材", "已废弃", "索引")
+
+
 def check_banners() -> None:
     design = ROOT / "docs/design"
     if not design.exists():
         add("SKIP", "横幅", "docs/design/ 还不存在（Phase 5 之前正常）")
         return
-    bad = []
+    bad, weird = [], []
     for p in sorted(design.rglob("*.md")):
         head = "\n".join(read(p).splitlines()[:5])
-        n = len(re.findall(r"^>\s*状态：", head, re.M))
-        if n != 1:
-            bad.append(f"{p.relative_to(ROOT)} 有 {n} 行")
+        found = re.findall(r"^>\s*状态：(.+)$", head, re.M)
+        if len(found) != 1:
+            bad.append(f"{p.relative_to(ROOT)} 有 {len(found)} 行")
+        elif not found[0].lstrip("*_ ").startswith(BANNER_PREFIXES):
+            weird.append(f"{p.relative_to(ROOT)} = {found[0][:24]}")
     if bad:
         add("ERROR", "横幅", f"{len(bad)} 份设计稿状态横幅不是恰好 1 行", "; ".join(bad[:6]))
+    elif weird:
+        add("ERROR", "横幅", f"{len(weird)} 份状态值不在约定取值内", "; ".join(weird[:6]))
     else:
         add("OK", "横幅", f"docs/design/ 下 {len(list(design.rglob('*.md')))} 份都有且只有一行横幅")
 
@@ -406,7 +440,7 @@ def check_secrets() -> None:
         for n in names:
             if n in text:
                 hits.append(f"{p.relative_to(ROOT)}:{n}")
-    # 真实编号前缀：形如 B022-03-00001，而合成前缀是 A100/A101
+    # 真实编号前缀：形如 B0xx-03-xxxxx（B022/B023 是真实办公区），合成前缀是 A100/A101
     for p in md_files():
         for m in re.finditer(r"\bB0\d{2}-\d{2}-\d{5}", read(p)):
             hits.append(f"{p.relative_to(ROOT)}:编号 {m.group(0)}")
@@ -417,6 +451,36 @@ def check_secrets() -> None:
 
 
 # ------------------------------------------------------------------ main
+# -------------------------------------------------------- 9. 标题不许重复
+def check_dup_heading() -> None:
+    """同一份文件里出现两个一模一样的标题 → 大概率是改写时粘贴重复了。
+
+    危害不只是难看：GitHub/Pages 的锚点按标题生成，重复标题会让 `#xxx` 只跳到第一个，
+    于是"我明明写了小节链接"却跳错地方（F7 那类表格断裂的同族问题）。
+    """
+    bad = []
+    for p in md_files():
+        rel = p.relative_to(ROOT).as_posix()
+        # 只管"每天要读的那批"（README / CS / docs/dev / docs/user）。
+        # CHANGELOG 每个版本条目都有各自的「现场 / 变更 / 验证」，是刻意的模板；
+        # 设计稿与归档是时点快照，原样保留 —— 都不修，也就不用查。
+        if rel == "CHANGELOG.md" or not is_current(p):
+            continue
+        seen: dict[str, int] = {}
+        for i, line in enumerate(read(p).splitlines(), 1):
+            if not line.startswith("#"):
+                continue
+            key = line.strip()
+            if key in seen:
+                bad.append(f"{p.relative_to(ROOT)}:{i} 与 :{seen[key]} 都是「{key[:24]}」")
+            else:
+                seen[key] = i
+    if bad:
+        add("ERROR", "标题", f"{len(bad)} 处标题重复", "; ".join(bad[:6]))
+    else:
+        add("OK", "标题", "没有重复标题")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="体积阈值也当错误")
@@ -438,6 +502,7 @@ def main() -> int:
     check_banners()
     check_decisions()
     check_secrets()
+    check_dup_heading()
 
     errors = [r for r in results if r["level"] == "ERROR"]
     warns = [r for r in results if r["level"] == "WARN"]

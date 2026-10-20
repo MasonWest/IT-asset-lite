@@ -200,8 +200,8 @@ class TestQuantityModel(LightTestBase):
     def test_transfer_machine_to_machine_and_station_to_station(self):
         """机器搬机器（B022 → B023）、工位挪工位（W23 → W25）——**一条**流水。"""
         cat = self.make_category("内存", unit="条")
-        a1 = self.make_asset("B022-03-00001")
-        a2 = self.make_asset("B023-03-00002")
+        a1 = self.make_asset("A100-03-00001")
+        a2 = self.make_asset("A101-03-00002")
         s1 = self.make_station("W23")
         s2 = self.make_station("W25")
 
@@ -295,7 +295,7 @@ class TestAssetAndStation(LightTestBase):
 
     def test_attach_to_asset_and_by_asset(self):
         cat = self.make_category("内存", unit="条")
-        asset = self.make_asset("B022-03-00001", user="张三")
+        asset = self.make_asset("A100-03-00001", user="张三")
         self.move(cat, LightOp.STOCK_IN, to=STOCK(), quantity=2)
         self.move(cat, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id), quantity=2)
 
@@ -319,7 +319,7 @@ class TestAssetAndStation(LightTestBase):
         cat_a = self.make_category("键鼠套装")
         cat_b = self.make_category("内存", unit="条")
         station = self.make_station("W23")
-        asset = self.make_asset("B022-03-00001", user="张三")
+        asset = self.make_asset("A100-03-00001", user="张三")
         asset.workstation_id = station.id
         self.db.commit()
 
@@ -343,7 +343,7 @@ class TestAssetAndStation(LightTestBase):
     def test_asset_menu_owner_is_read_through(self):
         """验收场景 5：主机换人 → 配件"使用环境"跟着变（现读），历史不变。"""
         cat = self.make_category("SSD", unit="块")
-        asset = self.make_asset("B022-03-00001", user="张三")
+        asset = self.make_asset("A100-03-00001", user="张三")
         self.move(cat, LightOp.STOCK_IN, to=STOCK(), quantity=1)
         self.move(cat, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id), quantity=1)
 
@@ -379,7 +379,7 @@ class TestStationLightGroups(LightTestBase):
         ram = self.make_category("内存", unit="条")
         w23 = self.make_station("W23")
         w25 = self.make_station("W25")
-        host = self.make_asset("B022-03-00001")
+        host = self.make_asset("A100-03-00001")
         host.workstation_id = w23.id
         self.db.commit()
 
@@ -515,7 +515,7 @@ class TestStationLightGroups(LightTestBase):
         ram = self.make_category("内存", unit="条")
         w23 = self.make_station("W23")
         w25 = self.make_station("W25")
-        host = self.make_asset("B022-03-00001")
+        host = self.make_asset("A100-03-00001")
         host.workstation_id = w23.id
         self.db.commit()
         self.move(ram, LightOp.STOCK_IN, to=STOCK(), quantity=2)
@@ -535,7 +535,7 @@ class TestReplaceAndScrap(LightTestBase):
 
     def test_replace_writes_two_movements_in_one_transaction(self):
         cat = self.make_category("内存", unit="条")
-        asset = self.make_asset("B022-03-00001", user="张三")
+        asset = self.make_asset("A100-03-00001", user="张三")
         self.move(cat, LightOp.STOCK_IN, to=STOCK(), quantity=1)   # 备件
         self.move(cat, LightOp.STOCK_IN, to=STOCK(), quantity=1)
         self.move(cat, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id), quantity=1)
@@ -553,7 +553,7 @@ class TestReplaceAndScrap(LightTestBase):
 
     def test_replace_without_stock_is_409(self):
         cat = self.make_category("内存", unit="条")
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         self.move(cat, LightOp.STOCK_IN, to=STOCK(), quantity=1)
         self.move(cat, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id), quantity=1)
         self.expect_http(
@@ -564,7 +564,7 @@ class TestReplaceAndScrap(LightTestBase):
     def test_scrap_precheck_lists_light_assets(self):
         """验收 #7：报废前能看到这台机器上还挂着哪些配件（**不自动改归属**）。"""
         cat = self.make_category("内存", unit="条")
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         self.move(cat, LightOp.STOCK_IN, to=STOCK(), quantity=2)
         self.move(cat, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id), quantity=2)
 
@@ -581,7 +581,7 @@ class TestOpeningAndImport(LightTestBase):
 
     def test_opening_builds_holdings_and_is_repeatable(self):
         cat = self.make_category("键鼠套装")
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         light_service.apply_opening(
             self.db, category=cat, operator="tester",
             entries=[(STOCK(), 5), (HolderRef(kind=LightHolderKind.USER, user="张三"), 2),
@@ -737,7 +737,7 @@ class TestSchemasAndPlaceholders(LightTestBase):
     def test_holding_fk_blocks_duplicate_position(self):
         """部分唯一索引是第二层防线：同一 (品类, 资产) 不能有两行。"""
         cat = self.make_category("内存", unit="条")
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         self.db.add(LightHolding(category_id=cat.id, holder_kind=LightHolderKind.ASSET,
                                  asset_id=asset.id, quantity=1, since=datetime.now()))
         self.db.commit()
@@ -795,7 +795,7 @@ class TestApi(LightTestBase):
 
     def test_replace_endpoint_returns_two_movements(self):
         cid = self.client.post("/api/light/categories", json={"name": "内存", "unit": "条"}).json()["id"]
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         self.client.post("/api/light/movements", json={
             "category_id": cid, "op": "stock_in", "from_ref": {"kind": "none"},
             "to_ref": {"kind": "stock"}, "quantity": 2,
@@ -812,7 +812,7 @@ class TestApi(LightTestBase):
 
     def test_by_asset_and_by_workstation_endpoints(self):
         cid = self.client.post("/api/light/categories", json={"name": "内存", "unit": "条"}).json()["id"]
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         station = self.make_station("W23")
         asset.workstation_id = station.id
         self.db.commit()
@@ -827,7 +827,7 @@ class TestApi(LightTestBase):
 
         by_asset = self.client.get(f"/api/light/by-asset/{asset.id}").json()
         self.assertEqual(by_asset["total"], 2)
-        self.assertEqual(by_asset["items"][0]["display"], "B022-03-00001")
+        self.assertEqual(by_asset["items"][0]["display"], "A100-03-00001")
 
         by_station = self.client.get(f"/api/light/by-workstation/{station.id}").json()
         self.assertEqual(by_station["direct"], [])
@@ -925,7 +925,7 @@ class TestApi(LightTestBase):
     def test_scrap_asset_blocked_until_confirmed(self):
         """验收 #7：B022 要报废但上面还有配件 → 被拦下、列出配件；**不自动改归属**。"""
         cid = self.client.post("/api/light/categories", json={"name": "内存", "unit": "条"}).json()["id"]
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         self.client.post("/api/light/movements", json={
             "category_id": cid, "op": "stock_in", "from_ref": {"kind": "none"},
             "to_ref": {"kind": "stock"}, "quantity": 2,
@@ -977,7 +977,7 @@ class TestApi(LightTestBase):
         """验收 #18：只有随主机关联时允许删（清空主机点位即可），配件仍归属那台主机。"""
         cid = self.client.post("/api/light/categories", json={"name": "内存", "unit": "条"}).json()["id"]
         station = self.make_station("W23")
-        asset = self.make_asset("B022-03-00001")
+        asset = self.make_asset("A100-03-00001")
         asset.workstation_id = station.id
         self.db.commit()
         self.client.post("/api/light/movements", json={

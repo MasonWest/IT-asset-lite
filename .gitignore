@@ -62,11 +62,15 @@ workstations-*.json.bak
 v9.png
 # 地图原型（内部参考稿）
 参考-地图原型V19.html
-# 迁移评估稿（含真实人名举例）
-资产空间地图-接入评估与最小迁移方案.md
+# 迁移评估稿（含真实人名举例）——Phase 5 已归档，仍不入库
+docs/archive/map-integration-assessment.md
 # 旧交接文档（含本机绝对路径与对已排除素材的引用，
 # 且自身声明「第六节及之后已过时」，已被 CURRENT_STATE.md 取代）
-PROJECT-HANDOFF.md
+# ——Phase 5 已归档，仍不入库
+docs/archive/HANDOFF-2026-09.md
+# 截图证据：画面里的资产编号 B022-03-00043 是库内真实编码，
+# 脱敏只能脱文本、脱不掉像素 → 归档到设计稿目录但不入库。
+docs/design/2026-10-icons/evidence/
 
 # 编辑器/工具产生的 artifact 元数据（本机过程记录，不属于项目源码）
 *.artifact.json

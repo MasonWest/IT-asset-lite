@@ -1,0 +1,1242 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>轻资产 · 界面改版原型</title>
+<style>
+/* ==========================================================================
+   轻资产界面改版 · 静态原型
+   目标：回到系统原有的气质（飞书 / Notion 取向：浅灰底 + 白卡片 + 细边框 + 克制蓝）
+   对照物：资产台账页（卡片网格 + 带图标与语义配色的统计卡）
+   本文件零依赖、可直接双击打开；所有交互都是假数据，只为确认观感与流程。
+   ========================================================================== */
+:root {
+  --bg: #f5f6f7;
+  --bg-soft: #fafbfc;
+  --panel: #ffffff;
+  --border: #e5e6eb;
+  --border-strong: #d7dae0;
+  --text-1: #1f2329;
+  --text-2: #646a73;
+  --text-3: #8f959e;
+  --primary: #3370ff;
+  --primary-hover: #245bdb;
+  --primary-soft: #eef3ff;
+  --green: #34c724;
+  --green-soft: #e8f8e5;
+  --amber: #ff8800;
+  --amber-soft: #fff4e6;
+  --red: #f54a45;
+  --red-soft: #ffeceb;
+  --violet: #7a4bd0;
+  --violet-soft: #f1ebfb;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgba(31, 35, 41, .04), 0 2px 8px rgba(31, 35, 41, .04);
+  --shadow-md: 0 8px 28px rgba(31, 35, 41, .12);
+  --appbar-h: 56px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text-1);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+        'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; cursor: pointer; }
+svg.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
+         stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 顶栏 ---------------- */
+.appbar {
+  position: sticky; top: 0; z-index: 30; height: var(--appbar-h);
+  display: flex; align-items: center; gap: 20px; padding: 0 20px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 9px; flex: none; }
+.brand .logo {
+  width: 28px; height: 28px; border-radius: 7px; background: var(--primary);
+  color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center;
+}
+.brand .name { font-size: 15px; font-weight: 600; white-space: nowrap; }
+nav { display: flex; gap: 2px; flex: 1; overflow-x: auto; scrollbar-width: none; }
+nav::-webkit-scrollbar { display: none; }
+nav a {
+  padding: 6px 11px; border-radius: var(--radius-sm); color: var(--text-2);
+  font-size: 13.5px; text-decoration: none; white-space: nowrap;
+}
+nav a:hover { background: var(--bg); color: var(--text-1); }
+nav a.on { background: var(--primary-soft); color: var(--primary); font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 10px; flex: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--panel);
+  color: var(--text-2); font-size: 12.5px;
+}
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+/* ---------------- 页面骨架 ---------------- */
+.page { max-width: 1240px; margin: 0 auto; padding: 22px 24px 56px; }
+.proto-note {
+  display: flex; gap: 10px; align-items: flex-start; margin: 0 0 18px;
+  padding: 11px 14px; border: 1px solid #d6e2ff; border-radius: var(--radius);
+  background: #f2f6ff; color: #33507e; font-size: 12.5px; line-height: 1.7;
+}
+.proto-note b { color: #24406e; }
+
+.page-head { display: flex; align-items: flex-end; justify-content: space-between;
+             gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.page-head h1 { margin: 0; font-size: 24px; line-height: 1.3; }
+.page-head .sub { margin: 5px 0 0; color: var(--text-2); font-size: 13px; }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.crumb { font-size: 13px; color: var(--text-3); margin-bottom: 5px; }
+.crumb a { color: var(--primary); text-decoration: none; }
+.crumb a:hover { text-decoration: underline; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text-1); font-size: 13px;
+  transition: border-color .15s, background .15s;
+}
+.btn:hover { border-color: var(--border-strong); background: var(--bg-soft); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn.ghost { border-color: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: var(--bg); color: var(--text-1); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+</style>
+</head>
+<body>
+</body>
+</html>
+<style>
+/* ---------------- 统计卡：带图标 + 语义配色（对齐资产台账） ---------------- */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+            gap: 12px; margin-bottom: 16px; }
+.stat-card {
+  position: relative; padding: 14px 16px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: pointer; text-align: left; transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.stat-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.stat-card.on { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.stat-card .k { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.stat-card .k .ic { width: 15px; height: 15px; }
+.stat-card .v { display: block; margin-top: 2px; font-size: 26px; font-weight: 600; line-height: 1.25;
+                font-variant-numeric: tabular-nums; }
+.stat-card .v small { margin-left: 4px; font-size: 13px; font-weight: 400; color: var(--text-3); }
+.stat-card .bar { position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px;
+                  border-radius: 0 3px 3px 0; background: currentColor; opacity: .9; }
+.sc-blue   { color: var(--primary); }
+.sc-blue   .v { color: var(--text-1); }
+.sc-green  { color: var(--green); }
+.sc-green  .v { color: var(--text-1); }
+.sc-amber  { color: var(--amber); }
+.sc-amber  .v { color: var(--text-1); }
+.sc-violet { color: var(--violet); }
+.sc-violet .v { color: var(--text-1); }
+.stat-card .hint { display: block; margin-top: 3px; font-size: 11.5px; color: var(--text-3); }
+
+/* ---------------- 筛选栏 ---------------- */
+.filter-bar {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  padding: 12px 14px; margin-bottom: 16px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.search {
+  flex: 1; min-width: 240px; height: 32px; padding: 0 12px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-soft); color: var(--text-1);
+}
+.search:focus { outline: none; border-color: var(--primary); background: #fff;
+                box-shadow: 0 0 0 3px var(--primary-soft); }
+.pick {
+  height: 32px; padding: 0 30px 0 11px; font-size: 13px; color: var(--text-1);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+  appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M3 5l3 3 3-3' fill='none' stroke='%238f959e' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 12px;
+}
+.pick:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.view-toggle { display: inline-flex; padding: 2px; background: #f2f3f5; border-radius: var(--radius-sm); margin-left: auto; }
+.view-toggle button {
+  border: 0; background: transparent; color: var(--text-2); font-size: 12.5px;
+  padding: 5px 11px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px;
+}
+.view-toggle button.on { background: var(--panel); color: var(--text-1); box-shadow: var(--shadow-sm); }
+
+/* ---------------- 品类卡片网格（4 列，对齐资产台账） ---------------- */
+.cat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1180px) { .cat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px)  { .cat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px)  { .cat-grid { grid-template-columns: 1fr; } .page { padding: 16px 14px 40px; } }
+
+.cat-card {
+  display: flex; flex-direction: column; padding: 14px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.cat-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.cat-card .top { display: flex; align-items: flex-start; gap: 10px; min-height: 40px; }
+.cat-card .thumb {
+  width: 38px; height: 38px; flex: none; border-radius: 10px; display: grid; place-items: center;
+  background: var(--primary-soft); color: var(--primary);
+}
+.cat-card .thumb .ic { width: 20px; height: 20px; }
+.cat-card .thumb.serial { background: var(--violet-soft); color: var(--violet); }
+/* 名称与规格各限一行：否则一条长规格会把这张卡撑高，同排卡片的数字块就错位了 */
+.cat-card .name {
+  font-size: 14.5px; font-weight: 600; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cat-card .spec {
+  margin-top: 2px; font-size: 12px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cat-card .tag {
+  margin-left: auto; flex: none; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; line-height: 18px; white-space: nowrap;
+}
+.tag.quantity { background: var(--primary-soft); color: #2b56c4; border: 1px solid #d3daff; }
+.tag.serial   { background: var(--violet-soft);  color: #5a34a3; border: 1px solid #ded0f5; }
+.tag.off      { background: #f2f3f5; color: var(--text-3); border: 1px solid var(--border); }
+
+.cat-card .nums {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 13px 0 11px;
+  padding: 11px 12px; background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.cat-card .nums .cell .lbl { font-size: 11.5px; color: var(--text-2); }
+.cat-card .nums .cell .num { font-size: 20px; font-weight: 600; line-height: 1.25;
+                             font-variant-numeric: tabular-nums; }
+.cat-card .nums .cell .num small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 3px; }
+.cat-card .nums .cell .num.amber { color: var(--amber); }
+.cat-card .nums .cell .num.zero { color: var(--text-3); }
+
+.cat-card .who { flex: 1; }
+.cat-card .who .lbl { font-size: 11.5px; color: var(--text-3); margin-bottom: 3px; }
+.cat-card .who .list { display: flex; flex-wrap: wrap; gap: 5px; }
+.who-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  font-size: 12px; color: var(--text-1);
+}
+.who-chip .q { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.who-empty { font-size: 12px; color: var(--text-3); }
+
+.cat-card .foot {
+  display: flex; align-items: center; gap: 4px; margin-top: 11px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.cat-card .foot .sp { flex: 1; }
+.lk { border: 0; background: transparent; color: var(--primary); font-size: 12.5px;
+      padding: 3px 7px; border-radius: 6px; }
+.lk:hover { background: var(--primary-soft); }
+.lk.danger { color: var(--red); }
+.lk.danger:hover { background: var(--red-soft); }
+
+/* 竖列表视图（保留，供习惯表格的人） */
+.cat-table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--panel);
+             border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.cat-table th, .cat-table td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+.cat-table th { background: var(--bg-soft); color: var(--text-2); font-weight: 500; font-size: 12.5px; white-space: nowrap; }
+.cat-table tr:last-child td { border-bottom: 0; }
+.cat-table tbody tr:hover { background: #f7f9fc; }
+.num-cell { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+<style>
+/* ---------------- 品类详情：持有总览 + 页签 ---------------- */
+.hold-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 12px; }
+.hold-card {
+  padding: 12px 14px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); display: flex; gap: 11px; align-items: flex-start;
+}
+.hold-card .av {
+  width: 34px; height: 34px; flex: none; border-radius: 9px; display: grid; place-items: center;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text-2);
+}
+.hold-card .av .ic { width: 17px; height: 17px; }
+.hold-card .body { min-width: 0; flex: 1; }
+.hold-card .who { font-size: 13.5px; font-weight: 600; }
+.hold-card .sub { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; }
+.hold-card .sub b { color: var(--text-1); font-weight: 500; }
+.hold-card .cnt { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hold-card .cnt small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 2px; }
+.hold-card .acts { margin-top: 8px; display: flex; gap: 4px; }
+.hold-card .acts .lk { padding: 2px 7px; font-size: 12px; }
+
+/* 空态：必须给出路（原型的关键改动之一） */
+.empty-box {
+  padding: 34px 20px; text-align: center; background: var(--panel);
+  border: 1px dashed var(--border-strong); border-radius: var(--radius);
+}
+.empty-box .icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 13px;
+                   background: var(--primary-soft); color: var(--primary); display: grid; place-items: center; }
+.empty-box .icon .ic { width: 23px; height: 23px; }
+.empty-box h3 { margin: 0 0 6px; font-size: 15px; }
+.empty-box p { margin: 0 auto 16px; max-width: 460px; color: var(--text-2); font-size: 13px; line-height: 1.75; }
+.empty-box .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+.tabs { display: flex; gap: 4px; margin: 20px 0 14px; border-bottom: 1px solid var(--border); }
+.tabs button {
+  border: 0; background: transparent; padding: 9px 14px; font-size: 13.5px; color: var(--text-2);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabs button:hover { color: var(--text-1); }
+.tabs button.on { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+.tabs .count { color: var(--text-3); font-size: 12px; margin-left: 4px; }
+
+/* ---------------- 流水时间线（替代密集表格） ---------------- */
+.flow { position: relative; }
+.flow-item { display: flex; gap: 12px; padding: 0 0 14px; }
+.flow-item .rail { position: relative; width: 30px; flex: none; display: flex; justify-content: center; }
+.flow-item .rail::before {
+  content: ''; position: absolute; top: 30px; bottom: -14px; width: 1px; background: var(--border);
+}
+.flow-item:last-child .rail::before { display: none; }
+.flow-item .pip {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text-2); z-index: 1;
+}
+.flow-item .pip .ic { width: 15px; height: 15px; }
+.flow-item .pip.in    { border-color: #cfe9ff; background: #eef7ff; color: #1d7fd6; }
+.flow-item .pip.out   { border-color: #ffd9c7; background: #fff3ec; color: #d2661d; }
+.flow-item .pip.move  { border-color: #ded0f5; background: var(--violet-soft); color: var(--violet); }
+.flow-item .pip.bad   { border-color: #ffd0ce; background: var(--red-soft); color: var(--red); }
+.flow-body {
+  flex: 1; min-width: 0; padding: 11px 14px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.flow-body .line1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-body .op { font-size: 13.5px; font-weight: 600; }
+.flow-body .when { color: var(--text-3); font-size: 12.5px; margin-left: auto; white-space: nowrap; }
+.flow-body .path { margin-top: 6px; font-size: 13px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.flow-body .path .arr { color: var(--text-3); }
+.flow-body .path .frm { color: var(--text-2); }
+.flow-body .path .to { font-weight: 600; }
+.flow-body .path .dim { color: var(--text-3); }
+.flow-body .note { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border);
+                   color: var(--text-2); font-size: 12.5px; }
+.pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; line-height: 18px; border: 1px solid; white-space: nowrap; }
+.pill.manual  { background: #e8f8e5; color: #1f8a17; border-color: #c8ebc2; }
+.pill.opening { background: var(--amber-soft); color: #b65c00; border-color: #ffdba8; }
+.pill.import  { background: #f2f3f5; color: var(--text-2); border-color: var(--border); }
+.pill.ok      { background: #e8f8e5; color: #1f8a17; border-color: #c8ebc2; }
+.pill.no      { background: #f2f3f5; color: var(--text-3); border-color: var(--border); }
+.pill.fix     { background: var(--amber-soft); color: #b65c00; border-color: #ffdba8; }
+
+/* ---------------- 对话框：按业务动作组织（不是技术模型） ---------------- */
+.mask {
+  position: fixed; inset: 0; z-index: 60; background: rgba(31, 35, 41, .45);
+  display: none; place-items: center; padding: 20px;
+}
+.mask.on { display: grid; }
+.modal {
+  width: min(660px, 96vw); max-height: 92vh; overflow: auto; background: var(--panel);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
+}
+.modal .mh { padding: 16px 20px 13px; border-bottom: 1px solid var(--border);
+             display: flex; align-items: center; gap: 10px; }
+.modal .mh h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.modal .mh .x { margin-left: auto; border: 0; background: transparent; color: var(--text-3);
+                font-size: 19px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+.modal .mh .x:hover { background: var(--bg); color: var(--text-1); }
+.modal .mb { padding: 18px 20px; }
+.modal .mf { padding: 13px 20px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+/* 第一步：选业务动作（大按钮，带人话解释） */
+.act-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 620px) { .act-grid { grid-template-columns: 1fr; } }
+.act {
+  display: flex; gap: 11px; align-items: flex-start; text-align: left; padding: 13px 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.act:hover { border-color: var(--primary); background: #fbfcff; box-shadow: var(--shadow-sm); }
+.act .ico { width: 32px; height: 32px; flex: none; border-radius: 9px; display: grid; place-items: center;
+            background: var(--primary-soft); color: var(--primary); }
+.act .ico.g { background: var(--green-soft); color: #1f8a17; }
+.act .ico.a { background: var(--amber-soft); color: var(--amber); }
+.act .ico.v { background: var(--violet-soft); color: var(--violet); }
+.act .ico.r { background: var(--red-soft); color: var(--red); }
+.act .t { display: block; font-size: 13.5px; font-weight: 600; }
+.act .d { display: block; font-size: 12px; color: var(--text-2); margin-top: 3px; line-height: 1.55; }
+
+/* 第二步：填这一件事需要的信息（只问必要项） */
+.field { margin-bottom: 14px; }
+.field .lbl { font-size: 13px; color: var(--text-2); margin-bottom: 5px; display: block; }
+.field .lbl b { color: var(--red); font-weight: 400; }
+.field input[type=text], .field input[type=number], .field input[type=date], .field select, .field textarea {
+  width: 100%; height: 34px; padding: 0 11px; font-size: 13px; color: var(--text-1);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel);
+}
+.field textarea { height: auto; padding: 8px 11px; resize: vertical; font-family: inherit; }
+.field input:focus, .field select:focus, .field textarea:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.field .tip { font-size: 11.5px; color: var(--text-3); margin-top: 4px; line-height: 1.6; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+@media (max-width: 620px) { .two { grid-template-columns: 1fr; } }
+.who-pick { display: flex; gap: 7px; flex-wrap: wrap; }
+.who-pick button {
+  padding: 5px 11px; font-size: 12.5px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--panel); color: var(--text-1);
+}
+.who-pick button:hover { border-color: var(--primary); color: var(--primary); }
+.mode-pick { display: flex; gap: 8px; margin-bottom: 16px; padding: 3px; background: #f2f3f5; border-radius: var(--radius-sm); }
+.mode-pick button { flex: 1; border: 0; background: transparent; padding: 7px 10px; border-radius: 6px;
+                    font-size: 12.5px; color: var(--text-2); }
+.mode-pick button.on { background: var(--panel); color: var(--text-1); box-shadow: var(--shadow-sm); font-weight: 500; }
+
+/* 确认条：把"操作前 → 操作后"两侧都摆出来 */
+.preview {
+  margin-top: 16px; padding: 12px 14px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.preview .ttl { font-size: 12.5px; color: var(--text-2); margin-bottom: 9px; }
+.preview table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.preview td { padding: 4px 0; vertical-align: top; }
+.preview td.k { color: var(--text-2); width: 42%; }
+.preview td.v { color: var(--text-1); font-weight: 500; }
+.preview td.v .was { color: var(--text-3); font-weight: 400; }
+.preview .same { color: var(--text-3); font-weight: 400; }
+/* 「不变」的数值用灰字，别配成琥珀色 —— 那会读成"出事了" */
+.preview .chg { color: var(--amber); font-weight: 600; }
+.preview .chg.same { color: var(--text-1); font-weight: 500; }
+
+.warnbox {
+  margin-top: 14px; padding: 11px 13px; border-radius: var(--radius-sm);
+  background: var(--amber-soft); border: 1px solid #ffdba8; color: #8a4700;
+  font-size: 12.5px; line-height: 1.7;
+}
+.infobox {
+  margin-top: 14px; padding: 11px 13px; border-radius: var(--radius-sm);
+  background: #f2f6ff; border: 1px solid #d6e2ff; color: #33507e; font-size: 12.5px; line-height: 1.7;
+}
+/* 术语解释（应用内帮助） */
+.help { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%;
+        border: 1px solid var(--border-strong); color: var(--text-3); font-size: 10px;
+        cursor: help; vertical-align: 1px; margin-left: 4px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+<body>
+<svg class="sr" aria-hidden="true">
+  <defs>
+    <symbol id="i-kb" viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="19" height="11" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M8 13.5h8"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M4.8 20c.6-3.9 3.6-6 7.2-6s6.6 2.1 7.2 6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3"/><path d="M2.8 19.5c.5-3.4 3-5.4 6.2-5.4s5.7 2 6.2 5.4"/><path d="M16.5 6.2a3 3 0 0 1 0 5.6M17.5 14.6c2.1.5 3.5 2.2 3.8 4.9"/></symbol>
+    <symbol id="i-screen" viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="12" rx="2"/><path d="M9 20h6M12 16.5V20"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6.5-5.6 6.5-10a6.5 6.5 0 1 0-13 0C5.5 15.4 12 21 12 21z"/><circle cx="12" cy="11" r="2.3"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.6 21 19.5H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
+    <symbol id="i-sum" viewBox="0 0 24 24"><path d="M17.5 4.5h-11l5.5 7.5-5.5 7.5h11"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.8h5V7M6.5 7l1 13h9l1-13"/></symbol>
+    <symbol id="i-in" viewBox="0 0 24 24"><path d="M12 3.5v10M8 10l4 3.5 4-3.5"/><path d="M4.5 17v2.5h15V17"/></symbol>
+    <symbol id="i-out" viewBox="0 0 24 24"><path d="M12 14.5v-10M8 8l4-3.5L16 8"/><path d="M4.5 17v2.5h15V17"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8.5h13M13.5 5l3.5 3.5-3.5 3.5"/><path d="M20 15.5H7M10.5 12 7 15.5 10.5 19"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15.5 4.5a5 5 0 0 0-6.1 6.6L3.5 17v3.5H7l5.9-5.9a5 5 0 0 0 6.6-6.1l-3 3-2.5-2.5z"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5 9.5 17.5 19.5 6.5"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M4 10h11a5 5 0 0 1 0 10H8"/><path d="M7.5 6.5 4 10l3.5 3.5"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6.5 3.5h7l5 5v12h-12z"/><path d="M13.5 3.5v5h5"/></symbol>
+  </defs>
+</svg>
+
+<header class="appbar">
+  <div class="brand"><span class="logo">IT</span><span class="name">IT 资产管理系统</span></div>
+  <nav>
+    <a href="#">资产台账</a>
+    <a href="#" class="on">轻资产</a>
+    <a href="#">问题中心</a>
+    <a href="#">空间地图</a>
+    <a href="#">配对管理</a>
+    <a href="#">盘点</a>
+    <a href="#">批量导入</a>
+    <a href="#">标签打印</a>
+    <a href="#">审计日志</a>
+  </nav>
+  <div class="right">
+    <span class="chip">👤 员工A</span>
+    <span class="chip"><i class="dot"></i>192.168.172.159:8080</span>
+  </div>
+</header>
+
+<main class="page">
+  <div class="proto-note">
+    <span>🎨</span>
+    <div>
+      <b>这是静态原型，不是成品。</b>
+      只为确认观感与流程：布局从"密集表格"改回系统原有的<b>卡片网格</b>（对齐资产台账页），
+      统计卡补上图标与语义配色，登记流转从"从哪来 / 到哪去"改成<b>先选业务动作</b>。
+      数据是假的，按钮大多不可用（可点的是：统计卡筛选、视图切换、卡片进详情、登记流转弹窗、页签）。
+    </div>
+  </div>
+
+  <!-- ============ 列表页 ============ -->
+  <div id="view-list">
+    <div class="page-head">
+      <div>
+        <h1>轻资产</h1>
+        <p class="sub">
+          不纳入正式台账的 IT 配件：键鼠套装、SSD、内存、转接头。库存与持有全部由流水现算。
+          <a href="#" style="color:var(--primary);text-decoration:none">怎么用？</a>
+        </p>
+      </div>
+      <div class="head-actions">
+        <button class="btn">批量导入</button>
+        <button class="btn">导出</button>
+        <button class="btn primary"><svg class="ic"><use href="#i-plus"/></svg>新增品类</button>
+      </div>
+    </div>
+
+    <div class="stat-row">
+      <button class="stat-card on sc-blue">
+        <span class="bar"></span>
+        <span class="k"><svg class="ic"><use href="#i-box"/></svg>启用品类</span>
+        <span class="v">2<small>个</small></span>
+        <span class="hint">还在管、没停用的</span>
+      </button>
+      <button class="stat-card sc-violet">
+        <span class="bar"></span>
+        <span class="k"><svg class="ic"><use href="#i-chip"/></svg>按单件追踪</span>
+        <span class="v">1<small>个</small></span>
+        <span class="hint">逐件追序列号</span>
+      </button>
+      <button class="stat-card sc-amber">
+        <span class="bar"></span>
+        <span class="k"><svg class="ic"><use href="#i-alert"/></svg>待期初初始化</span>
+        <span class="v">0<small>个</small></span>
+        <span class="hint">有分配但没入库</span>
+      </button>
+      <button class="stat-card sc-green">
+        <span class="bar"></span>
+        <span class="k"><svg class="ic"><use href="#i-list"/></svg>流水条数</span>
+        <span class="v">4<small>条</small></span>
+        <span class="hint">每次流转各一条</span>
+      </button>
+    </div>
+
+    <div class="filter-bar">
+      <input class="search" placeholder="搜索品类名 / 品牌 / 规格" />
+      <select class="pick"><option>全部追踪方式</option><option>按数量</option><option>按单件</option></select>
+      <select class="pick"><option>启用中</option><option>已停用</option><option>全部</option></select>
+      <div class="view-toggle">
+        <button class="on" onclick="setView('card')"><svg class="ic"><use href="#i-grid"/></svg>卡片</button>
+        <button onclick="setView('table')"><svg class="ic"><use href="#i-list"/></svg>列表</button>
+      </div>
+    </div>
+
+    <div id="cat-card" class="cat-grid">
+      <!-- 品类 1：数量管理 -->
+      <article class="cat-card" onclick="openDetail(1)">
+        <div class="top">
+          <span class="thumb"><svg class="ic"><use href="#i-kb"/></svg></span>
+          <div style="min-width:0">
+            <div class="name">罗技 MK270 键鼠套装</div>
+            <div class="spec">罗技 · 2.4G 无线 · 单位：套</div>
+          </div>
+          <span class="tag quantity">按数量</span>
+        </div>
+        <div class="nums">
+          <div class="cell">
+            <div class="lbl">库存</div>
+            <div class="num">0<small>套</small></div>
+          </div>
+          <div class="cell">
+            <div class="lbl">已分配</div>
+            <div class="num">3<small>套</small></div>
+          </div>
+        </div>
+        <div class="who">
+          <div class="lbl">当前持有</div>
+          <div class="list">
+            <span class="who-chip"><svg class="ic" style="width:12px;height:12px"><use href="#i-user"/></svg>周八<span class="q">×3</span></span>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="lk" onclick="event.stopPropagation();openFlow()">登记流转</button>
+          <span class="sp"></span>
+          <button class="lk" onclick="event.stopPropagation()">编辑</button>
+          <button class="lk danger" onclick="event.stopPropagation()">停用</button>
+        </div>
+      </article>
+
+      <!-- 品类 2：单件管理 -->
+      <article class="cat-card" onclick="openDetail(2)">
+        <div class="top">
+          <span class="thumb serial"><svg class="ic"><use href="#i-chip"/></svg></span>
+          <div style="min-width:0">
+            <div class="name">M.2 固态 宏碁 N3500</div>
+            <div class="spec">宏碁 · 256GB · 单位：块</div>
+          </div>
+          <span class="tag serial">按单件</span>
+        </div>
+        <div class="nums">
+          <div class="cell">
+            <div class="lbl">库存</div>
+            <div class="num zero">0<small>块</small></div>
+          </div>
+          <div class="cell">
+            <div class="lbl">已分配</div>
+            <div class="num">1<small>块</small></div>
+          </div>
+        </div>
+        <div class="who">
+          <div class="lbl">当前持有</div>
+          <div class="list">
+            <span class="who-chip"><svg class="ic" style="width:12px;height:12px"><use href="#i-screen"/></svg>A100-03-00001</span>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="lk" onclick="event.stopPropagation();openFlow()">登记流转</button>
+          <span class="sp"></span>
+          <button class="lk" onclick="event.stopPropagation()">编辑</button>
+          <button class="lk danger" onclick="event.stopPropagation()">停用</button>
+        </div>
+      </article>
+
+      <!-- 品类 3：停用 -->
+      <article class="cat-card" onclick="openDetail(3)">
+        <div class="top">
+          <span class="thumb"><svg class="ic"><use href="#i-box"/></svg></span>
+          <div style="min-width:0">
+            <div class="name">USB-C 转接头</div>
+            <div class="spec">绿联 · 未填规格 · 单位：个</div>
+          </div>
+          <span class="tag off">已停用</span>
+        </div>
+        <div class="nums">
+          <div class="cell">
+            <div class="lbl">库存</div>
+            <div class="num zero">0<small>个</small></div>
+          </div>
+          <div class="cell">
+            <div class="lbl">已分配</div>
+            <div class="num zero">0<small>个</small></div>
+          </div>
+        </div>
+        <div class="who">
+          <div class="lbl">当前持有</div>
+          <div class="who-empty">没有任何持有关系</div>
+        </div>
+        <div class="foot">
+          <span class="sp"></span>
+          <button class="lk" onclick="event.stopPropagation()">编辑</button>
+          <button class="lk" onclick="event.stopPropagation()">重新启用</button>
+        </div>
+      </article>
+
+      <!-- 品类 4：数量管理，有库存也有分配 -->
+      <article class="cat-card" onclick="openDetail(1)">
+        <div class="top">
+          <span class="thumb"><svg class="ic"><use href="#i-chip"/></svg></span>
+          <div style="min-width:0">
+            <div class="name">金士顿 DDR4 内存条</div>
+            <div class="spec">金士顿 · 8GB 2666MHz · 单位：条</div>
+          </div>
+          <span class="tag quantity">按数量</span>
+        </div>
+        <div class="nums">
+          <div class="cell">
+            <div class="lbl">库存</div>
+            <div class="num">6<small>条</small></div>
+          </div>
+          <div class="cell">
+            <div class="lbl">已分配</div>
+            <div class="num">4<small>条</small></div>
+          </div>
+        </div>
+        <div class="who">
+          <div class="lbl">当前持有</div>
+          <div class="list">
+            <span class="who-chip"><svg class="ic" style="width:12px;height:12px"><use href="#i-user"/></svg>员工H<span class="q">×2</span></span>
+            <span class="who-chip"><svg class="ic" style="width:12px;height:12px"><use href="#i-user"/></svg>员工G<span class="q">×2</span></span>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="lk" onclick="event.stopPropagation();openFlow()">登记流转</button>
+          <span class="sp"></span>
+          <button class="lk" onclick="event.stopPropagation()">编辑</button>
+          <button class="lk danger" onclick="event.stopPropagation()">停用</button>
+        </div>
+      </article>
+
+      <!-- 品类 5：待期初初始化（有分配、从没入过库） -->
+      <article class="cat-card" onclick="openDetail(1)">
+        <div class="top">
+          <span class="thumb"><svg class="ic"><use href="#i-box"/></svg></span>
+          <div style="min-width:0">
+            <div class="name">HDMI 转 VGA 转接头</div>
+            <div class="spec">绿联 · 未填规格 · 单位：个</div>
+          </div>
+          <span class="tag quantity">按数量</span>
+        </div>
+        <div class="nums">
+          <div class="cell">
+            <div class="lbl">库存</div>
+            <div class="num amber">未登记</div>
+          </div>
+          <div class="cell">
+            <div class="lbl">已分配</div>
+            <div class="num">2<small>个</small></div>
+          </div>
+        </div>
+        <div class="who">
+          <div class="lbl">当前持有</div>
+          <div class="list">
+            <span class="who-chip"><svg class="ic" style="width:12px;height:12px"><use href="#i-pin"/></svg>W07</span>
+            <span class="who-chip">敬小红<span class="q">×1</span></span>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="lk" onclick="event.stopPropagation();openFlow()">建期初库存</button>
+          <span class="sp"></span>
+          <button class="lk" onclick="event.stopPropagation()">编辑</button>
+        </div>
+      </article>
+
+      <!-- 新增品类：虚线占位卡 -->
+      <button class="cat-card" style="border-style:dashed;align-items:center;justify-content:center;min-height:150px;color:var(--text-3)"
+              onclick="event.stopPropagation()">
+        <svg class="ic" style="width:22px;height:22px;margin-bottom:6px"><use href="#i-plus"/></svg>
+        <span style="font-size:13px">新增品类</span>
+      </button>
+    </div>
+
+    <div id="cat-table" class="cat-table-wrap" style="display:none">
+      <table class="cat-table">
+        <thead>
+          <tr>
+            <th>品类</th><th>追踪方式</th><th class="num-cell">库存</th><th class="num-cell">已分配</th>
+            <th>当前持有</th><th>状态</th><th style="text-align:right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="#" onclick="openDetail(1);return false" style="color:var(--primary);text-decoration:none;font-weight:600">罗技 MK270 键鼠套装</a>
+                <div style="font-size:12px;color:var(--text-3)">罗技 · 2.4G 无线</div></td>
+            <td><span class="tag quantity">按数量</span></td>
+            <td class="num-cell">0 <small style="color:var(--text-3)">套</small></td>
+            <td class="num-cell">3 <small style="color:var(--text-3)">套</small></td>
+            <td>周八 ×3</td>
+            <td><span class="pill ok">启用</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="lk">详情</button><button class="lk">编辑</button><button class="lk danger">停用</button>
+            </td>
+          </tr>
+          <tr>
+            <td><a href="#" onclick="openDetail(2);return false" style="color:var(--primary);text-decoration:none;font-weight:600">M.2 固态 宏碁 N3500</a>
+                <div style="font-size:12px;color:var(--text-3)">宏碁 · 256GB</div></td>
+            <td><span class="tag serial">按单件</span></td>
+            <td class="num-cell">0 <small style="color:var(--text-3)">块</small></td>
+            <td class="num-cell">1 <small style="color:var(--text-3)">块</small></td>
+            <td>A100-03-00001</td>
+            <td><span class="pill ok">启用</span></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="lk">详情</button><button class="lk">编辑</button><button class="lk danger">停用</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+</body>
+<!-- ============ 品类详情（点卡片进入） ============ -->
+<main class="page" id="view-detail" style="display:none">
+  <div class="crumb"><a href="#" onclick="backToList();return false">轻资产</a> <span>/</span> 罗技 MK270 键鼠套装</div>
+  <div class="page-head">
+    <div>
+      <h1 style="display:flex;align-items:center;gap:9px">
+        罗技 MK270 键鼠套装
+        <span class="tag quantity">按数量</span>
+      </h1>
+      <p class="sub">罗技 · 2.4G 无线 · 单位：套 · <span style="color:var(--text-3)">共 4 条流水</span></p>
+    </div>
+    <div class="head-actions">
+      <button class="btn">编辑品类</button>
+      <button class="btn primary" onclick="openFlow()"><svg class="ic"><use href="#i-plus"/></svg>登记流转</button>
+    </div>
+  </div>
+
+  <div class="stat-row">
+    <button class="stat-card sc-blue on">
+      <span class="bar"></span>
+      <span class="k"><svg class="ic"><use href="#i-box"/></svg>库存</span>
+      <span class="v">0<small>套</small></span>
+      <span class="hint">在库里、还没发出去</span>
+    </button>
+    <button class="stat-card sc-green">
+      <span class="bar"></span>
+      <span class="k"><svg class="ic"><use href="#i-users"/></svg>已分配</span>
+      <span class="v">3<small>套</small></span>
+      <span class="hint">在别人手上 / 装在机器上</span>
+    </button>
+    <button class="stat-card sc-violet">
+      <span class="bar"></span>
+      <span class="k"><svg class="ic"><use href="#i-list"/></svg>历史流水</span>
+      <span class="v">4<small>条</small></span>
+      <span class="hint">含历史导入的追溯记录</span>
+    </button>
+    <button class="stat-card sc-amber">
+      <span class="bar"></span>
+      <span class="k"><svg class="ic"><use href="#i-trash"/></svg>已报损</span>
+      <span class="v">0<small>套</small></span>
+      <span class="hint">彻底退出管理</span>
+    </button>
+  </div>
+
+  <div class="tabs">
+    <button class="on" onclick="setTab(this,'t-hold')">持有明细<span class="count">1</span></button>
+    <button onclick="setTab(this,'t-flow')">流转流水<span class="count">4</span></button>
+    <button onclick="setTab(this,'t-help')">口径说明</button>
+  </div>
+
+  <!-- 持有明细 -->
+  <section id="t-hold">
+    <div class="hold-grid">
+      <div class="hold-card">
+        <span class="av"><svg class="ic"><use href="#i-user"/></svg></span>
+        <div class="body">
+          <div class="who">周八</div>
+          <div class="sub">直接分配给个人 · 起始于 <b>2026/10/15 18:25</b></div>
+          <div class="acts">
+            <button class="lk" onclick="openFlow()">收回库存</button>
+            <button class="lk" onclick="openFlow()">转给他人</button>
+            <button class="lk danger" onclick="openFlow()">报损</button>
+          </div>
+        </div>
+        <div class="cnt">3<small>套</small></div>
+      </div>
+    </div>
+
+    <!-- 空态：给出路，不是只解释 -->
+    <div class="empty-box" style="margin-top:14px">
+      <div class="icon"><svg class="ic"><use href="#i-box"/></svg></div>
+      <h3>库存里现在是空的</h3>
+      <p>
+        这个品类的 3 套都发出去了，库里剩 0。如果实际还有存货，按盘点结果登记一次
+        <b>期初初始化</b> 把真实库存建起来 —— 系统不会替你猜。
+      </p>
+      <div class="row">
+        <button class="btn primary" onclick="openFlow()">登记期初初始化</button>
+        <button class="btn">查看流转流水</button>
+        <button class="btn ghost">为什么不能直接改库存？</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 流转流水：时间线 -->
+  <section id="t-flow" style="display:none">
+    <div class="filter-bar">
+      <select class="pick"><option>全部操作</option><option>入库</option><option>分配</option><option>转移</option></select>
+      <select class="pick"><option>全部来源</option><option>日常登记</option><option>期初初始化</option><option>历史导入</option></select>
+      <input class="search" placeholder="搜索备注 / 操作人 / 使用人" />
+    </div>
+    <div class="flow">
+      <div class="flow-item">
+        <div class="rail"><span class="pip move"><svg class="ic"><use href="#i-swap"/></svg></span></div>
+        <div class="flow-body">
+          <div class="line1">
+            <span class="op">转移</span>
+            <span class="pill manual">日常登记</span>
+            <span class="when">2026/10/15 18:25 · 员工A</span>
+          </div>
+          <div class="path"><span class="frm">李四</span><span class="arr">→</span><span class="to">周八</span>
+            <span style="color:var(--text-3);font-size:12.5px">· 3 套</span></div>
+          <div class="note" style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1">换手，总量不变。可直接冲正（反向还是「转移」）。</span>
+            <button class="lk"><svg class="ic" style="width:13px;height:13px;vertical-align:-2px"><use href="#i-undo"/></svg>冲正</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-item">
+        <div class="rail"><span class="pip out"><svg class="ic"><use href="#i-out"/></svg></span></div>
+        <div class="flow-body">
+          <div class="line1">
+            <span class="op">分配</span>
+            <span class="pill manual">日常登记</span>
+            <span class="when">2026/10/15 18:25 · 员工A</span>
+          </div>
+          <div class="path"><span class="frm">库存</span><span class="arr">→</span><span class="to">李四</span>
+            <span style="color:var(--text-3);font-size:12.5px">· 3 套</span></div>
+          <div class="note" style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1">发给人。</span>
+            <button class="lk"><svg class="ic" style="width:13px;height:13px;vertical-align:-2px"><use href="#i-undo"/></svg>冲正</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-item">
+        <div class="rail"><span class="pip in"><svg class="ic"><use href="#i-in"/></svg></span></div>
+        <div class="flow-body">
+          <div class="line1">
+            <span class="op">入库</span>
+            <span class="pill opening">期初初始化</span>
+            <span class="when">2026/04/10 08:51 · 员工A</span>
+          </div>
+          <div class="path"><span class="frm dim">系统外部</span><span class="arr">→</span><span class="to">库存</span>
+            <span style="color:var(--text-3);font-size:12.5px">· 3 套</span></div>
+          <div class="note" style="display:flex;align-items:center;gap:8px">
+            <span style="flex:1">盘点确认的真实基线。</span>
+            <button class="lk"><svg class="ic" style="width:13px;height:13px;vertical-align:-2px"><use href="#i-undo"/></svg>冲正</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 没有可冲正的：显示为一行解释，而不是死按钮 -->
+      <div class="flow-item">
+        <div class="rail"><span class="pip"><svg class="ic"><use href="#i-screen"/></svg></span></div>
+        <div class="flow-body">
+          <div class="line1">
+            <span class="op">安装</span>
+            <span class="pill import">历史导入</span>
+            <span class="when">2025/11/03 10:20 · 李明媚</span>
+          </div>
+          <div class="path"><span class="frm dim">系统外部</span><span class="arr">→</span><span class="to">A100-03-00042</span>
+            <span style="color:var(--text-3);font-size:12.5px">· 1 块</span></div>
+          <div class="note">
+            历史导入只用于追溯，不计入当前库存与持有，不需要冲正。
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-item">
+        <div class="rail"><span class="pip bad"><svg class="ic"><use href="#i-trash"/></svg></span></div>
+        <div class="flow-body">
+          <div class="line1">
+            <span class="op">报损</span>
+            <span class="pill manual">日常登记</span>
+            <span class="when">2025/10/02 15:40 · 员工A</span>
+          </div>
+          <div class="path"><span class="frm">库存</span><span class="arr">→</span><span class="to dim">已注销 / 报损</span>
+            <span style="color:var(--text-3);font-size:12.5px">· 1 个</span></div>
+          <div class="note">
+            <span style="color:var(--text-2)">这条没有机械冲正</span>
+            <span class="help" title="报损一旦发生过就是事实。要撤销必须由人决定走哪条路（重新入库还是别的），系统不替你做这个判断。">?</span>
+            <span style="color:var(--text-2)"> —— 如果实物还在，请登记「调整（盘盈）」把它重新登记进库存。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 口径说明：把自造术语一次讲清，界面上不再"一头雾水" -->
+  <section id="t-help" style="display:none">
+    <div class="empty-box" style="text-align:left;padding:22px 24px">
+      <h3 style="margin-bottom:12px">这套账是怎么算的</h3>
+      <table class="cat-table" style="margin-bottom:16px">
+        <thead><tr><th style="width:34%">你会看到的词</th><th>是什么意思</th></tr></thead>
+        <tbody>
+          <tr><td><b>库存</b></td><td>实物在库里、还没发出去的数量。</td></tr>
+          <tr><td><b>已分配</b></td><td>已经发出去的数量（在某人手上，或装在某台机器上）。</td></tr>
+          <tr><td><b>净存在</b></td><td>进过这个系统的总数减去报损的总数，恒等于「库存 + 已分配」。</td></tr>
+          <tr><td><b>期初初始化</b></td><td>盘点确认过的真实基线。历史数据不全时用它把账建起来，必须填操作人。</td></tr>
+          <tr><td><b>历史导入</b></td><td>以前的 Excel 记录，只用于追溯，<b>不计入</b>当前库存与持有 —— 系统不替你猜真实库存。</td></tr>
+          <tr><td><b>冲正</b></td><td>登记错了就追加一条反向记录，原记录一个字不改。已确认的历史是证据。</td></tr>
+        </tbody>
+      </table>
+      <div class="infobox" style="margin-top:0">
+        <b>为什么没有"直接改库存"？</b>
+        因为改了就没人说得清中间发生过什么。每一次变动都留一条流水，谁在什么时候把东西给了谁，
+        事后永远查得到。
+      </div>
+      <div class="row" style="justify-content:flex-start;margin-top:14px">
+        <button class="btn"><svg class="ic"><use href="#i-doc"/></svg>打开完整使用说明（README）</button>
+      </div>
+    </div>
+  </section>
+</main>
+<!-- ============ 登记流转（改版核心）：先选"你要做什么" ============ -->
+<div class="mask" id="flow-mask">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="mh">
+      <h3 id="flow-title">登记流转 · 罗技 MK270 键鼠套装</h3>
+      <button class="x" onclick="closeFlow()">×</button>
+    </div>
+    <div class="mb">
+
+      <!-- 第一步：业务动作 -->
+      <div id="step-pick">
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:12px">这次要做什么？</div>
+        <div class="act-grid">
+          <button class="act" onclick="pickAct('in')">
+            <span class="ico g"><svg class="ic"><use href="#i-in"/></svg></span>
+            <span><span class="t">入库 / 建期初库存</span>
+                  <span class="d">新采购的，或按盘点结果把真实库存建起来</span></span>
+          </button>
+          <button class="act" onclick="pickAct('give')">
+            <span class="ico"><svg class="ic"><use href="#i-user"/></svg></span>
+            <span><span class="t">发给某个人</span>
+                  <span class="d">从库存里发给某人用，或直接归到某人名下</span></span>
+          </button>
+          <button class="act" onclick="pickAct('mount')">
+            <span class="ico v"><svg class="ic"><use href="#i-wrench"/></svg></span>
+            <span><span class="t">装到某台机器 / 放到某个点位</span>
+                  <span class="d">比如把 SSD 装进主机，或放在闲置点位上</span></span>
+          </button>
+          <button class="act" onclick="pickAct('move')">
+            <span class="ico v"><svg class="ic"><use href="#i-swap"/></svg></span>
+            <span><span class="t">换个人 / 换个地方</span>
+                  <span class="d">东西没回库，直接换手或挪位，总量不变</span></span>
+          </button>
+          <button class="act" onclick="pickAct('back')">
+            <span class="ico a"><svg class="ic"><use href="#i-out"/></svg></span>
+            <span><span class="t">收回库存</span>
+                  <span class="d">从人手上或机器上拆下来，退回库房</span></span>
+          </button>
+          <button class="act" onclick="pickAct('scrap')">
+            <span class="ico r"><svg class="ic"><use href="#i-trash"/></svg></span>
+            <span><span class="t">报损</span>
+                  <span class="d">彻底退出管理，不再占库存、也没有持有方</span></span>
+          </button>
+        </div>
+        <div class="infobox">
+          看不出该点哪个？记住一句话：<b>先想"东西从哪去"，再想"从哪来"</b> ——
+          界面会替你把它翻译成系统认识的记录，你不需要理解背后的数据模型。
+        </div>
+      </div>
+
+      <!-- 第二步：只问这件事需要的信息 -->
+      <div id="step-form" style="display:none">
+        <button class="btn ghost" style="margin-bottom:12px;padding-left:0" onclick="backToPick()">← 换个操作</button>
+        <div id="act-header" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:16px">
+          <span class="ico" id="act-ico" style="width:32px;height:32px;flex:none;border-radius:9px;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary)">
+            <svg class="ic"><use href="#i-user"/></svg>
+          </span>
+          <div>
+            <div style="font-size:14px;font-weight:600" id="act-name">发给某个人</div>
+            <div style="font-size:12.5px;color:var(--text-2)" id="act-desc">从库存里发给某人用，或直接归到某人名下</div>
+          </div>
+        </div>
+
+        <!-- 发给某人 -->
+        <div id="f-give">
+          <div class="field">
+            <label class="lbl">发给谁 <b>*</b></label>
+            <input type="text" list="people" value="周八" placeholder="输入姓名，或从下面挑一个" />
+            <div class="tip">打不出来也没关系，直接输新名字即可。</div>
+          </div>
+          <div class="who-pick">
+            <span style="font-size:12px;color:var(--text-3);align-self:center">最近用过：</span>
+            <button>李四</button><button>周八</button><button>员工H</button><button>员工G</button>
+          </div>
+        </div>
+
+        <!-- 装到机器 / 点位 -->
+        <div id="f-mount" style="display:none">
+          <div class="mode-pick">
+            <button class="on">装到某台机器</button>
+            <button>放到某个点位</button>
+          </div>
+          <div class="field">
+            <label class="lbl">哪台机器 <b>*</b></label>
+            <input type="text" placeholder="搜资产编号 / 品牌型号 / 使用人，如 A100-03-00042" />
+            <div class="tip">输入编号或使用人姓名都能搜到。</div>
+          </div>
+        </div>
+
+        <!-- 收回库存 -->
+        <div id="f-back" style="display:none">
+          <div class="field">
+            <label class="lbl">从谁那里收回 <b>*</b></label>
+            <select>
+              <option>周八（手上 3 套）</option>
+              <option>A100-03-00001（1 块）</option>
+            </select>
+            <div class="tip">只列出真的持有这个品类的地方。没有的不会出现在这里 —— 所以不会记错。</div>
+          </div>
+        </div>
+
+        <!-- 换手 -->
+        <div id="f-move" style="display:none">
+          <div class="two">
+            <div class="field">
+              <label class="lbl">从谁那里来 <b>*</b></label>
+              <select><option>周八（手上 3 套）</option></select>
+            </div>
+            <div class="field">
+              <label class="lbl">换给谁 <b>*</b></label>
+              <input type="text" value="李四" />
+            </div>
+          </div>
+          <div class="tip">东西不回库，直接换手。一次操作就是一条记录，总量不变。</div>
+        </div>
+
+        <!-- 报损 -->
+        <div id="f-scrap" style="display:none">
+          <div class="field">
+            <label class="lbl">报损哪里的 <b>*</b></label>
+            <select>
+              <option>周八（手上 3 套）</option>
+              <option disabled>库存（0 套，没得报）</option>
+            </select>
+            <div class="tip">只列出真的持有这个品类的地方，且数量对得上。</div>
+          </div>
+          <div class="warnbox">
+            报损 = 彻底退出管理，之后不能再走「入库」复活。
+            如果是误报损、实物还在，请改用<b>「调整（盘盈）」</b>重新登记进库存。
+          </div>
+        </div>
+
+        <!-- 入库 -->
+        <div id="f-in" style="display:none">
+          <div class="field">
+            <label class="lbl">这是怎么进来的 <b>*</b></label>
+            <div class="mode-pick" style="margin-bottom:0">
+              <button class="on">日常采购入库</button>
+              <button>期初初始化（盘点基线）</button>
+            </div>
+            <div class="tip">期初初始化用于建立真实基线，必须填操作人。</div>
+          </div>
+        </div>
+
+        <!-- 公共字段 -->
+        <div class="two" style="margin-top:4px">
+          <div class="field">
+            <label class="lbl">数量</label>
+            <input type="number" value="3" min="1" />
+          </div>
+          <div class="field">
+            <label class="lbl">发生日期</label>
+            <input type="date" value="2026-10-15" />
+          </div>
+        </div>
+        <div class="two">
+          <div class="field">
+            <label class="lbl">操作人</label>
+            <input type="text" value="员工A" />
+          </div>
+          <div class="field">
+            <label class="lbl">备注</label>
+            <input type="text" placeholder="选填，如：替换下来的旧件放回仓库" />
+          </div>
+        </div>
+
+        <!-- 确认条：操作前 → 操作后，两侧都摆出来（内容随动作联动，见脚本 PREVIEW） -->
+        <div class="preview">
+          <div class="ttl">确认一下这次会发生什么</div>
+          <table id="preview-table"><!-- 由脚本填充 --></table>
+        </div>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn" onclick="closeFlow()">取消</button>
+      <button class="btn primary" id="flow-ok" disabled onclick="closeFlow()">登记</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function setView(v) {
+  document.getElementById('cat-card').style.display = v === 'card' ? '' : 'none';
+  document.getElementById('cat-table').style.display = v === 'table' ? '' : 'none';
+  document.querySelectorAll('.view-toggle button').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('.view-toggle button')[v === 'card' ? 0 : 1].classList.add('on');
+}
+function openDetail() {
+  document.getElementById('view-list').style.display = 'none';
+  document.getElementById('view-detail').style.display = '';
+  window.scrollTo(0, 0);
+}
+function backToList() {
+  document.getElementById('view-detail').style.display = 'none';
+  document.getElementById('view-list').style.display = '';
+  window.scrollTo(0, 0);
+}
+function setTab(btn, id) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  ['t-hold', 't-flow', 't-help'].forEach(x => {
+    document.getElementById(x).style.display = x === id ? '' : 'none';
+  });
+}
+const ACTS = {
+  give:  { name: '发给某个人', desc: '从库存里发给某人用，或直接归到某人名下', ico: 'i-user',  cls: '' },
+  mount: { name: '装到某台机器 / 放到某个点位', desc: '比如把 SSD 装进主机，或放在闲置点位上', ico: 'i-wrench', cls: 'v' },
+  back:  { name: '收回库存', desc: '从人手上或机器上拆下来，退回库房', ico: 'i-out', cls: 'a' },
+  move:  { name: '换个人 / 换个地方', desc: '东西没回库，直接换手或挪位，总量不变', ico: 'i-swap', cls: 'v' },
+  scrap: { name: '报损', desc: '彻底退出管理，不再占库存、也没有持有方', ico: 'i-trash', cls: 'r' },
+  'in':  { name: '入库 / 建期初库存', desc: '新采购的，或按盘点结果把真实库存建起来', ico: 'i-in', cls: 'g' }
+};
+/* 确认条：每种动作会发生什么，数字必须跟着动作变 ——
+   报损写成"净存在 −1"、入库写成"净存在 +3"，不能千篇一律地显示"换手"的数字。 */
+const PREVIEW = {
+  give: [
+    ['库存',        '<span class="was">0 套</span> → <span class="chg">−3 套</span>'],
+    ['李四手上',    '<span class="was">0 套</span> → <span class="chg">3 套</span>'],
+    ['净存在',      '3 套 <span class="same">（不变：只是换了地方）</span>'],
+  ],
+  mount: [
+    ['库存',        '<span class="was">3 套</span> → <span class="chg">0 套</span>'],
+    ['A100-03-00001', '<span class="was">0 套</span> → <span class="chg">3 套</span>'],
+    ['净存在',      '3 套 <span class="same">（不变）</span>'],
+  ],
+  back: [
+    ['周八手上',    '<span class="was">3 套</span> → <span class="chg">0 套</span>'],
+    ['库存',        '<span class="was">0 套</span> → <span class="chg">3 套</span>'],
+    ['净存在',      '3 套 <span class="same">（不变：只是回到库房）</span>'],
+  ],
+  move: [
+    ['周八手上',    '<span class="was">3 套</span> → <span class="chg">0 套</span>'],
+    ['李四手上',    '<span class="was">0 套</span> → <span class="chg">3 套</span>'],
+    ['库存 · 净存在', '<span class="chg same">都不变</span>'],
+  ],
+  /* 报损：从周八手上报 1 套 → 已分配 3→2、净存在 3→2，库存本来就很 0，不动 */
+  scrap: [
+    ['周八手上',    '<span class="was">3 套</span> → <span class="chg">2 套</span>'],
+    ['已报损',      '<span class="was">0 套</span> → <span class="chg">1 套</span>'],
+    ['库存',        '<span class="was">0 套</span> → <span class="chg same">0 套</span> <span class="same">（不变）</span>'],
+    ['净存在',      '<span class="was">3 套</span> → <span class="chg">2 套</span> <span class="same">（少 1 套）</span>'],
+  ],
+  'in': [
+    ['库存',        '<span class="was">0 套</span> → <span class="chg">+3 套</span>'],
+    ['已分配',      '3 套 <span class="same">（不变）</span>'],
+    ['净存在',      '<span class="was">3 套</span> → <span class="chg">6 套</span> <span class="same">（多 3 套）</span>'],
+  ],
+};
+function renderPreview(k) {
+  document.getElementById('preview-table').innerHTML = (PREVIEW[k] || [])
+    .map(([k2, v]) => '<tr><td class="k">' + k2 + '</td><td class="v">' + v + '</td></tr>')
+    .join('');
+}
+function pickAct(k) {
+  const a = ACTS[k];
+  document.getElementById('step-pick').style.display = 'none';
+  document.getElementById('step-form').style.display = '';
+  document.getElementById('act-name').textContent = a.name;
+  document.getElementById('act-desc').textContent = a.desc;
+  const box = document.getElementById('act-ico');
+  box.className = 'ico ' + a.cls;
+  box.innerHTML = '<svg class="ic"><use href="#' + a.ico + '"/></svg>';
+  ['f-give', 'f-mount', 'f-back', 'f-move', 'f-scrap', 'f-in'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+  document.getElementById('f-' + k).style.display = '';
+  renderPreview(k);
+  document.getElementById('flow-ok').disabled = false;
+}
+function backToPick() {
+  document.getElementById('step-form').style.display = 'none';
+  document.getElementById('step-pick').style.display = '';
+  document.getElementById('flow-ok').disabled = true;
+}
+function openFlow() {
+  backToPick();
+  document.getElementById('flow-mask').classList.add('on');
+}
+function closeFlow() { document.getElementById('flow-mask').classList.remove('on'); }
+document.getElementById('flow-mask').addEventListener('click', closeFlow);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFlow(); });
+</script>
+</body>
+</html>
