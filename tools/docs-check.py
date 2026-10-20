@@ -187,6 +187,10 @@ def check_links() -> None:
                 target = target.split("#")[0]
                 if not target:
                     continue
+                # 归档快照是"原样留底的复印件"，里面的相对路径按原位置解析，
+                # 挪进 docs/archive/ 之后必然对不上。它们不是给人点的，跳过。
+                if p.relative_to(ROOT).as_posix().startswith("docs/archive/"):
+                    continue
                 total += 1
                 if not (p.parent / target).exists():
                     broken.append(f"{p.relative_to(ROOT)}:{i} -> {target}")
@@ -227,6 +231,48 @@ def check_orphans() -> None:
 
 
 # ------------------------------------------------- 6. 表格没被空行截断
+def slug(text: str) -> str:
+    """GitHub 风格的标题锚点：小写、去标点、空格变连字符、保留中文。"""
+    s = text.strip().lower()
+    s = re.sub(r"`", "", s)
+    s = re.sub(r"[^0-9a-z\u4e00-\u9fa5 \-_]", "", s)
+    s = s.replace(" ", "-")
+    return s
+
+
+def anchors_of(path: Path) -> set[str]:
+    out = set()
+    for line in strip_code(read(path)).splitlines():
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            out.add(slug(m.group(2)))
+    return out
+
+
+def check_anchors() -> None:
+    """`](某.md#某锚点)` 里的锚点必须真存在 —— 标题一改，深链就静默失效。"""
+    bad, total = [], 0
+    cache: dict[Path, set[str]] = {}
+    for p in md_files():
+        rel = p.relative_to(ROOT).as_posix()
+        if rel.startswith("docs/archive/"):
+            continue
+        for i, line in enumerate(strip_code(read(p)).splitlines(), 1):
+            for m in re.finditer(r"\]\(([^)\s]+?\.md)#([^)\s]+)\)", line):
+                target = (p.parent / m.group(1)).resolve()
+                if not target.exists():
+                    continue  # 文件不存在由 check_links 报
+                total += 1
+                if target not in cache:
+                    cache[target] = anchors_of(target)
+                if m.group(2) not in cache[target]:
+                    bad.append(f"{rel}:{i} -> {m.group(1)}#{m.group(2)}")
+    if bad:
+        add("ERROR", "锚点", f"{len(bad)} 条深链指向不存在的标题", "; ".join(bad[:6]))
+    else:
+        add("OK", "锚点", f"{total} 条带锚点链接全部命中")
+
+
 def check_table_break() -> None:
     bad = []
     for p in md_files():
@@ -277,6 +323,63 @@ def check_banners() -> None:
 
 
 # ------------------------------------------------ 9. 敏感词（只告警，不改）
+def check_decisions() -> None:
+    """决策分册的三条硬约束：索引覆盖 = 册内条数、编号不重复、约束型两份逐字一致。"""
+    d = ROOT / "docs/dev/decisions"
+    if not d.exists():
+        add("SKIP", "决策", "docs/dev/decisions/ 还不存在")
+        return
+
+    rows: dict[int, tuple[str, str]] = {}
+    dup = []
+    for f in sorted(d.glob("*.md")):
+        if f.name == "README.md":
+            continue
+        for line in read(f).splitlines():
+            m = re.match(r"^\| (\d+) \|", line)
+            if m:
+                n = int(m.group(1))
+                if n in rows:
+                    dup.append(f"{n} 同时在 {rows[n][0]} 与 {f.name}")
+                rows[n] = (f.name, line.rstrip())
+
+    idx_nums = set()
+    idx_file = d / "README.md"
+    if idx_file.exists():
+        idx_nums = {int(m) for m in re.findall(r"^\| (\d+) \|", read(idx_file), re.M)}
+
+    problems = []
+    if dup:
+        problems.append("编号重复：" + "; ".join(dup[:4]))
+    if idx_nums and idx_nums != set(rows):
+        only_idx = sorted(idx_nums - set(rows))[:5]
+        only_book = sorted(set(rows) - idx_nums)[:5]
+        problems.append(f"索引与册不一致（索引多 {only_idx} / 册多 {only_book}）")
+    # 编号应连续（允许已知空缺 79，但不许悄悄多出新洞）
+    if rows:
+        expect = set(range(min(rows), max(rows) + 1)) - {79}
+        holes = sorted(expect - set(rows))
+        if holes:
+            problems.append(f"册内编号有空缺 {holes}")
+
+    inv = ROOT / "docs/dev/invariants.md"
+    if inv.exists():
+        inv_rows = {}
+        for line in read(inv).splitlines():
+            m = re.match(r"^\| (\d+) \|", line)
+            if m:
+                inv_rows[int(m.group(1))] = line.rstrip()
+        diff = [n for n, line in inv_rows.items() if n in rows and rows[n][1] != line]
+        if diff:
+            problems.append(f"约束型两份不一致（改了册子别忘了同一份全文）: {sorted(diff)[:6]}")
+
+    if problems:
+        add("ERROR", "决策", f"{len(problems)} 个问题", " | ".join(problems))
+    else:
+        n_inv = len([l for l in read(inv).splitlines() if re.match(r"^\| \d+ \|", l)]) if inv.exists() else 0
+        add("OK", "决策", f"{len(rows)} 条分在 {len(list(d.glob('*.md'))) - 1} 册，索引一致，约束型 {n_inv} 条两份逐字相同")
+
+
 def check_secrets() -> None:
     db = ROOT / "backend/data/it_assets.db"
     if not db.exists():
@@ -330,8 +433,10 @@ def main() -> int:
     check_links()
     check_orphans()
     check_table_break()
+    check_anchors()
     check_size(args.strict)
     check_banners()
+    check_decisions()
     check_secrets()
 
     errors = [r for r in results if r["level"] == "ERROR"]
