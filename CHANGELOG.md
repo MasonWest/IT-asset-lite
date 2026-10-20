@@ -4,7 +4,50 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-当前基线：**v2.9.7**（2026-10-20）
+当前基线：**v2.9.8**（2026-10-20）
+
+---
+
+## [v2.9.8] — 轻资产时间差 8 小时（浏览器写 UTC）+ 「关联轻资产」卡片内边距
+
+### 一、时间口径：库里必须是"墙上时钟"，不是 UTC
+
+**现场**：轻资产「当前分配」写着「起始于 2026/10/20 06:18」，而同一笔操作在审计日志里是
+14:18 —— 差 8 小时。同一批数据在流水、导出、资产详情里的「装上」日期也都偏。
+
+**根因**：前端把「发生日期 + 当前时分」拼成本地时间后调了 `new Date(...).toISOString()`。
+`toISOString()` 输出的是 **UTC**（带 `Z`），pydantic 解析成带时区的 datetime，
+而 SQLite 的 `DateTime` 列会把 tzinfo 丢掉 —— 于是"本地 14:18"落库成"06:18"。
+后端自己 `datetime.now()` 写的时间是对的，所以只有**用过浏览器那条路**的行偏。
+
+三处一起改：
+
+- **写入口（前端）**：`LightMovementDialog` 直接拼本地 naive 字符串
+  （`2026-10-20T14:18:00`，没有 `Z`）；日期默认值改用 `localDateString()`，
+  不再用 `toISOString().slice(0,10)`（东八区晚 8 点之后它会跳到"明天"）。
+- **后端兜底（新增 `app/local_time.py`）**：`LocalNaiveDatetime` = 带时区先
+  `astimezone()` 到本机、再去掉 tzinfo；裸时间原样通过（**别再转一次，那会偏两遍**）。
+  轻资产三个请求（登记流转 / 更换配件 / 期初确认）的 `occurred_at` 都换成它。
+  这样即使客户端是缓存的旧前端、或是别人用 curl 发 `...Z`，库也不会再被写歪。
+- **历史数据一次性校正**（`database.py::_shift_light_utc_timestamps`）：
+  把 `light_movements.occurred_at` / `light_holdings.since` 按本机时区平移一次。
+  判据是**写入路径**而不是猜数值：前端拼的是分钟精度 → 落库后微秒恰好是 0；
+  后端自己写的必带微秒；`origin='import'`（Excel 里手填的墙钟日期）不经过浏览器，
+  排除。`schema_meta` 记账，只做一次。
+
+验证（临时库副本，18 项）：`since` 与最近一笔轻资产审计同一分钟、页面「起始于」== 接口的 `since`
+== 本机钟点；UI 登记一笔抓包看到 `occurred_at=2026-10-20T14:38:00`（无 `Z`），
+落库后 `occurred_at` 与 `created_at` 同一分钟。
+
+### 二、「关联轻资产」卡片比上面宽 20px（其实是没有内边距）
+
+`AssetLightAssetsPanel` 的根是 `<section class="panel">`，而全站口径是
+「`.section-title` 自带 `16px 20px 8px`，其余内容各自补 `padding: 0 20px`」
+（见 `AssetRelationsPanel`）。这个组件三块（列表 / 空态 / 底部）都没补 ——
+配件行和卡片边框贴着、空态文案直接压到边框上，跟上面的「配对设备」差 20px。
+
+补 `.light-list` / `.empty` / `.foot` 的 `padding: 0 20px`，面板底部留 16px（与 `pair-panel` 一致）。
+量出来：配件行左右内边距 21px（含 1px 边框）= 配对卡片那行；空态文字画在 21px 处；底部留白 17px。
 
 ---
 
