@@ -979,8 +979,18 @@ function dash(v: string | null | undefined): string {
   font-size: 12px; font-weight: 700; color: #78350f; margin-bottom: 10px;
   display: flex; justify-content: space-between; align-items: center;
 }
+/*
+  ⚠️ AppIcon 渲染出来的是 display:block 的 svg。
+  放进普通块级容器里，它会自己独占一行，文字被挤到下一行 ——
+  在固定高度的按钮里就是"文字溢出到按钮外面"。所以凡是"图标 + 文字"同排的容器，
+  必须显式 flex/inline-flex，不能指望 svg 自己变成行内元素。
+*/
+.audit-title > span:first-child {
+  display: inline-flex; align-items: center; gap: 5px;
+}
 .audit-title .st { font-size: 11px; color: #d97706; font-weight: 600; }
 .pass-all {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
   width: 100%; height: 36px; border-radius: 9px; font-size: 12.5px; font-weight: 700;
   border: none; background: #10b981; color: #fff; cursor: pointer;
   box-shadow: 0 4px 12px -3px rgba(16, 185, 129, 0.4); transition: all 0.16s;
@@ -1014,9 +1024,14 @@ function dash(v: string | null | undefined): string {
   font-size: 10.5px; color: #475569; margin-top: 3px; line-height: 1.6;
   word-break: break-word;
 }
-.changed { font-size: 10.5px; color: #b45309; margin-top: 4px; font-weight: 600; }
+/* 同上：svg 是 block，图标与文字必须靠 flex 排在一行 */
+.changed {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; color: #b45309; margin-top: 4px; font-weight: 600;
+}
 .asset-btns { display: flex; gap: 6px; }
 .abtn {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
   flex: 1; height: 28px; border-radius: 6px; font-size: 11px; font-weight: 700;
   border: 1px solid #cbd5e1; background: #fff; color: #475569; cursor: pointer;
   transition: all 0.14s;

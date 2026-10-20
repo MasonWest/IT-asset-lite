@@ -421,12 +421,21 @@ main.page-host.page-host--flush {
   border-radius: 8px;
 }
 
+/*
+  ⚠️ 按钮必须 flex：`AppIcon` 渲染的是 display:block 的 svg，
+  放进普通 <button> 会独占一行，图标和文字上下堆成两行、按钮被撑高。
+  （同样的坑在 MapStationPanel 的 .pass-all/.abtn、AuditView 的 .chip 都出现过）
+*/
 .view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   background: transparent;
   padding: 5px 12px;
   border-radius: 6px;
   font-size: 13px;
+  line-height: 18px;
   color: var(--text-2);
   cursor: pointer;
   font-family: inherit;

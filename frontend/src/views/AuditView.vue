@@ -425,9 +425,9 @@ onMounted(async () => {
 
             <div class="line-3">
               <span class="chip" :class="{ muted: !entry.operator }">
-                <AppIcon name="user" :size="12" style="margin-right:3px" />{{ entry.operator || '未填写操作人' }}
+                <AppIcon name="user" :size="12" />{{ entry.operator || '未填写操作人' }}
               </span>
-              <span class="chip mono"><AppIcon name="globe" :size="12" style="margin-right:3px" />{{ entry.ip || '—' }}</span>
+              <span class="chip mono"><AppIcon name="globe" :size="12" />{{ entry.ip || '—' }}</span>
               <span class="chip">{{ formatDateTime(entry.created_at) }}</span>
               <span v-if="!entry.ok" class="chip bad">{{ entry.status_label }}</span>
               <span class="spacer" />
@@ -587,7 +587,15 @@ onMounted(async () => {
   margin-top: 8px;
 }
 
+/*
+  ⚠️ chip 里可能有图标（AppIcon 渲染的是 display:block 的 svg）。
+  不给 flex 的话图标会独占一行，chip 被撑成两行的胶囊。
+  图标与文字的间距统一走 gap，模板里不再写内联 margin-right。
+*/
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 12px;
   color: var(--text-2);
   background: var(--bg-soft);
