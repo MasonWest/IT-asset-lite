@@ -154,7 +154,7 @@ class TestLightUserAmbiguity(unittest.TestCase):
     """记在人手上的轻资产，而这个人名下有多个点位 —— 兜底规则（v2.9.6）。
 
     ⚠️ 这条**不是错误**：人手上没有位置关系，系统只能给出候选。
-    它在问题中心存在的意义是"别只存在于搜索里"——张翔今天多了一个工位，
+    它在问题中心存在的意义是"别只存在于搜索里"——员工A今天多了一个工位，
     不会挑他去搜索的时候发生。
     """
 
@@ -163,7 +163,7 @@ class TestLightUserAmbiguity(unittest.TestCase):
             [],
             light_user_ambiguous=[
                 iss.LightUserAmbiguity(
-                    holding_id=42, user="张翔", category_name="键鼠套装",
+                    holding_id=42, user="员工A", category_name="键鼠套装",
                     station_codes=("W52", "W63"),
                 )
             ],
@@ -175,7 +175,7 @@ class TestLightUserAmbiguity(unittest.TestCase):
         self.assertEqual(p.source, iss.IssueSource.INTEGRITY)
         self.assertEqual(p.key, "light_user_station_ambiguous:light_holding:42")
         self.assertEqual(p.action_url, "/light", "动作只能是已存在且在白名单里的入口")
-        self.assertIn("张翔", p.title)
+        self.assertIn("员工A", p.title)
         self.assertIn("2", p.title)
         self.assertIn("W52", p.detail)
         self.assertIn("W63", p.detail)

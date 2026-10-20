@@ -531,7 +531,7 @@ def build_problems(
     # ---------- 规则 6：记在人手上的轻资产，人有多个点位 ----------
     # 不是错误，是**位置信息不够**：人手上没有位置关系，系统只知道"可能是这几个工位之一"。
     # 地图把候选位置都标「可能在这里」，这条规则负责让它别只存在于搜索里 ——
-    # 「张翔今天多了一个工位」不会挑他去搜索的时候发生。
+    # 「员工A今天多了一个工位」不会挑他去搜索的时候发生。
     spec6 = RULE_BY_KEY[IssueRule.LIGHT_USER_STATION_AMBIGUOUS]
     for amb in light_user_ambiguous:
         places = "、".join(amb.station_codes) if amb.station_codes else "多个点位"

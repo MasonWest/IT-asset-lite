@@ -451,11 +451,11 @@ class TestStationLightGroups(LightTestBase):
     def test_user_with_two_stations_appears_on_both(self):
         """两个点位都是候选 —— 这正是它不能参与任何总量聚合的原因。"""
         kb = self.make_category("键鼠套装")
-        w23 = self.make_station("W23", user="张翔")
-        w63 = self.make_station("W63", user="张翔")
+        w23 = self.make_station("W23", user="员工A")
+        w63 = self.make_station("W63", user="员工A")
         self.move(kb, LightOp.STOCK_IN, to=STOCK(), quantity=1)
         self.move(kb, LightOp.ALLOCATE, frm=STOCK(),
-                  to=HolderRef(kind=LightHolderKind.USER, user="张翔"), quantity=1)
+                  to=HolderRef(kind=LightHolderKind.USER, user="员工A"), quantity=1)
 
         groups_23 = self._groups(w23)
         groups_63 = self._groups(w63)

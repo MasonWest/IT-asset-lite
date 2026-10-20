@@ -125,7 +125,7 @@ async function reverse(movement: LightMovement) {
     const { value } = await ElMessageBox.prompt(
       `冲正流水 #${movement.id}（${movement.op_label}）？系统会「追加一条反向记录」，原记录一个字不改。请填写冲正原因：`,
       '冲正确认',
-      { confirmButtonText: '冲正', cancelButtonText: '取消', inputPlaceholder: '如：登记错了，实际发给陈娟' },
+      { confirmButtonText: '冲正', cancelButtonText: '取消', inputPlaceholder: '如：登记错了，实际发给员工C' },
     )
     reason = value
   } catch {

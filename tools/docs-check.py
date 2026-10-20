@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""文档一致性体检 —— 把这个仓库"靠记得住"的文档规则变成可执行断言。
+
+用法：
+    py -3 tools/docs-check.py            # 常规：ERROR 才失败，WARN 只提示
+    py -3 tools/docs-check.py --strict   # 体积阈值也当 ERROR（迁移完成后的验收口径）
+    py -3 tools/docs-check.py --json     # 机器可读输出
+
+设计原则：
+1. **只用标准库**，不需要装任何东西（这个仓库刻意不建 venv）。
+2. **只读**：不改任何文件；敏感词只告警，绝不自动替换。
+3. **不硬编码业务数字**：表数从 models.py 数，版本号从代码读，姓名从库里反查。
+   凡是"抄进脚本就会漂"的东西，一律现算。
+4. 文档结构还没落位时（docs/ 不存在、CS 还没拆），相关检查报 SKIP 而不是 ERROR ——
+   否则迁移做到一半永远红，人就不看了。
+
+退出码：0 = 全部 ERROR 通过；1 = 有 ERROR；2 = 前提不成立（仓库路径不对）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sqlite3
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# ---- 体积阈值（行数）。判据是"人还愿意读完"，不是"越小越好" ----
+SIZE_LIMITS = {
+    "README.md": 200,
+    "CURRENT_STATE.md": 300,
+}
+# 单份设计稿超过这个体积就提示（不是错，只是提醒"它可能该分卷了"）
+DESIGN_WARN_KB = 100
+
+# 四个版本号来源（标题 / 路径 / 提取方式）
+VERSION_SOURCES = [
+    ("backend/app/__init__.py", r'__version__\s*=\s*"([^"]+)"'),
+    ("backend/app/config.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
+    ("frontend/package.json", r'"version"\s*:\s*"([^"]+)"'),
+]
+
+# 视为"已脱敏占位符"的姓名模式：不进敏感词报告
+PLACEHOLDER_PAT = re.compile(r"^(员工[A-Z]|张三|李四|王五|赵六|某某|测试.*|demo)$")
+
+results: list[dict] = []
+
+
+def add(level: str, check: str, msg: str, detail: str = "") -> None:
+    results.append({"level": level, "check": check, "msg": msg, "detail": detail})
+
+
+def read(p: Path) -> str:
+    return p.read_text(encoding="utf-8", errors="ignore")
+
+
+def strip_code(text: str) -> str:
+    """去掉围栏代码块与行内代码 —— 里面的链接/表格是"示例"，不该被当真。
+
+    **必须保留行号**：逐行处理、被去掉的行留空串，否则报错位置对不上原文件。
+    """
+    out, in_fence = [], False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append("")
+            continue
+        if in_fence:
+            out.append("")
+            continue
+        out.append(re.sub(r"`[^`]*`", "", line))
+    return "\n".join(out)
+
+
+def is_current(p: Path) -> bool:
+    """只有这些文件声称"当前事实"，才校验里面的数字与代码一致。
+
+    设计稿 / 归档是**时点快照**（"当时有 7 张表"是正确记录），拿它们去比今天代码
+    只会得到假红 —— 判据是"这份文件会不会被当成今天的真相来读"。
+    """
+    rel = p.relative_to(ROOT).as_posix()
+    return rel in ("README.md", "CURRENT_STATE.md") or rel.startswith(("docs/dev/", "docs/user/"))
+
+
+def md_files() -> list[Path]:
+    """仓库内所有参与文档体系的 md（排除 node_modules / dist / backups / .tmp）。"""
+    skip = {"node_modules", "dist", ".git", "backups", ".tmp", ".workbuddy", "2026-09-28-72debbad"}
+    out = []
+    for p in ROOT.rglob("*.md"):
+        if any(part in skip for part in p.parts):
+            continue
+        out.append(p)
+    return sorted(out)
+
+
+# ---------------------------------------------------------------- 1. 版本号
+def check_version() -> None:
+    found: dict[str, str] = {}
+    for rel, pat in VERSION_SOURCES:
+        p = ROOT / rel
+        if not p.exists():
+            add("ERROR", "版本号", f"找不到 {rel}")
+            continue
+        m = re.search(pat, read(p))
+        if not m:
+            add("ERROR", "版本号", f"{rel} 里提取不到版本号")
+            continue
+        found[rel] = m.group(1)
+
+    # package-lock.json：根节点两处（"name"/"version" 与 packages[""]）
+    lock = ROOT / "frontend/package-lock.json"
+    if lock.exists():
+        raw = read(lock)
+        m = re.search(r'^\s{2}"version": "([^"]+)"', raw, re.M)
+        if m:
+            found["frontend/package-lock.json"] = m.group(1)
+
+    uniq = set(found.values())
+    if len(uniq) > 1:
+        add("ERROR", "版本号", "四处版本号不一致", json.dumps(found, ensure_ascii=False))
+    elif uniq:
+        add("OK", "版本号", f"{len(found)} 处一致：{uniq.pop()}")
+
+    # CS 头部必须一致
+    cs = ROOT / "CURRENT_STATE.md"
+    if cs.exists():
+        head = "\n".join(read(cs).splitlines()[:20])
+        m = re.search(r"版本基线\s*\|\s*\**(v[\d.]+)", head)
+        if not m:
+            add("WARN", "版本号", "CURRENT_STATE 头部没找到「版本基线 | vX.Y.Z」")
+        elif found and m.group(1).lstrip("v") != list(found.values())[0].lstrip("v"):
+            add("ERROR", "版本号", f"CURRENT_STATE 头部写 {m.group(1)}，代码是 {list(found.values())[0]}")
+
+
+# ------------------------------------------------------- 2. 页脚不得另写版本
+def check_footer() -> None:
+    cs = ROOT / "CURRENT_STATE.md"
+    if not cs.exists():
+        return
+    tail = read(cs).splitlines()[-6:]
+    text = "\n".join(tail)
+    m = re.findall(r"v\d+\.\d+\.\d+", text)
+    if m:
+        add("ERROR", "页脚版本", f"页脚又写了版本号 {m}（版本只许出现在头部）", text.strip()[:120])
+    else:
+        add("OK", "页脚版本", "页脚没有重复写版本号")
+
+
+# --------------------------------------------------- 3. 写进文档的表数要等于代码
+def check_table_count() -> None:
+    models = ROOT / "backend/app/models.py"
+    if not models.exists():
+        add("SKIP", "表数", "找不到 models.py")
+        return
+    real = len(re.findall(r"__tablename__\s*=", read(models)))
+    bad = []
+    for p in md_files():
+        if not is_current(p):
+            continue
+        for i, line in enumerate(strip_code(read(p)).splitlines(), 1):
+            # 只抓"总数声明"，不抓"这次只加了 1 张表"这类增量描述
+            claims = re.findall(r"(?:共|合计|现为|总共有?)\s*(\d+)\s*张(?:业务)?表", line)
+            claims += re.findall(r"(\d+)\s*张业务表", line)
+            for n in {int(x) for x in claims}:
+                # schema_meta 是记账表，允许 "N 张业务表 + 一张记账表" 的写法
+                if n not in (real, real - 1):
+                    bad.append(f"{p.relative_to(ROOT)}:{i} 写 {n} 张，实际 {real}")
+    if bad:
+        add("ERROR", "表数", f"文档写的表数 ≠ models.py 的 {real} 张", "; ".join(bad[:5]))
+    else:
+        add("OK", "表数", f"文档里的表数与 models.py 一致（{real} 张）")
+
+
+# --------------------------------------------------------- 4. 相对链接可达
+def check_links() -> None:
+    broken, total = [], 0
+    for p in md_files():
+        for i, line in enumerate(strip_code(read(p)).splitlines(), 1):
+            for m in re.finditer(r"\]\(([^)\s]+)\)", line):
+                target = m.group(1)
+                if target.startswith(("http://", "https://", "mailto:", "#")):
+                    continue
+                target = target.split("#")[0]
+                if not target:
+                    continue
+                total += 1
+                if not (p.parent / target).exists():
+                    broken.append(f"{p.relative_to(ROOT)}:{i} -> {target}")
+    if broken:
+        add("ERROR", "链接", f"{len(broken)} 条相对链接指向不存在的文件", "; ".join(broken[:6]))
+    else:
+        add("OK", "链接", f"{total} 条相对链接全部可达")
+
+
+# ------------------------------------------------------------- 5. 无孤儿文档
+def check_orphans() -> None:
+    files = md_files()
+    index = {p.resolve(): p for p in files}
+    edges: dict[Path, set[Path]] = {p.resolve(): set() for p in files}
+    for p in files:
+        for m in re.finditer(r"\]\(([^)\s]+\.md)(?:#[^)]*)?\)", read(p)):
+            tgt = (p.parent / m.group(1)).resolve()
+            if tgt in index:
+                edges[p.resolve()].add(tgt)
+
+    roots = [p.resolve() for p in files if p.relative_to(ROOT).as_posix() in ("README.md", "docs/README.md")]
+    if not roots:
+        add("SKIP", "孤儿", "没有 README.md / docs/README.md 作为入口")
+        return
+    seen, stack = set(roots), list(roots)
+    while stack:
+        cur = stack.pop()
+        for nxt in edges.get(cur, ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    orphans = sorted(index[k].relative_to(ROOT).as_posix() for k in index if k not in seen)
+    if orphans:
+        add("WARN" if not (ROOT / "docs").exists() else "ERROR", "孤儿",
+            f"{len(orphans)} 份 md 从入口不可达", ", ".join(orphans[:8]))
+    else:
+        add("OK", "孤儿", f"{len(files)} 份 md 全部从入口可达")
+
+
+# ------------------------------------------------- 6. 表格没被空行截断
+def check_table_break() -> None:
+    bad = []
+    for p in md_files():
+        lines = read(p).splitlines()
+        for i in range(1, len(lines) - 1):
+            if lines[i].strip() == "" and lines[i - 1].lstrip().startswith("|") and lines[i + 1].lstrip().startswith("|"):
+                bad.append(f"{p.relative_to(ROOT)}:{i + 1}")
+    if bad:
+        add("ERROR", "表格", f"{len(bad)} 处表格被空行截断（会渲染成两张表）", ", ".join(bad[:8]))
+    else:
+        add("OK", "表格", "没有表格被空行截断")
+
+
+# ------------------------------------------------------------- 7. 体积阈值
+def check_size(strict: bool) -> None:
+    level_soft = "ERROR" if strict else "WARN"
+    for rel, limit in SIZE_LIMITS.items():
+        p = ROOT / rel
+        if not p.exists():
+            continue
+        n = len(read(p).splitlines())
+        if n > limit:
+            add(level_soft, "体积", f"{rel} {n} 行 > {limit} 行")
+        else:
+            add("OK", "体积", f"{rel} {n} 行 ≤ {limit}")
+    for p in md_files():
+        kb = p.stat().st_size // 1024
+        if kb > DESIGN_WARN_KB:
+            add("WARN", "体积", f"{p.relative_to(ROOT)} {kb} KB > {DESIGN_WARN_KB} KB（考虑分卷）")
+
+
+# --------------------------------------------- 8. 设计稿要有且只有一行状态横幅
+def check_banners() -> None:
+    design = ROOT / "docs/design"
+    if not design.exists():
+        add("SKIP", "横幅", "docs/design/ 还不存在（Phase 5 之前正常）")
+        return
+    bad = []
+    for p in sorted(design.rglob("*.md")):
+        head = "\n".join(read(p).splitlines()[:5])
+        n = len(re.findall(r"^>\s*状态：", head, re.M))
+        if n != 1:
+            bad.append(f"{p.relative_to(ROOT)} 有 {n} 行")
+    if bad:
+        add("ERROR", "横幅", f"{len(bad)} 份设计稿状态横幅不是恰好 1 行", "; ".join(bad[:6]))
+    else:
+        add("OK", "横幅", f"docs/design/ 下 {len(list(design.rglob('*.md')))} 份都有且只有一行横幅")
+
+
+# ------------------------------------------------ 9. 敏感词（只告警，不改）
+def check_secrets() -> None:
+    db = ROOT / "backend/data/it_assets.db"
+    if not db.exists():
+        add("SKIP", "敏感词", "找不到数据库，跳过姓名反查")
+        return
+    names: set[str] = set()
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+        for table in ("assets", "workstations"):
+            try:
+                for (v,) in con.execute(f"select distinct user_name from {table} where user_name is not null and user_name <> ''"):
+                    if v and len(v.strip()) >= 2 and not PLACEHOLDER_PAT.match(v.strip()):
+                        names.add(v.strip())
+            except sqlite3.Error:
+                pass
+        con.close()
+    except sqlite3.Error as exc:
+        add("SKIP", "敏感词", f"数据库打不开：{exc}")
+        return
+
+    hits = []
+    for p in md_files():
+        text = read(p)
+        for n in names:
+            if n in text:
+                hits.append(f"{p.relative_to(ROOT)}:{n}")
+    # 真实编号前缀：形如 B022-03-00001，而合成前缀是 A100/A101
+    for p in md_files():
+        for m in re.finditer(r"\bB0\d{2}-\d{2}-\d{5}", read(p)):
+            hits.append(f"{p.relative_to(ROOT)}:编号 {m.group(0)}")
+    if hits:
+        add("ERROR", "敏感词", f"{len(hits)} 处疑似真实姓名/编号（只告警，请人工确认）", ", ".join(hits[:8]))
+    else:
+        add("OK", "敏感词", f"反查库内 {len(names)} 个真实姓名 + 真实编号前缀：0 命中")
+
+
+# ------------------------------------------------------------------ main
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--strict", action="store_true", help="体积阈值也当错误")
+    ap.add_argument("--json", action="store_true", help="输出 JSON")
+    args = ap.parse_args()
+
+    if not (ROOT / "backend").exists():
+        print(f"前提不成立：{ROOT} 看起来不是本项目根目录", file=sys.stderr)
+        return 2
+
+    check_version()
+    check_footer()
+    check_table_count()
+    check_links()
+    check_orphans()
+    check_table_break()
+    check_size(args.strict)
+    check_banners()
+    check_secrets()
+
+    errors = [r for r in results if r["level"] == "ERROR"]
+    warns = [r for r in results if r["level"] == "WARN"]
+
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+    else:
+        icon = {"OK": "✓", "WARN": "!", "ERROR": "✗", "SKIP": "-"}
+        for r in results:
+            line = f"  {icon[r['level']]} [{r['check']}] {r['msg']}"
+            print(line)
+            if r["detail"]:
+                print(f"      {r['detail']}")
+        print()
+        print(f"{len(results) - len(errors) - len(warns)} 通过 / {len(warns)} 警告 / {len(errors)} 错误")
+
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
