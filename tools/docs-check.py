@@ -323,6 +323,10 @@ def check_size(strict: bool) -> None:
         else:
             add("OK", "体积", f"{rel} {n} 行 ≤ {limit}")
     for p in md_files():
+        # 归档区是"原样留底"，体积大是它的属性而不是毛病 —— 对快照说"考虑分卷"
+        # 等于建议你改证据，所以直接不查。
+        if p.relative_to(ROOT).as_posix().startswith("docs/archive/"):
+            continue
         kb = p.stat().st_size // 1024
         if kb > DESIGN_WARN_KB:
             add("WARN", "体积", f"{p.relative_to(ROOT)} {kb} KB > {DESIGN_WARN_KB} KB（考虑分卷）")

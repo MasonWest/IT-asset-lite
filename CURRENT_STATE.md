@@ -257,7 +257,7 @@
 | 决策按主题查 | [docs/dev/decisions/](docs/dev/decisions/README.md) |
 | 地图实现 / 前端契约 / 接口 / 验收 | [docs/dev/](docs/dev/README.md) |
 | 设计稿（时点快照） | [docs/design/](docs/design/README.md) |
-| 每个版本改了什么 | [CHANGELOG.md](CHANGELOG.md) |
+| 每个版本改了什么 | [CHANGELOG.md](CHANGELOG.md)（近 10 个版本；更早见文末「[更早的版本](CHANGELOG.md#更早的版本)」） |
 | 重构前的原文、搬迁对照表 | [docs/archive/](docs/archive/README.md) |
 
 > 改这个仓库的文档之前，先读 [docs/dev/maintenance.md](docs/dev/maintenance.md)：
