@@ -1,7 +1,8 @@
 {
   "name": "it-asset-frontend",
   "private": true,
-  "version": "2.9.9",
+  "version": "2.9.10",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

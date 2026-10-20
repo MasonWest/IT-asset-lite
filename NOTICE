@@ -1,0 +1,22 @@
+IT-asset-lite —— IT 资产管理系统
+Copyright 2026 MasonWest
+
+Licensed under the Apache License, Version 2.0.
+完整条款见同目录的 LICENSE 文件。
+
+本文件只说明「这个仓库里哪些东西是作者原创、哪些不是」，
+它不修改、也不附加任何许可条件（Apache-2.0 第 4(d) 条：NOTICE 仅供告知）。
+
+一、作者原创
+    backend/ 与 frontend/ 下的程序源码、根目录的 *.bat 启动脚本，
+    以及本仓库中各 *.md 设计文档与说明文档。
+
+二、不在本仓库内的第三方代码
+    运行期依赖（Vue、Vue Router、Element Plus、axios、pinyin-pro、
+    FastAPI、Uvicorn、SQLAlchemy、Pydantic、openpyxl、Pillow、qrcode 等）
+    通过 npm / pip 安装，各自遵循其原许可证，本仓库不包含它们的代码副本。
+    frontend/dist 与 frontend/node_modules 均不入库。
+
+三、数据
+    backend/data/ 下的数据库、backups/ 下的备份、以及真实员工姓名与
+    办公室平面图素材一律不入库（见 .gitignore），本仓库不含任何真实业务数据。
