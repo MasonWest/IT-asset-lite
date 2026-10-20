@@ -13,7 +13,7 @@ from .database import BASE_DIR, DB_FILE
 
 APP_NAME = "IT 资产管理系统"
 # 版本基线：v2.1.0（术语统一：「工位」→「资产点位」/ 点位） —— 地图 + 平面图编辑器 + 点位批量生成
-APP_VERSION = "2.9.8"
+APP_VERSION = "2.9.9"
 
 HOST = os.getenv("IT_ASSET_HOST") or "0.0.0.0"
 # 默认 8080：8000 在很多机器上被打印控件 / 其他服务占着
