@@ -456,7 +456,7 @@ onMounted(async () => {
           <span>正在统计范围内的设备…</span>
         </template>
         <template v-else-if="previewCount === 0">
-          <span><AppIcon name="circleAlert" :size="13" /> 这个条件下没有设备，换个范围再发起</span>
+          <span class="preview-none"><AppIcon name="circleAlert" :size="13" /> 这个条件下没有设备，换个范围再发起</span>
         </template>
         <template v-else>
           <span class="num">{{ previewCount }}</span>
@@ -655,6 +655,13 @@ onMounted(async () => {
   border-color: #f7c5c1;
   background: #fdecea;
   color: #d54941;
+}
+
+/* 图标 + 文字：`AppIcon` 是 block svg，这个 span 自己不 flex 就会排成两行 */
+.preview-none {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .preview-box .num {

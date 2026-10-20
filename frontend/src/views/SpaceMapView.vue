@@ -2235,7 +2235,10 @@ watch(selectedId, (id) => {
           <span>批量生成点位</span>
           <button class="bulk-close" title="收起" @click="toggleBulkPanel">×</button>
         </div>
-        <p class="bulk-warn"><AppIcon name="circleAlert" :size="13" /> 会<span>立刻写进数据库</span>，不用点保存。生成后可撤销。</p>
+        <p class="bulk-warn">
+          <AppIcon name="circleAlert" :size="13" />
+          <span>会<b>立刻写进数据库</b>，不用点保存。生成后可撤销。</span>
+        </p>
         <div class="bulk-form">
           <div class="bulk-row">
             <label>总数</label>
@@ -2952,8 +2955,11 @@ watch(selectedId, (id) => {
   margin: 9px 12px 2px; padding: 6px 8px;
   font-size: 11px; line-height: 1.5; color: #92400e;
   background: #fffbeb; border: 1px solid #fde68a; border-radius: 7px;
+  /* 图标 + 文字：`AppIcon` 是 block svg；文字包成一个 span，别让它被拆成多个 flex 项 */
+  display: flex; align-items: flex-start; gap: 5px;
 }
-.bulk-warn span { font-weight: 700; color: #b45309; }
+.bulk-warn > svg { flex: none; margin-top: 1.5px; }
+.bulk-warn b { font-weight: 700; color: #b45309; }
 .bulk-form { padding: 4px 12px 12px; }
 .bulk-row { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
 .bulk-row label { font-size: 11.5px; color: #64748b; flex: none; min-width: 40px; }

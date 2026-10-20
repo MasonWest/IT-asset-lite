@@ -696,7 +696,7 @@ function timeNow(): string {
     <!-- 第二步：只问这件事需要的信息 -->
     <div v-else-if="picked">
       <button class="back-link" @click="backToPick">
-        <AppIcon name="close" :size="13" style="display:inline-block;vertical-align:-2px" /> 换个操作
+        <AppIcon name="close" :size="13" /> 换个操作
       </button>
 
       <div class="act-header">
@@ -989,6 +989,10 @@ function timeNow(): string {
 .warnbox b { color: #6d3800; }
 
 .back-link {
+  /* 图标 + 文字：`AppIcon` 是 block svg，靠 flex 排一行（别再写 vertical-align 补丁） */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   background: transparent;
   color: var(--text-2);

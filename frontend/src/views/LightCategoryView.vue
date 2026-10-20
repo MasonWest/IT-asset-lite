@@ -557,7 +557,7 @@ function flowIconName(op: string): string {
                   }}
                 </span>
                 <button v-if="row.can_reverse" class="lk" @click="reverse(row)">
-                  <AppIcon name="undo" :size="13" style="display: inline-block; vertical-align: -2px" />冲正
+                  <AppIcon name="undo" :size="13" />冲正
                 </button>
               </div>
             </div>
@@ -1068,6 +1068,10 @@ h1 {
 .pill.fix { background: #fff4e6; color: #b65c00; border-color: #ffdba8; }
 
 .lk {
+  /* 图标 + 文字（冲正）：`AppIcon` 是 block svg，靠 flex 排一行 */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 0;
   background: transparent;
   color: var(--el-color-primary);

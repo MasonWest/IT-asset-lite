@@ -249,10 +249,10 @@ async function onRelationsChanged() {
               {{ asset.status_label }}
             </span>
             <span v-if="asset.monitor_count" class="status-pill linked">
-              <AppIcon name="monitor" :size="13" style="margin-right:3px" />{{ asset.monitor_count }} 台显示器
+              <AppIcon name="monitor" :size="13" />{{ asset.monitor_count }} 台显示器
             </span>
             <span v-else-if="asset.host_code" class="status-pill linked">
-              <AppIcon name="link" :size="13" style="margin-right:3px" />挂在 {{ asset.host_code }}
+              <AppIcon name="link" :size="13" />挂在 {{ asset.host_code }}
             </span>
           </div>
           <p class="sub">

@@ -137,7 +137,7 @@ function onSaved() {
 
     <div class="foot">
       <button class="lk" @click="openRegister">
-        <AppIcon name="plus" :size="13" style="margin-right: 4px" />登记配件变动
+        <AppIcon name="plus" :size="13" />登记配件变动
       </button>
       <span v-if="totalText" class="sum">{{ totalText }}</span>
     </div>
@@ -263,6 +263,7 @@ function onSaved() {
      nowrap 管的是文字内部的折行，管不了"块级图标 + 文字"这种结构性堆叠。 */
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   flex: none;
   white-space: nowrap;
 }

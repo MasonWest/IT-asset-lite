@@ -828,7 +828,7 @@ onMounted(async () => {
             :title="`${m.device_type_name} · ${m.status_label} · ${orDash(m.location)}`"
             @click="openDetail(m)"
           >
-            <AppIcon name="monitor" :size="13" style="margin-right:3px" />{{ m.asset_code }}
+            <AppIcon name="monitor" :size="13" />{{ m.asset_code }}
             <em v-if="m.status !== g.primary.status">{{ m.status_label }}</em>
           </span>
           <span v-if="!g.monitors.length" class="member-chip muted">这一组暂无显示器成员</span>

@@ -697,7 +697,10 @@ function goAudit() {
 }
 
 .action-pill {
-  display: inline-block;
+  /* 图标 + 文字：`AppIcon` 是 block svg，不写成 flex 就会排成两行 */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   padding: 1px 8px;
   border-radius: 999px;

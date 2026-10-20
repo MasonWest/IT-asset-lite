@@ -520,6 +520,14 @@ main.page-host.page-host--flush {
 }
 
 .status-pill {
+  /*
+    必须是 flex：`AppIcon` 渲出来是 display:block 的 svg，普通行内盒子里它会
+    独占一行 —— 状态胶囊里带图标（「1 台显示器」「挂在 B022-…」）就会变成
+    上面图标、下面文字的两行胶囊，比旁边的状态胶囊高一倍。
+  */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
   padding: 2px 9px;
   border-radius: 999px;

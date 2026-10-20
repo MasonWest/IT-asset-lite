@@ -373,8 +373,8 @@ watch(() => route.params.id, load)
       </el-alert>
 
       <div v-else-if="task.status === 'closed'" class="panel" style="padding: 14px 18px; margin-bottom: 14px">
-        <span style="font-size: 13px; color: #0f7b3f">
-          <AppIcon name="circleCheck" :size="13" style="margin-right:3px" />这轮盘点全部盘到，没有差异。
+        <span class="all-pass">
+          <AppIcon name="circleCheck" :size="13" />这轮盘点全部盘到，没有差异。
         </span>
       </div>
 
@@ -496,6 +496,15 @@ watch(() => route.params.id, load)
 </template>
 
 <style scoped>
+/* 「全部盘到，没有差异」：图标 + 文字，必须是 flex（`AppIcon` 是 block svg） */
+.all-pass {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #0f7b3f;
+}
+
 .inv-hero {
   display: flex;
   align-items: flex-start;
