@@ -366,15 +366,18 @@ def holdings_by_asset(asset_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/by-workstation/{station_id}", response_model=StationHoldingsOut, summary="某点位的关联配件（两组）")
+@router.get("/by-workstation/{station_id}", response_model=StationHoldingsOut, summary="某点位的关联配件（四组）")
 def holdings_by_workstation(station_id: int, db: Session = Depends(get_db)):
     """点位详情侧栏用。
 
-    ⚠️ **两组仅是展示分组，不创建任何额外持有记录**（设计 §5.4 四条硬约束）：
+    ⚠️ **四组仅是展示分组，不创建任何额外持有记录**（设计 §5.4 四条硬约束）：
     `direct` 是"东西就放在这个工位上"（`holder_kind='workstation'`）；
     `via_assets` 是"东西装在那台主机上，主机正好在这个工位"
     （`holder_kind='asset'` 且该资产**当前** `workstation_id=本点位` —— 查询时算出来的，
-    主机换点位这一组自动跟着变，配件上**不另存点位**）。
+    主机换点位这一组自动跟着变，配件上**不另存点位**）；
+    `stock` 是"库存位置写的就是这个点位编码"（自由文本，但写明了就是写明了）；
+    `via_users` 是"记在某人手上，而这个人名下有本点位" —— **推断**，
+    一个人有多个点位时同一条记录会出现在他每一处点位上。
     """
     station = db.get(Workstation, station_id)
     if station is None:
@@ -385,6 +388,8 @@ def holdings_by_workstation(station_id: int, db: Session = Depends(get_db)):
         code=station.code,
         direct=[light_serialize.to_holding_out(db, r) for r in grouped["direct"]],
         via_assets=[light_serialize.to_holding_out(db, r) for r in grouped["via_assets"]],
+        stock=[light_serialize.to_holding_out(db, r) for r in grouped["stock"]],
+        via_users=[light_serialize.to_holding_out(db, r) for r in grouped["via_users"]],
     )
 
 
@@ -1094,11 +1099,16 @@ def light_impact_for_asset(db: Session, asset_id: int) -> dict:
 
 
 def light_impact_for_station(db: Session, station_id: int) -> dict:
-    """删点位前的影响预检（设计 §5.6）：直接关联 / 随主机关联两类分开。"""
+    """删点位前的影响预检（设计 §5.6）：直接关联 / 随主机关联 / 库存位置三类分开。
+
+    ⚠️ **不含 `via_users`**：那条记录挂在人身上，点位删了它也不变
+    （只是少一个候选位置），不是"会被影响的东西"。
+    """
     grouped = light_service.holdings_by_workstation(db, station_id)
     return {
         "direct": [light_serialize.to_holding_out(db, r) for r in grouped["direct"]],
         "via_assets": [light_serialize.to_holding_out(db, r) for r in grouped["via_assets"]],
+        "stock": [light_serialize.to_holding_out(db, r) for r in grouped["stock"]],
     }
 
 

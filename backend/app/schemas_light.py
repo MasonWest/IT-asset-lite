@@ -82,6 +82,13 @@ class HolderOut(BaseModel):
     stock_location: Optional[str] = None
     stock_location_station_id: Optional[int] = None
 
+    #: 仅 kind='user'：**推断**的候选点位（按"该使用人名下的点位"算出来）。
+    #: 0 个 = 推不出来（人不在任何点位上）；1 个 = 唯一候选；N 个 = 歧义，N 处都算候选。
+    #: ⚠️ 这是**推断**不是关系：前端必须与 `direct`/`asset` 的确定位置区分展示，
+    #: 也不能拿它参与任何"确定有多少件"的汇总。
+    inferred_station_ids: list[int] = []
+    inferred_station_codes: list[str] = []
+
 
 class HoldingOut(HolderOut):
     """一条当前分配记录（"现在在哪、有几件"）。
@@ -111,7 +118,11 @@ class HoldingOut(HolderOut):
 
 
 class StationHoldingsOut(BaseModel):
-    """某点位的关联轻资产 —— **两组分开返回，前端不做拼装判断**（设计 §5.4）。"""
+    """某点位的关联轻资产 —— **四组分开返回，前端不做拼装判断**（设计 §5.4）。
+
+    ⚠️ 前三组是"确定在这里"，`via_users` 是"**可能**在这里"。
+    界面上的总量只能用前三组；把 `via_users` 加进总量，等于把 N 个候选当成 N 份实物。
+    """
 
     workstation_id: int
     code: str = ""
@@ -119,6 +130,10 @@ class StationHoldingsOut(BaseModel):
     direct: list[HoldingOut] = []
     #: 随主机上的（`holder_kind='asset'` 且该资产当前 `workstation_id=本点位`）
     via_assets: list[HoldingOut] = []
+    #: 库存就存在这个位置（`holder_kind='stock'` 且 `stock_location` 是本点位编码）
+    stock: list[HoldingOut] = []
+    #: **推断**：记在某人手上，而这个人名下有本点位（他还有别的点位时，那边也会出现同一条）
+    via_users: list[HoldingOut] = []
 
 
 class AssetHoldingsOut(BaseModel):

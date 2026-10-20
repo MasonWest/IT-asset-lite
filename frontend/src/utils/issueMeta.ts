@@ -60,6 +60,9 @@ const RULE_ICONS: Record<string, string> = {
   asset_unbound: 'pin',
   asset_on_deleted_station: 'trash',
   relation_exception_stale: 'bandage',
+  // 「记在某人手上，而这个人有好几个点位」—— 用问号，不是警告。
+  // 它不是错误，只是位置信息不够（系统给的是候选，不是结论）。
+  light_user_station_ambiguous: 'help',
 }
 
 export function ruleIcon(rule: InsightRule | string): string {

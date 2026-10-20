@@ -533,18 +533,14 @@ export interface Workstation {
   active: boolean
   created_at: string
   updated_at: string
-  /** 点位上挂了几台资产 —— 后端派生，不落库 */
-  asset_count: number
   /**
-   * 点位上「看得见的」轻资产件数（`Σquantity`）—— 后端派生，不落库。
+   * 点位上挂了几台资产 —— 后端派生，不落库。
    *
-   * **分两组、不发合计**：地图徽标显示的是这两个相加，
-   * 与点位详情里「轻资产（N）」**必须是同一个数**（后端同一份取数实现）。
-   * 不含库存 —— 还没分配出去的东西不属于任何点位。
+   * ⚠️ v2.9.6 删掉了 `light_direct` / `light_via_assets`：它们是"地图角标"的数据源，
+   * 角标已退役。轻资产要看的是**具体哪一条**（聚合后身份就丢了），
+   * 入口是点位侧栏的四组，不是点位上的一个数字。
    */
-  light_direct: number
-  /** 装在这个点位上的主机里的配件（按宿主现算） */
-  light_via_assets: number
+  asset_count: number
 }
 
 export interface WorkstationMapCanvas {
@@ -1104,6 +1100,15 @@ export interface LightHolder {
   /** 仅 kind='stock'：存放位置描述 + 它恰好是某个活点位的编码时的 id（可点击） */
   stock_location: string | null
   stock_location_station_id: number | null
+  /**
+   * 仅 kind='user'：**推断**的候选点位（按"该使用人名下的点位"算）。
+   *
+   * 0 个 = 推不出来；1 个 = 唯一候选；N 个 = 有歧义，N 处都是候选。
+   * ⚠️ 这是推断不是关系 —— 展示时必须与 `direct` / `asset` 的确定位置区分，
+   * 也不能拿它参与任何"确定有多少件"的汇总。
+   */
+  inferred_station_ids: number[]
+  inferred_station_codes: string[]
 }
 
 /** 一条**当前分配记录**："现在在哪、有几件" */
@@ -1232,6 +1237,10 @@ export interface StationLightHoldings {
   direct: LightHolding[]
   /** 随主机上的（`holder_kind='asset'` 且该资产当前就在本点位） */
   via_assets: LightHolding[]
+  /** 库存就存在这个位置（`holder_kind='stock'` 且 `stock_location` 是本点位编码） */
+  stock: LightHolding[]
+  /** **推断**：记在某人手上，而这个人名下有本点位（他还有别的点位时那边也会出现同一条） */
+  via_users: LightHolding[]
 }
 
 /** 期初确认预览：每个持有位置的「改前 → 改后」 */

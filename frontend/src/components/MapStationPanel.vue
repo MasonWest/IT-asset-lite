@@ -164,13 +164,34 @@ watch(
 )
 
 /** 两组相加 = 这个点位上"看得到的"配件总量（仅用于界面提示，不写进任何统计表） */
+/**
+ * 侧栏标题上的件数。
+ *
+ * ⚠️ **`via_users` 不能折进"共 N 件"**：那一组是"这个人名下有本点位"推断出来的，
+ * 同一件东西在他另外的点位上也会出现 —— 加进去等于把 N 个候选当成 N 份实物。
+ * 所以分成两段说：`确定 3 件 · 另有 1 件可能在`。
+ */
 const lightSummary = computed(() => {
   const g = lightHoldings.value
   if (!g) return ''
-  const total =
+  const certain =
     g.direct.reduce((sum, h) => sum + h.quantity, 0) +
-    g.via_assets.reduce((sum, h) => sum + h.quantity, 0)
-  return total ? `共 ${total} 件` : ''
+    g.via_assets.reduce((sum, h) => sum + h.quantity, 0) +
+    (g.stock || []).reduce((sum, h) => sum + h.quantity, 0)
+  const inferred = (g.via_users || []).reduce((sum, h) => sum + h.quantity, 0)
+  if (certain && inferred) return `确定 ${certain} 件 · 另有 ${inferred} 件可能在`
+  if (certain) return `共 ${certain} 件`
+  if (inferred) return `${inferred} 件可能是`
+  return ''
+})
+
+/** 这四组里有没有任何一条（空态判断用，别在模板里写四个 `||`） */
+const hasAnyLight = computed(() => {
+  const g = lightHoldings.value
+  if (!g) return false
+  return Boolean(
+    g.direct.length || g.via_assets.length || (g.stock || []).length || (g.via_users || []).length,
+  )
 })
 
 /**
@@ -706,8 +727,11 @@ function dash(v: string | null | undefined): string {
 
       <!--
         轻资产（设计 §5.4）：**不把每个配件画成地图对象**，只在这里分组列出来。
-        两组分开显示，是因为它们的含义完全不同 —— 不分开，用户会以为
-        "随主机上的配件"也是自己放在这个工位上的。
+        四组分开显示，因为它们的含义完全不同 —— 不分开，用户会以为
+        "随主机上的配件"也是自己放在这个工位上的、"按人推断的"更是已经确认在这儿的。
+
+        前三组是**确定在这里**（工位 / 主机 / 库存位置写明），
+        最后一组是**推断**（记在某人手上，而此人名下有本点位）—— 它必须长得不一样。
       -->
       <div class="sect">
         <div class="sh">
@@ -715,10 +739,10 @@ function dash(v: string | null | undefined): string {
           <span v-if="lightLoading" class="loading">加载中…</span>
         </div>
 
-        <template v-if="lightHoldings && (lightHoldings.direct.length || lightHoldings.via_assets.length)">
-          <div v-if="lightHoldings.direct.length" class="light-group">
+        <template v-if="hasAnyLight">
+          <div v-if="lightHoldings!.direct.length" class="light-group">
             <div class="light-group-title">固定在此工位（直接关联）</div>
-            <div v-for="h in lightHoldings.direct" :key="h.id" class="light-row">
+            <div v-for="h in lightHoldings!.direct" :key="h.id" class="light-row">
               <span class="light-ic"><AppIcon :name="holdingCategoryIcon(h)" :size="14" /></span>
               <div class="light-info">
                 <div class="light-name">{{ h.category_name }}</div>
@@ -731,13 +755,52 @@ function dash(v: string | null | undefined): string {
             </div>
           </div>
 
-          <div v-if="lightHoldings.via_assets.length" class="light-group">
+          <div v-if="lightHoldings!.via_assets.length" class="light-group">
             <div class="light-group-title">随主机上的（间接关联）</div>
-            <div v-for="h in lightHoldings.via_assets" :key="h.id" class="light-row">
+            <div v-for="h in lightHoldings!.via_assets" :key="h.id" class="light-row">
               <span class="light-ic"><AppIcon :name="holdingCategoryIcon(h)" :size="14" /></span>
               <div class="light-info">
                 <div class="light-name">{{ h.category_name }}</div>
                 <div class="light-sub">{{ viaSub(h) }}</div>
+              </div>
+              <span class="light-qty">×{{ h.quantity }}</span>
+            </div>
+          </div>
+
+          <!-- 库存位置写的就是本点位编码：东西确实在这儿，但还没分配出去 -->
+          <div v-if="lightHoldings!.stock.length" class="light-group">
+            <div class="light-group-title">库存存放在此</div>
+            <div v-for="h in lightHoldings!.stock" :key="h.id" class="light-row">
+              <span class="light-ic"><AppIcon :name="holdingCategoryIcon(h)" :size="14" /></span>
+              <div class="light-info">
+                <div class="light-name">{{ h.category_name }}</div>
+                <div class="light-sub">
+                  <template v-if="catSpec(h)">{{ catSpec(h) }} · </template>库存未分配
+                </div>
+              </div>
+              <span class="light-qty">×{{ h.quantity }}</span>
+            </div>
+          </div>
+
+          <!--
+            ⚠️ 推断组：**必须说清"可能"**。
+            这个人名下有 N 个点位，东西到底在哪一处系统不知道；
+            写成"在这里"就是撒谎，用户按它去找找不到时没有任何线索。
+          -->
+          <div v-if="lightHoldings!.via_users.length" class="light-group inferred">
+            <div class="light-group-title">
+              按使用人推断（可能在这里）
+            </div>
+            <div v-for="h in lightHoldings!.via_users" :key="h.id" class="light-row">
+              <span class="light-ic"><AppIcon :name="holdingCategoryIcon(h)" :size="14" /></span>
+              <div class="light-info">
+                <div class="light-name">{{ h.category_name }}</div>
+                <div class="light-sub">
+                  <template v-if="catSpec(h)">{{ catSpec(h) }} · </template>
+                  {{ h.user || '某人' }} 持有，按他的点位推断{{ h.inferred_station_codes.length > 1
+                    ? `（共 ${h.inferred_station_codes.length} 个候选：${h.inferred_station_codes.join('、')}）`
+                    : '' }}
+                </div>
               </div>
               <span class="light-qty">×{{ h.quantity }}</span>
             </div>
@@ -1009,6 +1072,12 @@ function dash(v: string | null | undefined): string {
 .light-group { margin-bottom: 10px; }
 .light-group-title {
   font-size: 11px; color: #94a3b8; letter-spacing: 0.2px; margin-bottom: 5px;
+}
+/* 推断组：与地图上的"虚线框"同一套语言（橙 = 这条命中需要人看一眼）。
+   行本身也用虚线描边 —— 不能让它和"确定在这里"的三组长得一样。 */
+.light-group.inferred .light-group-title { color: #b45309; }
+.light-group.inferred .light-row {
+  background: #fffbeb; border-style: dashed; border-color: #fcd34d;
 }
 .light-row {
   display: flex; align-items: center; gap: 8px;

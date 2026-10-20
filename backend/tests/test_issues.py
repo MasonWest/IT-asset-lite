@@ -150,6 +150,73 @@ class TestRules(unittest.TestCase):
         self.assertNotEqual(fresh, stale.fingerprint)
 
 
+class TestLightUserAmbiguity(unittest.TestCase):
+    """记在人手上的轻资产，而这个人名下有多个点位 —— 兜底规则（v2.9.6）。
+
+    ⚠️ 这条**不是错误**：人手上没有位置关系，系统只能给出候选。
+    它在问题中心存在的意义是"别只存在于搜索里"——张翔今天多了一个工位，
+    不会挑他去搜索的时候发生。
+    """
+
+    def test_multiple_stations_reports_one_info_problem(self):
+        problems = iss.build_problems(
+            [],
+            light_user_ambiguous=[
+                iss.LightUserAmbiguity(
+                    holding_id=42, user="张翔", category_name="键鼠套装",
+                    station_codes=("W52", "W63"),
+                )
+            ],
+        )
+        self.assertEqual(len(problems), 1)
+        p = problems[0]
+        self.assertEqual(p.rule, iss.IssueRule.LIGHT_USER_STATION_AMBIGUOUS)
+        self.assertEqual(p.severity, rc.Severity.INFO, "是提示，不是错误")
+        self.assertEqual(p.source, iss.IssueSource.INTEGRITY)
+        self.assertEqual(p.key, "light_user_station_ambiguous:light_holding:42")
+        self.assertEqual(p.action_url, "/light", "动作只能是已存在且在白名单里的入口")
+        self.assertIn("张翔", p.title)
+        self.assertIn("2", p.title)
+        self.assertIn("W52", p.detail)
+        self.assertIn("W63", p.detail)
+
+    def test_station_count_in_title_follows_input(self):
+        problems = iss.build_problems(
+            [],
+            light_user_ambiguous=[
+                iss.LightUserAmbiguity(
+                    holding_id=7, user="张三", category_name="内存",
+                    station_codes=("W01", "W02", "W03"),
+                )
+            ],
+        )
+        self.assertIn("3 个点位", problems[0].title)
+        self.assertIn("W01、W02、W03", problems[0].detail)
+
+    def test_no_ambiguity_no_problem(self):
+        """一个点位都没有 / 只有一个，都不是"歧义" —— 别为了兜底把正常情况也报出来。"""
+        self.assertEqual(iss.build_problems([]), [])
+        self.assertEqual(
+            iss.build_problems([], light_user_ambiguous=[]),
+            [],
+        )
+
+    def test_key_is_stable_across_station_changes(self):
+        """key 只随 holding_id 变 —— 点位从 2 个变 3 个，它还是同一个问题。"""
+        a = iss.build_problems(
+            [], light_user_ambiguous=[
+                iss.LightUserAmbiguity(holding_id=9, user="张三", station_codes=("W01", "W02"))
+            ],
+        )[0]
+        b = iss.build_problems(
+            [], light_user_ambiguous=[
+                iss.LightUserAmbiguity(holding_id=9, user="张三", station_codes=("W01", "W02", "W03"))
+            ],
+        )[0]
+        self.assertEqual(a.key, b.key)
+        self.assertNotEqual(a.title, b.title, "文案可以变，身份不能变")
+
+
 class TestExceptionsHandled(unittest.TestCase):
     def _pair(self):
         s = scan(1, "W01", "林晓薇", [(10, "A-1", "陈默")])

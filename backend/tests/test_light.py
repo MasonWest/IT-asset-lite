@@ -356,77 +356,149 @@ class TestAssetAndStation(LightTestBase):
         self.assertEqual(out.host_user, "李四", "使用人必须现读宿主，不是写流水时的副本")
 
 
-class TestStationLightCounts(LightTestBase):
-    """地图轻资产徽标的取数（设计 §5.5 第一期）。
+class TestStationLightGroups(LightTestBase):
+    """点位侧栏的四组口径（v2.9.6 起；原 `TestStationLightCounts` 随地图角标一起退役）。
 
-    ⚠️ 这里测的**不是"角标好不好看"**，而是它和点位侧栏是不是同一个口径 ——
-    两处数字对不上时，用户没有任何办法判断该信哪个（"地图说有 3 件、点进去一件没有"）。
-    所以地图徽标与侧栏共用 `_station_light_rows`，本类把这条约束钉住。
+    四组 = `direct` / `via_assets` / `stock` / `via_users`，全部来自
+    `_station_light_rows` 这一个实现 —— 本类钉住两件事：
+
+    1. 前三组是"确定在这里"，`via_users` 是"**可能**在这里"，绝不能混成一个总量；
+    2. 库存写明点位编码要算（v2.9.1 的 D3 已被推翻：写明了就是写明了），
+       而人持有要按"该人名下的点位"推断，有几个点位就出现在几处。
     """
 
-    def test_badge_equals_sidebar_groups_sum(self):
-        """徽标 = 侧栏两组数量之和；批量查询与逐个点位查询结果一致（防 N+1 改成另一个口径）。"""
+    def _groups(self, station: Workstation) -> dict[str, list[LightHolding]]:
+        return light_service.holdings_by_workstation(self.db, station.id)
+
+    def _qty(self, station: Workstation, group: str) -> int:
+        return sum(h.quantity for h in self._groups(station)[group])
+
+    def test_batch_and_single_station_return_the_same_rows(self):
+        """批量与单点位必须同一口径 —— 前端只调单点位，列表接口调批量。"""
         kb = self.make_category("键鼠套装")
         ram = self.make_category("内存", unit="条")
         w23 = self.make_station("W23")
-        w25 = self.make_station("W25")  # 什么都没有的点位
+        w25 = self.make_station("W25")
         host = self.make_asset("B022-03-00001")
         host.workstation_id = w23.id
         self.db.commit()
 
         self.move(kb, LightOp.STOCK_IN, to=STOCK(), quantity=5)
-        self.move(kb, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.WORKSTATION, ref_id=w23.id), quantity=2)
+        self.move(kb, LightOp.ATTACH, frm=STOCK(),
+                  to=HolderRef(kind=LightHolderKind.WORKSTATION, ref_id=w23.id), quantity=2)
         self.move(ram, LightOp.STOCK_IN, to=STOCK(), quantity=3)
-        self.move(ram, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=host.id), quantity=1)
+        self.move(ram, LightOp.ATTACH, frm=STOCK(),
+                  to=HolderRef(kind=LightHolderKind.ASSET, ref_id=host.id), quantity=1)
 
-        counts = light_service.station_light_counts(self.db, [w23.id, w25.id])
-        self.assertEqual(counts[w23.id], {"direct": 2, "via_assets": 1})
-        self.assertEqual(counts[w25.id], {"direct": 0, "via_assets": 0})
+        grouped = light_service._station_light_rows(self.db, [w23.id, w25.id])
+        self.assertEqual(
+            sorted(grouped[w23.id]), sorted(light_service.STATION_LIGHT_GROUPS),
+            "四组的键必须齐全 —— 缺一个键，前端取值就是 undefined",
+        )
+        for sid in (w23.id, w25.id):
+            single = light_service.holdings_by_workstation(self.db, sid)
+            for g in light_service.STATION_LIGHT_GROUPS:
+                self.assertEqual(
+                    [h.id for h in single[g]], [h.id for h in grouped[sid][g]],
+                    f"点位 #{sid} 的 {g} 组：批量与单点位必须是同一批行",
+                )
+        self.assertEqual(self._qty(w23, "direct"), 2)
+        self.assertEqual(self._qty(w23, "via_assets"), 1)
 
-        for station in (w23, w25):
-            grouped = light_service.holdings_by_workstation(self.db, station.id)
-            self.assertEqual(
-                counts[station.id],
-                {
-                    "direct": sum(h.quantity for h in grouped["direct"]),
-                    "via_assets": sum(h.quantity for h in grouped["via_assets"]),
-                },
-                "徽标数字与点位侧栏两组之和必须一致",
-            )
+    def test_stock_location_matching_a_station_code_counts_as_that_station(self):
+        """v2.9.6 推翻 D3：`stock_location` 写成 "W23" 且确有此点位 → 库存就在 W23。
 
-    def test_stock_is_not_counted_even_when_location_looks_like_a_station_code(self):
-        """D3：`stock_location` 是**自由文本**，写成 "W23" 也只是人写的备注，不是位置关系。
-
-        乐观地把它算进 W23 的角标，就会出现"地图上显示有货、点进去一件没有"，
-        而那张卡上明明写着"还没分配出去"。
+        旧口径（"人写的备注不算位置"）会让"搜得到 W52 有 SSD、点进去说没有"，
+        比"多算一处"糟得多。⚠️ 库存本身照常记着（不算已分配），只是**看得见在哪**。
         """
         kb = self.make_category("键鼠套装")
         w23 = self.make_station("W23")
         self.move(
             kb, LightOp.STOCK_IN,
-            to=HolderRef(kind=LightHolderKind.STOCK, stock_location="W23"),
+            to=HolderRef(kind=LightHolderKind.STOCK, stock_location=" W23 "),  # 前后空格也该认
             quantity=5,
         )
 
-        counts = light_service.station_light_counts(self.db, [w23.id])
-        self.assertEqual(counts[w23.id], {"direct": 0, "via_assets": 0})
-        self.assertEqual(self.stock(kb), 5, "库存本身照常记着，只是不属于任何点位")
+        self.assertEqual(self._qty(w23, "stock"), 5)
+        self.assertEqual(self._qty(w23, "direct"), 0)
+        self.assertEqual(self.stock(kb), 5, "库存本身照常记着，只是位置看得见了")
+        self.assertIn("stock", light_service.STATION_LIGHT_CERTAIN_GROUPS,
+                      "库存就在这个位置是**确定**的（东西确实在那儿），只是它还没分配出去")
 
-    def test_user_held_has_no_station_and_zero_rows_do_not_count(self):
-        """发给人的配件不落在任何点位上；数量归零的记录也不代表"这里有东西"。"""
+    def test_stock_location_that_is_not_a_station_code_counts_nowhere(self):
+        """匹配不上就是匹配不上 —— 不能凭"看起来像"硬塞进某个点位。"""
         kb = self.make_category("键鼠套装")
         w23 = self.make_station("W23")
-        w99 = self.make_station("W99")
+        self.move(
+            kb, LightOp.STOCK_IN,
+            to=HolderRef(kind=LightHolderKind.STOCK, stock_location="机房货架第二层"),
+            quantity=4,
+        )
+        self.assertEqual(self._qty(w23, "stock"), 0)
+
+    def test_user_held_lands_on_the_only_station_of_that_person(self):
+        """人手上没有位置关系，但这个人只有一个点位 → 那个点位"可能在这里"。"""
+        kb = self.make_category("键鼠套装")
+        w23 = self.make_station("W23", user="张三")
         self.move(kb, LightOp.STOCK_IN, to=STOCK(), quantity=4)
-        self.move(kb, LightOp.ALLOCATE, frm=STOCK(), to=HolderRef(kind=LightHolderKind.USER, user="张三"), quantity=2)
-        self.move(kb, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.WORKSTATION, ref_id=w23.id), quantity=1)
+        self.move(kb, LightOp.ALLOCATE, frm=STOCK(),
+                  to=HolderRef(kind=LightHolderKind.USER, user="张三"), quantity=2)
 
-        counts = light_service.station_light_counts(self.db, [w23.id])
-        self.assertEqual(counts[w23.id], {"direct": 1, "via_assets": 0}, "人手上的 2 套不该落到任何点位上")
+        self.assertEqual(self._qty(w23, "via_users"), 2)
+        self.assertEqual(self._qty(w23, "direct"), 0, "人手上不能算作「确定放在这个工位」")
+        self.assertNotIn("via_users", light_service.STATION_LIGHT_CERTAIN_GROUPS)
 
-        # 手工塞一条数量为 0 的记录：`apply_holding_delta` 正常不会让它存在，
-        # 但"表里没有"是它的性质、**不是本函数的假设** —— 查询必须自己挡掉。
-        # 本库主键会复用、重建脚本也直接写表，所以这里不假设上游永远干净。
+    def test_user_with_two_stations_appears_on_both(self):
+        """两个点位都是候选 —— 这正是它不能参与任何总量聚合的原因。"""
+        kb = self.make_category("键鼠套装")
+        w23 = self.make_station("W23", user="张翔")
+        w63 = self.make_station("W63", user="张翔")
+        self.move(kb, LightOp.STOCK_IN, to=STOCK(), quantity=1)
+        self.move(kb, LightOp.ALLOCATE, frm=STOCK(),
+                  to=HolderRef(kind=LightHolderKind.USER, user="张翔"), quantity=1)
+
+        groups_23 = self._groups(w23)
+        groups_63 = self._groups(w63)
+        self.assertEqual([h.quantity for h in groups_23["via_users"]], [1])
+        self.assertEqual([h.quantity for h in groups_63["via_users"]], [1])
+        self.assertEqual(
+            groups_23["via_users"][0].id, groups_63["via_users"][0].id,
+            "同一件东西出现在两处，是**同一条记录**的两个候选位置，不是两条记录",
+        )
+
+    def test_user_with_no_station_lands_nowhere(self):
+        """人不在任何点位上（李明媚那种）→ 推不出来，不许硬塞。"""
+        kb = self.make_category("键鼠套装")
+        w23 = self.make_station("W23", user="张三")
+        self.move(kb, LightOp.STOCK_IN, to=STOCK(), quantity=2)
+        self.move(kb, LightOp.ALLOCATE, frm=STOCK(),
+                  to=HolderRef(kind=LightHolderKind.USER, user="李明媚"), quantity=1)
+        self.assertEqual(self._qty(w23, "via_users"), 0)
+
+    def test_placeholder_user_name_is_not_an_owner(self):
+        """`/` 是"没填"，不是一个人名 —— 否则配件会被推断给一个叫斜杠的人。
+
+        ⚠️ 上游 `apply_holding_delta` 已经拒绝把 `/` 当持有方（400），
+        所以这里**直接塞一条记录**模拟历史脏数据：查询层必须自己挡住，
+        不能依赖"表里永远干净"（重建脚本 / 老库都会绕过写入口）。
+        """
+        kb = self.make_category("键鼠套装")
+        w23 = self.make_station("W23", user="/")
+        self.db.add(
+            LightHolding(
+                category_id=kb.id,
+                holder_kind=LightHolderKind.USER,
+                holder_user="/",
+                quantity=1,
+            )
+        )
+        self.db.commit()
+        self.assertEqual(self._qty(w23, "via_users"), 0)
+
+    def test_zero_quantity_rows_do_not_count(self):
+        """数量归零的记录仍留在表里（流水要完整），但不代表"这里有东西"。"""
+        kb = self.make_category("键鼠套装")
+        w99 = self.make_station("W99")
         self.db.add(
             LightHolding(
                 category_id=kb.id,
@@ -436,10 +508,9 @@ class TestStationLightCounts(LightTestBase):
             )
         )
         self.db.commit()
-        counts = light_service.station_light_counts(self.db, [w99.id])
-        self.assertEqual(counts[w99.id], {"direct": 0, "via_assets": 0})
+        self.assertEqual(self._qty(w99, "direct"), 0)
 
-    def test_scrapped_or_reassigned_assets_drop_out_of_the_badge(self):
+    def test_reassigned_asset_moves_the_via_assets_group(self):
         """主机换点位后，随主机那一组自动跟着走 —— 点位这一层不落任何数据。"""
         ram = self.make_category("内存", unit="条")
         w23 = self.make_station("W23")
@@ -448,15 +519,15 @@ class TestStationLightCounts(LightTestBase):
         host.workstation_id = w23.id
         self.db.commit()
         self.move(ram, LightOp.STOCK_IN, to=STOCK(), quantity=2)
-        self.move(ram, LightOp.ATTACH, frm=STOCK(), to=HolderRef(kind=LightHolderKind.ASSET, ref_id=host.id), quantity=2)
+        self.move(ram, LightOp.ATTACH, frm=STOCK(),
+                  to=HolderRef(kind=LightHolderKind.ASSET, ref_id=host.id), quantity=2)
 
-        self.assertEqual(light_service.station_light_counts(self.db, [w23.id])[w23.id]["via_assets"], 2)
+        self.assertEqual(self._qty(w23, "via_assets"), 2)
 
         host.workstation_id = w25.id
         self.db.commit()
-        counts = light_service.station_light_counts(self.db, [w23.id, w25.id])
-        self.assertEqual(counts[w23.id]["via_assets"], 0)
-        self.assertEqual(counts[w25.id]["via_assets"], 2)
+        self.assertEqual(self._qty(w23, "via_assets"), 0)
+        self.assertEqual(self._qty(w25, "via_assets"), 2)
 
 
 class TestReplaceAndScrap(LightTestBase):
@@ -763,18 +834,16 @@ class TestApi(LightTestBase):
         self.assertEqual(len(by_station["via_assets"]), 1)
         self.assertEqual(by_station["via_assets"][0]["host_user"], None)
 
-    def test_workstations_list_carries_light_counts(self):
-        """地图徽标的**数据来源**：点位列表一次下发 `light_direct` / `light_via_assets`。
+    def test_workstations_list_does_not_carry_light_aggregates(self):
+        """点位列表**不再下发**轻资产聚合件数（v2.9.6 起：地图角标已退役）。
 
-        ⚠️ 三个字段层面的约定，缺一个地图就会画错：
-         1. 两个字段都要在（前端相加得到角标数字）；
-         2. **不发合计** —— 多一个 `total` 就多一处口径能漂；
-         3. 单点位接口也必须是真的查过的值，不能静默给 0
-            （"这个点位有 3 件"是老实的 0 还是没查的 0，从响应里看不出来）。
+        为什么要专门钉一条"没有"的断言：那两个字段（`light_direct` / `light_via_assets`）
+        曾经是地图角标的数据源，而角标表达不了"是什么、在哪一条" —— 聚合后身份就丢了。
+        如果哪天有人把它们加回来，说明又想做"点位上一个纯数字"，
+        这条测试会红，逼他先想清楚"轻资产是混合池"这件事。
         """
         cid = self.client.post("/api/light/categories", json={"name": "键鼠套装", "unit": "套"}).json()["id"]
         w23 = self.make_station("W23")
-        w25 = self.make_station("W25")
         self.client.post("/api/light/movements", json={
             "category_id": cid, "op": "stock_in", "from_ref": {"kind": "none"},
             "to_ref": {"kind": "stock"}, "quantity": 3,
@@ -785,14 +854,18 @@ class TestApi(LightTestBase):
         })
 
         rows = {row["code"]: row for row in self.client.get("/api/workstations").json()["items"]}
-        self.assertEqual(rows["W23"]["light_direct"], 3)
-        self.assertEqual(rows["W23"]["light_via_assets"], 0)
-        self.assertEqual(rows["W25"]["light_direct"], 0)
-        self.assertNotIn("light_total", rows["W23"], "刻意不发合计 —— 由前端相加")
+        for field in ("light_direct", "light_via_assets", "light_total"):
+            self.assertNotIn(field, rows["W23"], f"点位列表不该再有聚合件数字段 {field}")
+        self.assertIn("asset_count", rows["W23"], "资产数保留：它是设备台数，不是轻资产那种混合池")
 
         one = self.client.get(f"/api/workstations/{w23.id}").json()
-        self.assertEqual(one["light_direct"], 3, "单点位接口也要真查，不能落到默认 0")
-        self.assertEqual(one["light_via_assets"], 0)
+        for field in ("light_direct", "light_via_assets"):
+            self.assertNotIn(field, one)
+
+        # 想看"这个点位有什么"，答案只有一处：侧栏的四组
+        by_station = self.client.get(f"/api/light/by-workstation/{w23.id}").json()
+        self.assertEqual(len(by_station["direct"]), 1)
+        self.assertEqual(by_station["direct"][0]["quantity"], 3)
 
     def test_opening_preview_and_apply(self):
         cid = self.client.post("/api/light/categories", json={"name": "键鼠套装", "unit": "套"}).json()["id"]

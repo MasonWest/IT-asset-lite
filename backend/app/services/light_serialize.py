@@ -57,16 +57,14 @@ def _station_id_by_code(db: Session, code: Optional[str]) -> Optional[int]:
 
     这正是设计 §2.4 的取舍产物：库存位置是自由文本，**不建外键**；
     能匹配上就顺手给个链接，匹配不上就是一个普通描述。
+
+    ⚠️ 换算逻辑在 `light.station_ids_by_codes` —— 与地图角标/侧栏同一份实现。
+    以前这里自己写了一份 `where(Workstation.code == code)`，不 strip 空格，
+    于是 `'W52 '` 在台账里能解析、在地图上解析不出来（两处打脸）。
     """
     if not code:
         return None
-    row = db.execute(
-        select(Workstation.id)
-        .where(Workstation.code == code)
-        .where(Workstation.active.is_(True))
-        .limit(1)
-    ).first()
-    return int(row[0]) if row else None
+    return light_service.station_ids_by_codes(db, [code]).get(code.strip())
 
 
 def to_holder_out(
@@ -103,13 +101,27 @@ def to_holder_out(
         )
 
     if kind == LightHolderKind.USER:
+        # 「按使用人推断位置」：人手上没有位置关系，但如果这个人名下的点位唯一/有限，
+        # 就能给出**候选**位置。这只是推断，`hint` 必须把话说明白 ——
+        # 界面上把推断当成事实，用户按图找不到东西时没有任何线索解释为什么。
+        #
+        # ⚠️ 占用位符（`/`）走 `has_owner()` 排掉；0 个点位就是真的推不出来。
+        places = light_service.station_ids_by_user(db, [user]).get((user or "").strip(), [])
+        place_codes = [code for _sid, code in places]
+        if not place_codes:
+            hint = "在某人手上，未记录固定位置"
+        elif len(place_codes) == 1:
+            hint = f"在某人手上 · 可能在 {place_codes[0]}（按使用人的点位推断）"
+        else:
+            hint = f"在某人手上 · 可能在 {'、'.join(place_codes)}（推断，{len(place_codes)} 个候选）"
         return HolderOut(
             kind=kind,
             kind_label=_KIND_LABELS[kind],
             user=user,
             display=user or "未填使用人",
-            # 设计 §2.4：持有位置是"人"时**不带任何点位**，绝不因为某人名下有工位就推断东西在那
-            hint="在某人手上，未记录固定位置",
+            hint=hint,
+            inferred_station_ids=[sid for sid, _code in places],
+            inferred_station_codes=place_codes,
         )
 
     if kind == LightHolderKind.ASSET:

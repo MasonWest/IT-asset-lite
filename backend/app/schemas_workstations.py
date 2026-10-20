@@ -139,20 +139,10 @@ class WorkstationOut(BaseModel):
     updated_at: datetime
     #: 点位上挂了几台资产 —— 派生查询，不落库（红线 2）
     asset_count: int = 0
-    #: 点位上「看得见的」轻资产件数（Σquantity）—— 派生查询，不落库（红线 2）。
-    #:
-    #: 与 `asset_count` 同一套路：列表接口一次查完下发，前端不再为此打接口。
-    #:
-    #: ⚠️ **分两组、不发合计**：地图徽标数字 = `light_direct + light_via_assets`，
-    #: 由消费方自己相加 —— 多一个 `total` 字段就多一个"两处算法不一致"的机会。
-    #: 两个数字与点位侧栏「轻资产（N）」用的是**同一个** `_station_light_rows`
-    #: （`services/light.py`），所以侧栏那个 N 必然等于这两个相加。
-    #:
-    #: ⚠️ **不含库存**：`holder_kind='stock'` 的东西还没分配到任何点位，
-    #: 即使 `stock_location` 自由文本里写了点位编码也不算（设计 §5.5）。
-    light_direct: int = 0
-    #: 装在这个点位上的主机里的配件（`holder_kind='asset'`，按宿主现算）
-    light_via_assets: int = 0
+    # ⚠️ v2.9.6 删掉了 `light_direct` / `light_via_assets`：
+    #    它们是"地图角标"的数据源，而角标在 v2.9.6 一并删了。
+    #    留着两个没人消费的聚合数字只会制造下一次"两处不一致"——
+    #    轻资产要看的是**具体哪一条**，聚合后身份就丢了（见 CHANGELOG v2.9.6）。
 
 
 class WorkstationMapCanvas(BaseModel):

@@ -79,6 +79,8 @@ class IssueRule:
     ASSET_ON_DELETED_STATION = "asset_on_deleted_station"
     #: 例外确认因关系变化而失效
     RELATION_EXCEPTION_STALE = "relation_exception_stale"
+    #: 记在人手上的轻资产，而这个人名下有多个点位 → 地图只能给候选，定不了位置
+    LIGHT_USER_STATION_AMBIGUOUS = "light_user_station_ambiguous"
 
     ALL: tuple[str, ...] = (
         STATION_VS_ASSET_USER,
@@ -86,6 +88,7 @@ class IssueRule:
         ASSET_UNBOUND,
         ASSET_ON_DELETED_STATION,
         RELATION_EXCEPTION_STALE,
+        LIGHT_USER_STATION_AMBIGUOUS,
     )
 
 
@@ -103,6 +106,9 @@ ALLOWED_ACTION_PATTERNS: tuple[str, ...] = (
     r"^/\?workstation=none$",
     # 设备详情：页面上有「编辑」入口，改使用人 / 改点位都在这儿
     r"^/asset/\d+$",
+    # 轻资产台账：处理"记在某人手上但此人有多个点位"的兜底入口
+    # （在那儿把这条转成"放到点位"或"装到主机"，问题就自然消失，不写任何状态字段）
+    r"^/light$",
 )
 
 
@@ -171,6 +177,17 @@ RULES: tuple[RuleSpec, ...] = (
         action_label="重新核对",
         action_url="/map?station={station_code}",
     ),
+    RuleSpec(
+        rule=IssueRule.LIGHT_USER_STATION_AMBIGUOUS,
+        label="轻资产按使用人推断有歧义",
+        severity=Severity.INFO,
+        source=IssueSource.INTEGRITY,
+        reason="这件配件记在某人手上（没有落点位），而这个人名下有好几个点位 —— "
+        "地图只能把这几处**都**标成「可能在这里」，但它到底在哪一处，系统没法确定。"
+        "不是错误，只是位置信息不够；把配件登记到具体点位或主机上，这条就会消失。",
+        action_label="去轻资产核对",
+        action_url="/light",
+    ),
 )
 
 RULE_BY_KEY: dict[str, RuleSpec] = {spec.rule: spec for spec in RULES}
@@ -219,6 +236,21 @@ class ConfirmedException:
     reason: str
     #: 确认时存下来的关系指纹
     fingerprint: str
+
+
+@dataclass(frozen=True)
+class LightUserAmbiguity:
+    """记在某人手上的轻资产，而这个人名下有**多个**点位。
+
+    ⚠️ 这不是错误，是**位置信息不够**：人手上本来就没有位置关系，
+    而"人在哪几个工位"只能给出候选。地图的做法是把候选位置都标成「可能在这里」，
+    这条规则负责在问题中心留个兜底 —— 不让"多点位的人手上有一件配件"永远没人看见。
+    """
+
+    holding_id: int
+    user: str
+    category_name: str = ""
+    station_codes: tuple[str, ...] = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -291,6 +323,7 @@ def build_problems(
     unbound: Iterable[UnboundAsset] = (),
     orphans: Iterable[OrphanAsset] = (),
     exceptions: Iterable[ConfirmedException] = (),
+    light_user_ambiguous: Iterable[LightUserAmbiguity] = (),
 ) -> list[Problem]:
     """把一次全库扫描的结果组装成问题清单。**纯函数。**
 
@@ -492,6 +525,35 @@ def build_problems(
                 handled=False,
                 exception_id=e.id,
                 exception_reason=e.reason,
+            )
+        )
+
+    # ---------- 规则 6：记在人手上的轻资产，人有多个点位 ----------
+    # 不是错误，是**位置信息不够**：人手上没有位置关系，系统只知道"可能是这几个工位之一"。
+    # 地图把候选位置都标「可能在这里」，这条规则负责让它别只存在于搜索里 ——
+    # 「张翔今天多了一个工位」不会挑他去搜索的时候发生。
+    spec6 = RULE_BY_KEY[IssueRule.LIGHT_USER_STATION_AMBIGUOUS]
+    for amb in light_user_ambiguous:
+        places = "、".join(amb.station_codes) if amb.station_codes else "多个点位"
+        url = _action_url(spec6)
+        _assert_action_allowed(url, spec6.rule)
+        problems.append(
+            Problem(
+                key=problem_key(IssueRule.LIGHT_USER_STATION_AMBIGUOUS, "light_holding", amb.holding_id),
+                rule=IssueRule.LIGHT_USER_STATION_AMBIGUOUS,
+                severity=Severity.INFO,
+                source=IssueSource.INTEGRITY,
+                reason=spec6.reason,
+                title=f"「{amb.category_name or '配件'}」记在 {amb.user} 手上，"
+                f"而 {amb.user} 名下有 {len(amb.station_codes)} 个点位",
+                detail=(
+                    f"这件配件没有落在具体位置，只知道是 {amb.user} 在用；"
+                    f"而 {amb.user} 名下的点位有 {places}。"
+                    "地图会把这几个位置都标成「按使用人推断」，但无法确定实际在哪一处。"
+                    "把它登记到具体点位或某台主机上，这条就不存在了。"
+                ),
+                action_label=spec6.action_label,
+                action_url=url,
             )
         )
 

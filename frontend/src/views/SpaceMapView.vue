@@ -223,9 +223,9 @@ const bulkPreview = computed(() => {
  * 1. **不搜 `room`**。系统里只有「点位 / 资产 / 人员」，没有"房间"这一维；
  *    真实库 69 个点位里 `room` 有值的只有 2 个（前台、总经理办公室），
  *    留着它只会让用户搜到一个"别处都搜不到"的词。
- * 2. **不跟任何图层开关联动**。关系层 / 轻资产层决定"画不画符号"，
- *    搜索决定"找什么"；绑在一起就会出现「开了轻资产层搜人名却 0 命中」这种
- *    看起来像坏了的现场。轻资产的命中与图层是否打开**完全无关**。
+ * 2. **不跟任何图层开关联动**。关系层决定"画不画符号"，搜索决定"找什么"；
+ *    绑在一起就会出现「开了关系层搜人名却 0 命中」这种看起来像坏了的现场。
+ *    （v2.9.6 起轻资产层开关已删，这条约束只剩关系层一处。）
  * 3. **索引懒加载**：进页面不请求，第一次聚焦搜索框才拉资产与轻资产各一次
  *    （不搜索的人一个多余请求都不用发）。
  *
@@ -245,6 +245,11 @@ interface SearchReason {
   dim: SearchDim
   /** 「这块为什么亮」的一句话，直接显示在结果行里 */
   label: string
+  /**
+   * 这条理由是**推断**出来的（"配件在某人手上，而此人有这个点位"），不是确定关系。
+   * 只靠推断亮起的点位要画虚线边框 —— 不然用户会以为东西确实在这儿。
+   */
+  inferred?: boolean
 }
 
 interface StationHit {
@@ -324,22 +329,32 @@ function lightHoldingMatches(h: LightHolding, q: string, lower: string): boolean
 }
 
 /**
- * 一条配件在哪个点位 —— **只认后端已经算好的三种归属**：
+ * 一条配件可能落在哪些点位（**一个数组**，不是单个）。
+ *
+ * 三种确定来源：
  *   · `kind='workstation'`：东西就固定在这个工位 → `ref_id` 就是点位 id；
  *   · `kind='asset'`：装在主机里 → 主机**当前**所在点位（后端给 `host_workstation_code`）；
  *   · `kind='stock'`：库房且存放位置文本恰好是点位编码 → 后端已解析成 `stock_location_station_id`。
  *
- * ⚠️ `kind='user'` **一律返回 null**。东西在人手上，没有位置；
- * 绝不能拿这个人名下的工位去推断（轻资产红线：持有位置是"人"就不落点位）。
+ * 第四种是**推断**：
+ *   · `kind='user'`：东西在人手上，本来没有位置；如果这个人名下只有一个点位，
+ *     那几乎是它；如果有 N 个，**N 个都算候选**（用户口径：宁可多点亮两处，
+ *     也不要因为"定不了"就什么都不显示）。后端已经把候选算好（`inferred_station_ids`），
+ *     这里不再自己按人名做一遍匹配 —— 那是两套实现漂移的起点。
+ *
+ * ⚠️ 候选是"可能"，不是"就是"。所以调用方必须在文案里写清「按使用人推断」——
+ * 用户照着虚线点位去找东西、找不到时，得有个解释。
  */
-function lightHoldingStationId(h: LightHolding): number | null {
-  if (h.kind === 'workstation') return h.ref_id
+function lightHoldingStationIds(h: LightHolding): number[] {
+  if (h.kind === 'workstation') return h.ref_id ? [h.ref_id] : []
   if (h.kind === 'asset') {
     const code = (h.host_workstation_code || '').toUpperCase()
-    return code ? stationIdByCode.value[code] ?? null : null
+    const id = code ? stationIdByCode.value[code] : undefined
+    return id ? [id] : []
   }
-  if (h.kind === 'stock') return h.stock_location_station_id ?? null
-  return null
+  if (h.kind === 'stock') return h.stock_location_station_id ? [h.stock_location_station_id] : []
+  if (h.kind === 'user') return h.inferred_station_ids ?? []
+  return []
 }
 
 /**
@@ -393,18 +408,18 @@ const searchResult = computed<{ reasons: Map<number, SearchReason[]>; offMap: Of
     push(a.workstation_id, { dim: 'asset', label })
   }
 
-  // ③ 轻资产：品类命中后，位置由后端给的归属换算（见 lightHoldingStationId）。
+  // ③ 轻资产：品类命中后，位置由后端给的归属换算（见 lightHoldingStationIds）。
   for (const h of searchIndex.value?.light ?? []) {
     if (!lightHoldingMatches(h, q, lower)) continue
     const label = `${h.category_label || h.category_name} ×${h.quantity}`
-    const stationId = lightHoldingStationId(h)
-    if (stationId === null) {
+    const ids = lightHoldingStationIds(h)
+    if (!ids.length) {
       offMap.push({
         key: `light-${h.id}`,
         label,
         hint:
           h.kind === 'user'
-            ? `${h.user || '某人'} 持有（不记录点位）`
+            ? `${h.user || '某人'} 持有，且不在任何点位上`
             : h.stock_location
               ? `库存 · ${h.stock_location}`
               : '库存（未记录位置）',
@@ -413,7 +428,14 @@ const searchResult = computed<{ reasons: Map<number, SearchReason[]>; offMap: Of
       })
       continue
     }
-    push(stationId, { dim: 'light', label })
+    // 人持有的候选可能有多个（他名下有 N 个点位）：**每处都点亮**，
+    // 但每一行都注明是推断 —— 用户要的是"可能在哪"，不是"系统替他选一个"。
+    const isUser = h.kind === 'user'
+    const candidates = (h.inferred_station_codes || []).join('、')
+    const reasonLabel = isUser
+      ? `${label} · ${h.user || '某人'} 持有，按使用人的 ${ids.length} 个点位推断（${candidates}）`
+      : label
+    for (const id of ids) push(id, { dim: 'light', label: reasonLabel, inferred: isUser })
   }
 
   return { reasons, offMap }
@@ -424,6 +446,20 @@ const searchReasons = computed(() => searchResult.value.reasons)
 
 /** 仍然"亮"的点位 id。空集 = 有搜索词但一个都没命中 */
 const matchedIds = computed(() => new Set(searchReasons.value.keys()))
+
+/**
+ * **只靠推断**才亮的点位（它的每一条命中理由都是 `inferred`）。
+ *
+ * 一个点位可能同时因"编码命中"和"推断的配件命中"亮起 —— 那它本身是确定的，
+ * 不该画虚线。只有一条确定理由都没有时，才需要提醒用户"这块是按人推出来的"。
+ */
+const inferredOnlyIds = computed<Set<number>>(() => {
+  const out = new Set<number>()
+  for (const [id, reasons] of searchReasons.value) {
+    if (reasons.length && reasons.every((r) => r.inferred)) out.add(id)
+  }
+  return out
+})
 
 /** 命中点位（按编码排，用项目里既有口径，别自己 localeCompare） */
 const stationHits = computed<StationHit[]>(() => {
@@ -595,66 +631,6 @@ const relStats = computed(() =>
     ...RELATION_META[key],
     count: relCounts.value[key],
   })),
-)
-
-/* ---- 轻资产图层（设计 §5.5 第一期）---- */
-
-/**
- * 轻资产图层开关。
- *
- * **默认关着，且刻意不持久化。** 两条理由：
- *  1. 这是"另一副眼镜"（和关系层一样），不是页面的默认视角 —— 默认开着会让
- *     大部分格子上多一个角标，而绝大多数点位其实没有配件；
- *  2. 真实库现在**零分配**，默认开等于给所有用户加一个"点了什么也没变"的按钮。
- *     等有一天数据长起来了再讨论默认值，那时也该先看真实使用数据。
- *
- * ⚠️ **窄屏先按实测说话，结论是"收进「更多」下拉"**（2026-10-16）：
- * 先照关系层的做法把开关留在了工具条按钮组里，然后在 390×844 实测 ——
- * 工具条从 **87px（2 行）→ 131px（3 行）**、固定区 **16.5% → 21.7%**，
- * C1（工具条 ≤ 110）与 C2（固定区 < 20%）**两条当场失守**。
- * 所以 900px 以下改为「更多」里的一个条目（`command="light"`），
- * 布局回到基线，功能没少。
- *
- * **这与关系层的处理并存、不矛盾**：关系层窄屏默认关但开关仍留在工具条里 ——
- * 它旁边就是那四格统计，是一个整体；而这个开关和「新增 / 导出」是同一类
- * "偶尔点一下"的入口，进下拉正合适。
- * ⚠️ **别把这两条互相"统一"掉**：一个是"留在原地但默认关"，一个是"换成紧凑入口"，
- * 判据是实测数字，不是审美。
- */
-const lightLayer = ref(false)
-
-/**
- * 点位 id → 该点位上「看得见的」轻资产件数（`direct + via_assets`）。
- *
- * ⚠️ **件数在后端算、与点位详情侧栏同一份实现**（`services/light.py::_station_light_rows`）——
- * 前端**相加但不重算**：两个分组数由接口下发，这里只做加法（设计 §5.5 的验收线是
- * "徽标数字 = 侧栏那个 N"，各算一遍就等于给了它们漂移的机会）。
- *
- * 数量归零的记录后端已经滤掉，所以这里 `> 0` 才进表 —— **0 不渲染角标**
- * （一个写着「轻×0」的角标只会让人怀疑是不是坏了）。
- */
-const lightCountById = computed<Record<number, number>>(() => {
-  const out: Record<number, number> = {}
-  for (const s of stations.value) {
-    const n = (s.light_direct || 0) + (s.light_via_assets || 0)
-    if (n > 0) out[s.id] = n
-  }
-  return out
-})
-
-/** 全图轻资产件数合计。开关按钮上直接显示 —— 数字是 0 时用户一眼就知道不必开 */
-const lightTotal = computed(() =>
-  Object.values(lightCountById.value).reduce((sum, n) => sum + n, 0),
-)
-
-/** 有轻资产的点位数。只用于 tooltip，不参与渲染 */
-const lightStationCount = computed(() => Object.keys(lightCountById.value).length)
-
-/** 开关按钮的提示。⚠️ 与关系层一样：**只是标注，不是筛选** —— 说清楚免得用户去找筛选 */
-const lightToggleHint = computed(() =>
-  lightTotal.value
-    ? `轻资产图层：在点位角上标出这里的配件件数（当前 ${lightStationCount.value} 个点位 / 共 ${lightTotal.value} 件）。只是标注，不筛选。`
-    : '轻资产图层：在点位角上标出这里的配件件数。当前还没有已分配的配件。',
 )
 
 /* ---- 盘点 ---- */
@@ -1442,9 +1418,6 @@ function onTopbarCommand(cmd: string) {
   else if (cmd === 'editor') openEditor()
   else if (cmd === 'edit') toggleEditMode()
   else if (cmd === 'save') void saveLayout()
-  // 窄屏的轻资产层入口（宽屏是工具条上那个按钮）。
-  // **只切状态、不动数据** —— 「更多」里的命令除「删除选中点位」外都不写库。
-  else if (cmd === 'light') lightLayer.value = !lightLayer.value
 }
 
 function onStageClick(event: MouseEvent) {
@@ -2108,24 +2081,11 @@ watch(selectedId, (id) => {
         </button>
 
         <!--
-          轻资产图层。**与「关系层」是两件不同的事**：关系层回答"这个位置归谁、有没有设备"，
-          这一层回答"这个位置上还有几件配件"。两层互不影响，可以同时开。
-
-          ⚠️ **窄屏（<=900px）这个按钮被 CSS 隐藏，入口换成「更多」里那一项** ——
-          不是想当然藏的，是实测出来的：留在按钮组里会把 390px 的工具条从 **87px（2 行）
-          顶到 131px（3 行）**、固定区从 **16.5% 破到 21.7%**，C1/C2 两条验收当场失守。
-          按钮组那一行在手机上本来就是满的，再加一个必然会折行。
-          收进下拉后 390px 的布局回到基线（见 `.light-toggle` 的媒体查询）。
+          ⚠️ v2.9.6 删掉了「轻资产层」开关与点位角标。理由不是"没人用"，而是**它表达不了语义**：
+          角标只能给 `Σquantity`，而轻资产是混合池 —— 「轻×3」分不清是 3 套键鼠还是 1 SSD + 2 键鼠，
+          聚合后每条记录的身份就丢了。要看"哪一条、什么规格、在谁手里"，入口是搜索（四维结果浮层）
+          和点位侧栏的四组明细。**别再把它加回来**：一个纯数字换不来任何可行动的信息。
         -->
-        <button
-          class="btn light-toggle"
-          :class="{ on: lightLayer }"
-          :title="lightToggleHint"
-          :aria-pressed="lightLayer"
-          @click="lightLayer = !lightLayer"
-        >
-          轻资产层<span class="lt-n">{{ lightTotal }}</span>
-        </button>
 
         <!--
           编辑类操作（新增 / 删除 / 导出 / 调整位置）。
@@ -2170,15 +2130,6 @@ watch(selectedId, (id) => {
               </el-dropdown-item>
               <el-dropdown-item command="export">导出 JSON</el-dropdown-item>
               <el-dropdown-item command="editor">编辑底图</el-dropdown-item>
-              <!--
-                窄屏的轻资产层入口。宽屏工具条上那个按钮在 900px 以下被 CSS 隐藏
-                （见 `.light-toggle` 的媒体查询），这里补一个 —— 与「新增/导出/调整位置」
-                同一个套路：**同一件事两个入口，靠媒体查询二选一**，
-                不写两份逻辑（`command="light"` 只切状态）。
-              -->
-              <el-dropdown-item command="light" divided>
-                {{ lightLayer ? '隐藏轻资产层' : '显示轻资产层' }}（{{ lightTotal }} 件）
-              </el-dropdown-item>
               <el-dropdown-item command="edit">
                 {{ editMode ? '退出调整' : '调整位置' }}
               </el-dropdown-item>
@@ -2452,6 +2403,8 @@ watch(selectedId, (id) => {
                 dragging: dragId === station.id,
                 dimmed: isDimmed(station.id) || isSearchDimmed(station.id) || isRelDimmed(station.id),
                 highlighted: matchedIds.has(station.id),
+                // 只靠「按使用人推断」亮起的点位画虚线 —— 否则用户会以为东西确实在这儿
+                inferred: inferredOnlyIds.has(station.id),
                 // 关系层配色。盘点模式下**不加**这个类：那时的颜色是盘点结论，
                 // 两个维度各管各的，混在一起会让人分不清格子到底在说什么。
                 [`rel-${relById[station.id]}`]: relLayer && !auditMode,
@@ -2470,21 +2423,8 @@ watch(selectedId, (id) => {
             <div v-if="auditMode && stateById[station.id]" class="audit-badge" :class="`b-${stateById[station.id]}`">
               {{ stateMeta(stateById[station.id]).badge }}
             </div>
-            <!--
-              轻资产角标（设计 §5.5 第一期）。**刻意不建地图对象** ——
-              配件不是空间里的一个位置，它是"这个点位上有什么"的附属信息；
-              画成方块就会和资产一样被拖动、被当成点位。所以只做一个绝对定位的角标。
-
-              ⚠️ **放左边**：盘点角标占着右边（`right: -4px`），而盘点模式下这个角标**仍然显示**
-              （它不参与盘点配色，D8），两个都放右边会叠在一起、谁也读不出来。
-            -->
-            <div
-              v-if="lightLayer && lightCountById[station.id]"
-              class="light-badge"
-              :title="`这个点位上看得见的轻资产：${lightCountById[station.id]} 件`"
-            >
-              轻×{{ lightCountById[station.id] }}
-            </div>
+            <!-- v2.9.6：删掉了「轻×N」角标。轻资产是混合池，一个件数说明不了"是什么、在哪一条"，
+                 而聚合后的数字恰好把身份丢了。要看配件请用搜索或点位侧栏的四组明细。 -->
           </div>
         </div>
 
@@ -2543,20 +2483,11 @@ watch(selectedId, (id) => {
               <span class="sw aud-empty" /><span class="wide-only">空位 / 不在范围</span><span class="compact-only">空位/范围外</span>
             </div>
           </template>
-          <!--
-            轻资产图例。**只在图层开着时出现** —— 图例是"图上的符号是什么意思"的说明，
-            图层关着时图上一个轻资产角标都没有，再挂一条说明就是噪音
-            （而且窄屏下这一条会把图例挤到下一行，见验收 C21）。
-          -->
-          <div
-            v-if="lightLayer"
-            class="it"
-            title="点位左上角「轻×N」= 这个点位上看得见的配件件数（含装在主机里的），与点位详情里「轻资产（N）」同一个数"
-          >
-            <span class="sw light" />轻资产件数
-          </div>
           <div class="it hint">
             <template v-if="hasQuery && !matchedIds.size">没有匹配，图上无结果</template>
+            <template v-else-if="hasQuery && inferredOnlyIds.size && inferredOnlyIds.size === matchedIds.size">
+              虚线框 = 按使用人推断的位置，不一定是这里
+            </template>
             <template v-else-if="relFilter !== 'all' && relLayer && !auditMode">点顶栏「全部」取消筛选</template>
             <template v-else-if="auditMode">点击点位可对单台设备盘点</template>
             <template v-else>点「调整位置」后可拖动点位</template>
@@ -2887,16 +2818,6 @@ watch(selectedId, (id) => {
   background: var(--teal-soft); border-color: var(--teal); color: #0f766e;
   box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14);
 }
-
-/* 轻资产层开关上的件数。**常显（0 也显示）**，理由有两层：
-   1. 用户一眼就知道"这个库现在有没有配件要标注"，不必开一次再关掉；
-   2. 开关宽度不随数据变化 —— 数字忽隐忽现的话，窄屏上这排按钮会跟着挪位。
-   等宽数字（tabular-nums）是顺着关系层 `.rstat .rv` 的老做法，免得数字跳动。 */
-.btn.light-toggle .lt-n {
-  font-size: 10.5px; color: var(--ink-muted);
-  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum';
-}
-.btn.light-toggle.on .lt-n { color: var(--accent-hover); }
 
 .zgroup {
   display: flex; gap: 3px; background: #f1f5f9; padding: 3px;
@@ -3259,6 +3180,12 @@ watch(selectedId, (id) => {
 .ws.highlighted .desk {
   border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.4);
 }
+/* 只靠"按使用人推断"亮起：虚线 + 弱一级的光晕。
+   同一个橙色实线框表示"就是这里"，虚线表示"可能是这里"，肉眼能分出来就行 */
+.ws.highlighted.inferred .desk {
+  border-style: dashed;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.22);
+}
 .map-page.edit-on .ws .desk { box-shadow: inset 0 0 0 1px var(--teal); border-color: var(--teal); }
 
 .ws .audit-badge {
@@ -3267,16 +3194,6 @@ watch(selectedId, (id) => {
   color: #fff; white-space: nowrap;
 }
 
-/* 轻资产角标。**与盘点角标左右分居**（见模板注释），所以这里是 left 而不是 right。
-   ⚠️ **不用实心彩底**（D7）：它是一句补充说明，不是结论 ——
-   实心彩底（绿/红/橙）在这页上是"盘点结论"的专用语言（见下面 .audit-badge 的配色），
-   借过来用会让人以为那格被盘过或出了问题。白底 + 灰蓝描边 + 深灰字，
-   信息读得出来，又不跟任何状态抢注意力。 */
-.ws .light-badge {
-  position: absolute; left: -4px; top: 10px; z-index: 10; font-size: 8.5px; font-weight: 800;
-  padding: 1px 5px; border-radius: 999px; line-height: 1.2; white-space: nowrap;
-  background: #fff; color: #475569; border: 1px solid #94a3b8; box-shadow: var(--sh-sm);
-}
 /* 盘点状态配色。前三种来自后端 result 聚合，后两种是中性态（灰） */
 .ws.state-checked .desk {
   background: linear-gradient(180deg, #fff 0%, #ecfdf5 100%);
@@ -3329,9 +3246,6 @@ watch(selectedId, (id) => {
 .legend .sw.aud-ok { background: #ecfdf5; border: 1px solid #10b981; }
 .legend .sw.aud-bad { background: #fef2f2; border: 1px solid #ef4444; }
 .legend .sw.aud-empty { background: #f8fafc; border: 1px dotted #cbd5e1; }
-/* 与 `.ws .light-badge` 同一套配色 —— 图例说"白底灰蓝描边"而图上是另一个灰，
-   用户只能靠猜（和关系层图例同理） */
-.legend .sw.light { background: #fff; border: 1px solid #94a3b8; }
 
 /* 关系层图例色块。**必须与 .ws.rel-* 的四条一模一样**，
    否则图例上写着"空置"、图上是另一种灰，管理员只能靠猜。 */
@@ -3480,14 +3394,6 @@ watch(selectedId, (id) => {
   .btn { height: 34px; padding: 0 10px; }
   .tb-extra { display: none; }
   .tb-more { display: inline-flex; }
-
-  /* 轻资产层开关：窄屏换成「更多」里的条目（`command="light"`）。
-     ⚠️ 这是**实测结论**，不是想当然：留在按钮组里会把工具条从 87px 顶到 131px、
-     固定区从 16.5% 破到 21.7%（C1/C2 两条验收失守）。
-     按钮组那一行在手机上本来就满了。收进下拉后布局回到基线。
-     ⚠️ 与 `.tb-extra` 是**并存**关系 —— 那边是"编辑类操作整组收起来"，
-     这个是单个"看一眼"的开关，别把它塞进 `.tb-extra` 的语义里。 */
-  .light-toggle { display: none; }
 
   /* 缩放三兄弟靠右收口，别和功能按钮混成一坨 */
   .zgroup { margin-left: auto; }

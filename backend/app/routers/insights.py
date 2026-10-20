@@ -33,7 +33,15 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Asset, AssetStatus, RelationException, Workstation
+from ..models import (
+    Asset,
+    AssetStatus,
+    LightCategory,
+    LightHolding,
+    LightHolderKind,
+    RelationException,
+    Workstation,
+)
 from ..schemas_insights import (
     InsightCheckedOut,
     InsightProblemOut,
@@ -42,6 +50,7 @@ from ..schemas_insights import (
     InsightSubjectOut,
 )
 from ..services import issues as issues_service
+from ..services import light as light_service
 from ..services import relation_check as rc
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
@@ -147,8 +156,34 @@ def _load_scan_inputs(db: Session):
         ).scalars().all()
     ]
 
+    # 记在人手上的轻资产：只有"这个使用人名下有 >1 个点位"才构成**推断歧义**。
+    # ⚠️ 候选点位用与地图 / 点位侧栏**同一个** `station_ids_by_user` 算，
+    #    不在这里另写一份 join —— 两处口径一旦漂移，"问题中心说有 2 个候选、
+    #    地图只标 1 个"这种没人能解释的现象就会冒出来。
+    user_holdings = db.execute(
+        select(LightHolding.id, LightHolding.holder_user, LightCategory.name)
+        .join(LightCategory, LightCategory.id == LightHolding.category_id)
+        .where(
+            LightHolding.holder_kind == LightHolderKind.USER,
+            LightHolding.quantity > 0,
+            LightHolding.holder_user.is_not(None),
+        )
+        .order_by(LightHolding.id.asc())
+    ).all()
+    by_user = light_service.station_ids_by_user(db, [r[1] for r in user_holdings])
+    light_user_ambiguous = [
+        issues_service.LightUserAmbiguity(
+            holding_id=int(hid),
+            user=str(user),
+            category_name=name or "",
+            station_codes=tuple(code for _sid, code in by_user.get(str(user).strip(), [])),
+        )
+        for hid, user, name in user_holdings
+        if len(by_user.get(str(user).strip(), [])) > 1
+    ]
+
     total_assets = int(db.scalar(select(func.count(Asset.id))) or 0)
-    return scans, unbound, orphans, exceptions, total_assets
+    return scans, unbound, orphans, exceptions, light_user_ambiguous, total_assets
 
 
 # --------------------------------------------------------------------------- #
@@ -221,10 +256,21 @@ def list_issues(
 
     前端的两段结构（规则卡 + 展开逐条）吃的是同一份数据 —— 不重复请求。
     """
-    scans, unbound, orphans, exceptions, total_assets = _load_scan_inputs(db)
+    (
+        scans,
+        unbound,
+        orphans,
+        exceptions,
+        light_user_ambiguous,
+        total_assets,
+    ) = _load_scan_inputs(db)
 
     all_problems = issues_service.build_problems(
-        scans, unbound=unbound, orphans=orphans, exceptions=exceptions
+        scans,
+        unbound=unbound,
+        orphans=orphans,
+        exceptions=exceptions,
+        light_user_ambiguous=light_user_ambiguous,
     )
     by_rule = issues_service.summarize(all_problems)
     counts = issues_service.count_pending(all_problems)

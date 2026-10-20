@@ -859,9 +859,65 @@ def holdings_by_asset(db: Session, asset_id: int) -> list[LightHolding]:
     return [r for r in rows if r.quantity > 0]
 
 
-#: 点位轻资产的两个分组名。**收成常量**：地图徽标与点位侧栏都要按这两个键取值，
+def station_ids_by_codes(db: Session, codes: Iterable[Optional[str]]) -> dict[str, int]:
+    """{点位编码: 点位 id} —— 只认**活着的**点位，编码前后空格忽略。
+
+    ⚠️ 这是"自由文本位置 → 点位"的**唯一实现**：库存的 `stock_location` 与地图搜索
+    都从这里换算，不允许各写一份 `select ... where code ==`。
+    以前 `light_serialize._station_id_by_code` 自己写了一份单条查询、且不 strip，
+    结果 `'W52 '`（手输多一个空格）在流水里能解析、在地图上解析不出来 —— 两处打脸。
+    """
+    wanted = {c.strip() for c in codes if c and c.strip()}
+    if not wanted:
+        return {}
+    rows = db.execute(
+        select(Workstation.id, Workstation.code)
+        .where(Workstation.active.is_(True))
+        .where(Workstation.code.in_(wanted))
+    ).all()
+    return {str(code): int(sid) for sid, code in rows if code}
+
+
+def station_ids_by_user(
+    db: Session, user_names: Iterable[Optional[str]]
+) -> dict[str, list[tuple[int, str]]]:
+    """{使用人: [(点位 id, 编码), …]} —— "这个人名下的点位有哪些"，**唯一实现**。
+
+    这是「按使用人推断轻资产位置」的全部依据：`_station_light_rows` 的 `via_users` 组
+    和 `light_serialize` 下发给地图搜索的 `inferred_station_ids` 都调它。
+
+    ⚠️ **只认"有归属"的人名**：`/`、`／` 这类占位符走 `has_owner()` 排掉 ——
+    否则系统会把配件"推断"给一个叫斜杠的人，然后在地图上点亮一个空工位。
+    ⚠️ **只认 `active` 的点位**：已删点位不该再产生新的位置推断。
+    """
+    names = {n.strip() for n in user_names if has_owner(n)}
+    if not names:
+        return {}
+    rows = db.execute(
+        select(Workstation.id, Workstation.code, Workstation.user_name)
+        .where(Workstation.active.is_(True))
+        .where(Workstation.user_name.in_(names))
+    ).all()
+    out: dict[str, list[tuple[int, str]]] = {}
+    for sid, code, name in rows:
+        out.setdefault(str(name).strip(), []).append((int(sid), str(code)))
+    return out
+
+
+#: 点位轻资产的四个分组名。**收成常量**：点位侧栏按这四个键取值，
 #: 各写一遍字符串迟早会漂成 `via_asset` / `viaAssets` 这种"看着对但取不到"的样子。
-STATION_LIGHT_GROUPS: tuple[str, str] = ("direct", "via_assets")
+#:
+#: | 键 | 含义 | 确定性 |
+#: | --- | --- | --- |
+#: | `direct` | 东西固定放在这个工位上 | 确定 |
+#: | `via_assets` | 装在那台主机上，主机当前在这个点位 | 确定（跟随主机） |
+#: | `stock` | 库存位置写的就是这个点位编码 | 半确定（人写的备注） |
+#: | `via_users` | 记在某人手上，而这个人名下的点位里有本点位 | **推断** |
+STATION_LIGHT_GROUPS: tuple[str, ...] = ("direct", "via_assets", "stock", "via_users")
+
+#: 只有这三组算"确定在这里"，`via_users` 不算 —— 界面上的总量、以及任何聚合
+#: 只能用这三组，否则"可能在这里"会被说成"就是在这里"。
+STATION_LIGHT_CERTAIN_GROUPS: tuple[str, ...] = ("direct", "via_assets", "stock")
 
 
 def _station_light_rows(
@@ -871,16 +927,18 @@ def _station_light_rows(
 
     - `direct`：`holder_kind='workstation'` 且 `workstation_id=本点位` —— 东西就放在这个工位上；
     - `via_assets`：`holder_kind='asset'` 且该资产的**当前** `workstation_id=本点位` ——
-      东西装在那台主机上，主机正好在这个工位。
+      东西装在那台主机上，主机正好在这个工位；
+    - `stock`：`holder_kind='stock'` 且 `stock_location` 恰好是**活着的**本点位编码 ——
+      库存实物就存在这个位置（自由文本，但写明了就是写明了）；
+    - `via_users`：`holder_kind='user'`，而这个使用人名下有本点位 —— **推断**，
+      一个人有多个点位时同一条记录会出现在每一处（这正是它不能参与聚合的原因）。
 
-    ⚠️ **这是地图徽标（`station_light_counts`）与点位侧栏（`holdings_by_workstation`）
-    唯一的取数实现。** 两处只允许在这一个函数上投影出不同的形状，**绝不允许各写一遍查询** ——
-    徽标数字与侧栏那两组的数量之和一旦对不上，用户没有任何办法判断该信哪个：
-    地图说"这个位置有 3 件"、点进去一个也没有，两边都"看着像对的"。
+    ⚠️ **这是点位侧栏与搜索结果唯一的取数口径。** 绝不允许在别处再写一遍查询 ——
+    侧栏说"有"、地图说"没有"时，用户没有任何办法判断该信哪个。
 
-    ⚠️ **两组只是展示分组，不创建任何额外持有记录**：随主机组的配件在 `light_holdings`
-    里**只有一条** `holder_kind='asset'` 的记录，点位这一层**不落任何数据**。
-    主机换点位，这一组自动跟着变（查询时算出来）—— 这就是"不重复位置关系"的落点。
+    ⚠️ **前两组与 `stock` 是"确定在这里"，`via_users` 是"可能在这里"。**
+    `STATION_LIGHT_CERTAIN_GROUPS` 之外的分组**绝不能**折进任何总量/徽标：
+    把推断出来的位置加总，等于把 N 个候选当成 N 份实物。
 
     ⚠️ **只算 `quantity > 0` 的有效持有记录**：数量归零的记录仍留在表里（流水要完整），
     但它不代表"这个位置上有东西"。归零判定放在 SQL 里而不是取回来再过滤 ——
@@ -911,50 +969,60 @@ def _station_light_rows(
     ).all()
 
     out: dict[int, dict[str, list[LightHolding]]] = {
-        sid: {"direct": [], "via_assets": []} for sid in ids
+        sid: {g: [] for g in STATION_LIGHT_GROUPS} for sid in ids
     }
     for row in direct_rows:
         # `workstation_id.in_(ids)` 已经保证它在 keys 里，且不可能为 NULL
         out[row.workstation_id]["direct"].append(row)
     for holding, sid in via_pairs:
         out[sid]["via_assets"].append(holding)
+
+    # ---- 库存：位置写的就是本点位编码 ----
+    stock_rows = list(
+        db.execute(
+            select(LightHolding)
+            .options(selectinload(LightHolding.category))
+            .where(LightHolding.holder_kind == LightHolderKind.STOCK)
+            .where(LightHolding.quantity > 0)
+            .where(LightHolding.stock_location.isnot(None))
+        ).scalars().all()
+    )
+    if stock_rows:
+        code_to_id = station_ids_by_codes(db, [r.stock_location for r in stock_rows])
+        wanted = set(ids)
+        for row in stock_rows:
+            sid = code_to_id.get((row.stock_location or "").strip())
+            if sid is not None and sid in wanted:
+                out[sid]["stock"].append(row)
+
+    # ---- 人：按"该人名下的点位"推断（0 个点位 → 无处可去，1 个 → 唯一，N 个 → 每处都有）----
+    user_rows = list(
+        db.execute(
+            select(LightHolding)
+            .options(selectinload(LightHolding.category))
+            .where(LightHolding.holder_kind == LightHolderKind.USER)
+            .where(LightHolding.quantity > 0)
+            .where(LightHolding.holder_user.isnot(None))
+        ).scalars().all()
+    )
+    if user_rows:
+        by_user = station_ids_by_user(db, [r.holder_user for r in user_rows])
+        wanted = set(ids)
+        for row in user_rows:
+            for sid, _code in by_user.get((row.holder_user or "").strip(), []):
+                if sid in wanted:
+                    out[sid]["via_users"].append(row)
+
     return out
 
 
 def holdings_by_workstation(db: Session, station_id: int) -> dict[str, list[LightHolding]]:
-    """某个点位上"看得到的"轻资产，**分两组返回**（设计 §5.4）。
+    """某个点位上"看得到的"轻资产，**按四组返回**（设计 §5.4）。
 
     口径与分组含义见 `_station_light_rows` —— 本函数只是它取单个点位时的**行投影**。
     """
     groups = _station_light_rows(db, [station_id])
-    return groups.get(station_id, {"direct": [], "via_assets": []})
-
-
-def station_light_counts(
-    db: Session, station_ids: Sequence[int]
-) -> dict[int, dict[str, int]]:
-    """{点位 ID: {"direct": 件数, "via_assets": 件数}} —— 地图徽标用（设计 §5.5 第一期）。
-
-    数字是**数量之和**（`Σquantity`），不是记录条数 ——
-    与点位侧栏标题的「轻资产（N）」**完全同一个算法**（那里也是 Σquantity，见
-    `MapStationPanel.lightSummary`）。徽标因此天然等于"点进去之后看到的那个 N"。
-
-    ⚠️ **不含库存**：`holder_kind='stock'` 的东西还没分配到任何点位，
-    即使 `stock_location` 自由文本里写着点位编码（`'W23'`）也不算 —— 那是**人写的备注**，
-    不是位置关系（设计 §5.5）。乐观地把它算进来只会让地图与侧栏互相打脸。
-
-    ⚠️ **不发合计**：只给 `direct` / `via_assets` 两个数，让消费方自己相加 ——
-    多一个 `total` 字段就多一个"两处算法不一致"的机会，而地图与侧栏的
-    "两页数字相等"正是这一页的验收标准。
-    """
-    groups = _station_light_rows(db, station_ids)
-    return {
-        sid: {
-            "direct": sum(h.quantity for h in group["direct"]),
-            "via_assets": sum(h.quantity for h in group["via_assets"]),
-        }
-        for sid, group in groups.items()
-    }
+    return groups.get(station_id, {g: [] for g in STATION_LIGHT_GROUPS})
 
 
 def link_suggestions_for_asset(db: Session, asset_id: int) -> dict[str, Any]:
@@ -999,7 +1067,9 @@ __all__ = [
     "replace_asset_part",
     "replay_holdings",
     "resolve_stock_row",
-    "station_light_counts",
     "stock_quantity",
+    "STATION_LIGHT_CERTAIN_GROUPS",
     "STATION_LIGHT_GROUPS",
+    "station_ids_by_codes",
+    "station_ids_by_user",
 ]

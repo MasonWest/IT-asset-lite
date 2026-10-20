@@ -120,18 +120,13 @@ def _default_floor_map(db: Session) -> Optional[FloorMap]:
     return db.execute(stmt).scalars().first()
 
 
-def _serialize(
-    station: Workstation,
-    asset_count: int = 0,
-    light: Optional[dict[str, int]] = None,
-) -> WorkstationOut:
+def _serialize(station: Workstation, asset_count: int = 0) -> WorkstationOut:
     """把 ORM 点位拼成下发的形状。
 
-    ⚠️ **两个派生值都必须由调用方传进来**，不在这个函数里现查 ——
+    ⚠️ **派生值必须由调用方传进来**，不在这个函数里现查 ——
     列表接口走它的批量版本（一次查完 N 个点位），这里再查一遍就是 N+1。
     单点位的路径统一走 `_serialize_one`，别手写 `_asset_counts(...)`。
     """
-    counts = light or {}
     return WorkstationOut(
         id=station.id,
         code=station.code,
@@ -144,21 +139,18 @@ def _serialize(
         created_at=station.created_at,
         updated_at=station.updated_at,
         asset_count=asset_count,
-        light_direct=int(counts.get("direct", 0)),
-        light_via_assets=int(counts.get("via_assets", 0)),
     )
 
 
 def _serialize_one(db: Session, station: Workstation) -> WorkstationOut:
-    """单点位序列化：资产数 + 轻资产件数各一次索引查询。
+    """单点位序列化：资产数一次索引查询。
 
-    ⚠️ **不能省成 `_serialize(station)`** —— 那样这两个派生值会静默变成 0，
-    而"这个点位上有 3 件配件"是老实的 0 还是没查的 0，从响应里看不出来。
+    ⚠️ **不能省成 `_serialize(station)`** —— 那样资产数会静默变成 0，
+    而"这个点位上有 3 台设备"是老实的 0 还是没查的 0，从响应里看不出来。
     """
     return _serialize(
         station,
         _asset_counts(db, [station.id]).get(station.id, 0),
-        light_service.station_light_counts(db, [station.id]).get(station.id, {}),
     )
 
 
@@ -282,12 +274,7 @@ def list_workstations(
     rows = list(db.execute(stmt.order_by(Workstation.y.asc(), Workstation.x.asc(), Workstation.id.asc())).scalars().all())
 
     counts = _asset_counts(db, [s.id for s in rows])
-    # 轻资产件数**一次查完**，与 `_asset_counts` 同一个套路 —— 逐点位查会 N+1。
-    # 口径在 `services/light.py::station_light_counts`，与点位侧栏共用取数实现。
-    light_counts = light_service.station_light_counts(db, [s.id for s in rows])
-    items = [
-        _serialize(s, counts.get(s.id, 0), light_counts.get(s.id, {})) for s in rows
-    ]
+    items = [_serialize(s, counts.get(s.id, 0)) for s in rows]
 
     # 画布尺寸 + 建筑图元都来自默认平面图（不再写死在前端模板里）。
     # 取不到图时退回模块级 CANVAS 默认值，保证老库/被 reset 过的库也能渲染点位。
@@ -1014,6 +1001,9 @@ def delete_workstation(
         operator=operator,
         detail={"workstation_id": station_id, "code": code,
                 "detached_assets": detached, "detached_count": len(detached),
+                # ⚠️ 这个键名是**审计历史格式**，不要跟着接口字段一起改 ——
+                # `WorkstationOut.light_via_assets` 已在 v2.9.6 删除（角标退役），
+                # 但历史审计行里仍叫这个名字，改名会让旧记录与新记录无法对账。
                 "light_via_assets": len(via_assets_light)},
     )
 
