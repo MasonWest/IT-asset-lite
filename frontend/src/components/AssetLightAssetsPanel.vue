@@ -177,10 +177,20 @@ function onSaved() {
 </template>
 
 <style scoped>
+/*
+  ⚠️ 卡片本身（.panel）没有内边距 —— 全站的口径是「`.section-title` 自带 16px 20px 8px，
+  其余内容各自补 `padding: 0 20px`」（见 AssetRelationsPanel）。
+  这里原来三个块都没补，于是配件行和卡片边框贴着、跟上面的「配对设备」差 20px，
+  看起来就是"这一块比别的宽"（v2.9.8 用户报障）。底部同理留 16px，与 pair-panel 一致。
+*/
+.panel {
+  padding-bottom: 16px;
+}
 .light-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 0 20px;
 }
 .light-row {
   display: flex;
@@ -228,7 +238,7 @@ function onSaved() {
   color: var(--text-3);
 }
 .empty {
-  padding: 16px 0;
+  padding: 16px 20px;
   color: var(--text-3);
   font-size: 13px;
 }
@@ -236,6 +246,7 @@ function onSaved() {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 0 20px;
   margin-top: 10px;
 }
 .lk {

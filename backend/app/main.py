@@ -207,6 +207,11 @@ async def lifespan(_app: FastAPI):
             f"  已升级：{migration['timestamps_shifted']} 个时间戳由 UTC 校正为本地时间"
             f"（本机时区偏移 {migration['offset_minutes']:+d} 分钟）"
         )
+    if migration.get("light_times_shifted"):
+        print(
+            f"  已升级：{migration['light_times_shifted']} 个轻资产时间（起始时间 / 流水发生时间）"
+            "由 UTC 校正为本地时间"
+        )
     if types_created:
         print(f"  已初始化字典数据：设备类型 {types_created} 个")
     if demo is not None:

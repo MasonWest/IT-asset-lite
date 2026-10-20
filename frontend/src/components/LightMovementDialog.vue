@@ -41,6 +41,7 @@ import type {
   LightOp,
 } from '@/types'
 import { HOLDER_KIND_META, flowAllows, newRequestId, opMeta } from '@/utils/light'
+import { localDateString } from '@/utils/format'
 
 const props = defineProps<{
   modelValue: boolean
@@ -380,7 +381,7 @@ watch(
     operator.value = appState.operator
     note.value = ''
     origin.value = 'manual'
-    occurredAt.value = new Date().toISOString().slice(0, 10)
+    occurredAt.value = localDateString()
     quantity.value = 1
     toLocation.value = ''
     toUser.value = ''
@@ -603,7 +604,13 @@ async function submit() {
   }
   saving.value = true
   try {
-    const occurred = occurredAt.value ? new Date(`${occurredAt.value}T${timeNow()}`).toISOString() : null
+    /*
+      ⚠️ **不要 `new Date(...).toISOString()`**。它输出的是 UTC（带 Z），
+      后端会把它当成本地时间存进去 —— 东八区就慢 8 小时，轻资产「起始于」
+      和审计日志对不上（v2.9.8 事故）。
+      这里直接拼本地 naive 字符串：日期来自选择器（YYYY-MM-DD），时间取当前时分。
+    */
+    const occurred = occurredAt.value ? `${occurredAt.value}T${timeNow()}:00` : null
     let result: LightMovementResult
     if (isReplace.value) {
       if (fromRefId.value === null) {

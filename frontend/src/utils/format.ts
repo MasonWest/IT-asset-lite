@@ -452,6 +452,33 @@ export function formatShortDateTime(value?: string | null): string {
   return raw.slice(5, 16).replace(/-/g, '/')
 }
 
+/**
+ * 本机"墙上时钟"的日期：2026-10-20。
+ *
+ * ⚠️ **别用 `new Date().toISOString().slice(0, 10)`**：`toISOString()` 输出的是 UTC，
+ * 东八区晚上 8 点之后它会跳到"明天"（甚至把今天登记的事写进昨天/明天的日期里）。
+ * 本系统库里存的全是本地 naive 时间（见后端 `models.py` 顶部说明），前端也要按本地口径拼。
+ */
+export function localDateString(now: Date = new Date()): string {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * 本机"墙上时钟"的整点时间戳：2026-10-20T14:18:00（**没有 Z，不是 UTC**）。
+ *
+ * 后端把这些时间当本地 naive datetime 直接入库；带上 `Z` 就会被当成 UTC，
+ * 页面上比墙上时钟慢 8 小时，和审计日志对不上（v2.9.8 事故）。
+ */
+export function localDateTimeString(now: Date = new Date()): string {
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+  return `${localDateString(now)}T${hh}:${mm}:${ss}`
+}
+
 /** 相对时间：刚刚 / 3 分钟前 / 2 天前 / 2026/01/02 */
 export function relativeTime(value?: string | null): string {
   if (!value) return '—'

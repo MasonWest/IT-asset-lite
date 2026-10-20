@@ -16,6 +16,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .local_time import LocalNaiveDatetime
+
 #: 手工登记允许的来源。**没有 `import`** —— 历史导入只能走导入接口。
 LightOriginLiteral = Literal["manual", "opening"]
 #: 引用类型。`"none"` 表示"系统外部 / 已注销"（入库的来源、报损的去向）——
@@ -227,7 +229,9 @@ class LightMovementCreate(BaseModel):
     from_ref: HolderRefIn = Field(default_factory=lambda: HolderRefIn(kind="stock"))
     to_ref: HolderRefIn = Field(default_factory=lambda: HolderRefIn(kind="stock"))
     quantity: int = Field(default=1, ge=1, le=100000)
-    occurred_at: Optional[datetime] = None
+    #: 发生时间。⚠️ 必须用 `LocalNaiveDatetime`：客户端发来的 `...Z`（UTC）
+    #: 会先换算成本机时区再去掉时区；否则库里存的是 UTC、页面比墙上时钟慢 8 小时（v2.9.8 事故）
+    occurred_at: Optional[LocalNaiveDatetime] = None
     note: Optional[str] = Field(default=None, max_length=255)
     operator: Optional[str] = Field(default=None, max_length=64)
     #: manual（默认）/ opening（期初确认，必须带操作人）
@@ -247,7 +251,7 @@ class LightReplaceRequest(BaseModel):
     #: 哪台机器上的配件要换
     asset_id: int
     quantity: int = Field(default=1, ge=1, le=100000)
-    occurred_at: Optional[datetime] = None
+    occurred_at: Optional[LocalNaiveDatetime] = None
     note: Optional[str] = Field(default=None, max_length=255)
     operator: Optional[str] = Field(default=None, max_length=64)
     request_id: Optional[str] = Field(default=None, max_length=64)
@@ -309,7 +313,7 @@ class OpeningRequest(BaseModel):
     entries: list[OpeningEntry] = Field(min_length=1)
     operator: Optional[str] = Field(default=None, max_length=64)
     note: Optional[str] = Field(default=None, max_length=255)
-    occurred_at: Optional[datetime] = None
+    occurred_at: Optional[LocalNaiveDatetime] = None
 
     _clean = field_validator("note", "operator", mode="before")(_blank_to_none)
 

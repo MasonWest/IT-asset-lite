@@ -152,6 +152,20 @@ _LEGACY_UTC_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 TIMESTAMPS_LOCAL_KEY = "timestamps_local"
 
+#: 轻资产「本地时间校正」的记账 key（v2.9.8）。
+#: 与 `timestamps_local` 分开记 —— 那次修的是 `server_default=func.now()` 写出的 UTC，
+#: 这次修的是**浏览器 `toISOString()` 写出的 UTC**，两批数据的判据完全不同。
+LIGHT_TIMES_LOCAL_KEY = "light_times_local"
+
+#: (表, 列, 额外 WHERE 片段) —— 被浏览器按 UTC 写进库的轻资产时间。
+_LIGHT_TIME_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # 历史导入（origin='import'）的日期来自 Excel 单元格，是用户手填的墙钟日期，
+    # 不经过浏览器那条 `toISOString()` 路径，**不平移**。
+    ("light_movements", "occurred_at", " AND COALESCE(origin, '') <> 'import'"),
+    # holdings.since 是"东西从什么时候开始在这儿"，由写它的那条流水决定，同一批偏移。
+    ("light_holdings", "since", ""),
+)
+
 #: 「默认平面图已认领」的记账 key。
 #: 没有它的话，老库每次启动都会重复插一行默认图 —— 而且第二步的 UPDATE
 #: 只会作用于 floor_map_id IS NULL 的行，看起来"幂等"，实际上 floor_maps 会越攒越多。
@@ -518,6 +532,52 @@ def _shift_legacy_utc_timestamps(conn) -> tuple[int, int]:
     return shifted, offset_seconds // 60
 
 
+def _shift_light_utc_timestamps(conn) -> tuple[int, int]:
+    """把轻资产里被写成 UTC 的 `since` / `occurred_at` 校正成本地时间（v2.9.8）。
+
+    现场：轻资产「当前分配」写着「起始于 2026/10/20 06:18」，而同一笔操作在
+    审计日志里是 14:18 —— 差 8 小时，正好是东八区。
+
+    原因：前端把「发生日期 + 当前时分」拼成本地时间后调了
+    `new Date(...).toISOString()`。**`toISOString()` 输出的是 UTC**（带 `Z`），
+    pydantic 解析成带时区的 datetime，而 SQLite 的 DateTime 列会把 tzinfo 丢掉 ——
+    "本地 14:18" 落库成 "06:18"。现在写入口已经改成发本地 naive 字符串
+    （`local_time.LocalNaiveDatetime` 兜底），这里负责把历史数据改回来。
+
+    怎么认出"哪几行是这么写进来的"（判据是写入路径，不是猜数值）：
+      · 前端拼的是 `YYYY-MM-DDTHH:mm`（**分钟精度**）→ 落库后微秒部分恰好是 0；
+      · 后端自己写的 `datetime.now()` 一定带微秒；
+      · 历史导入的日期来自 Excel 单元格，不经过浏览器，排除（见 `_LIGHT_TIME_COLUMNS`）。
+    所以判据 = 「微秒为 0 且不是 import」。⚠️ 别把 `datetime('now')` 之类当基准去比对，
+    那会把"用户故意补登到上个月"的记录误判成"没偏移"。
+
+    幂等：`schema_meta` 记账，只做一次；时区偏移为 0 的机器上直接跳过。
+    """
+    if _meta_get(conn, LIGHT_TIMES_LOCAL_KEY) == "local":
+        return 0, 0
+
+    offset_seconds = int(datetime.now().astimezone().utcoffset().total_seconds())
+    shifted = 0
+
+    if offset_seconds:
+        modifier = f"{offset_seconds // 60:+d} minutes"
+        for table, column, extra in _LIGHT_TIME_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column not in _existing_columns(conn, table):
+                continue
+            # LIKE '%.000000' = 微秒为 0，即"分钟精度"的那批（前端发来的）
+            result = conn.exec_driver_sql(
+                f"UPDATE {table} SET {column} = datetime({column}, ?) "
+                f"WHERE {column} IS NOT NULL AND {column} LIKE '%.000000'{extra}",
+                (modifier,),
+            )
+            shifted += result.rowcount or 0
+
+    _meta_set(conn, LIGHT_TIMES_LOCAL_KEY, "local")
+    return shifted, offset_seconds // 60
+
+
 def ensure_schema() -> dict[str, object]:
     """建表 + 轻量迁移。返回这次实际做了什么，供启动日志回显。
 
@@ -552,6 +612,7 @@ def ensure_schema() -> dict[str, object]:
             "workstations_attached": 0,
             "timestamps_shifted": 0,
             "offset_minutes": 0,
+            "light_times_shifted": 0,
         }
 
     with engine.begin() as conn:
@@ -562,6 +623,8 @@ def ensure_schema() -> dict[str, object]:
         floor_map_column_added = _add_floor_map_id_column(conn)
         floor_map = _recognize_default_floor_map(conn)
         shifted, offset_minutes = _shift_legacy_utc_timestamps(conn)
+        # 轻资产那批（浏览器 toISOString 写进来的 UTC）—— 判据不同，单独一次、单独记账
+        light_shifted, _ = _shift_light_utc_timestamps(conn)
         # 图标：纯展示属性，不加约束、不回填，放在最后（与前面的顺序没有依赖）
         device_type_icon_added = _add_icon_column(conn, "device_types")
         light_category_icon_added = _add_icon_column(conn, "light_categories")
@@ -578,4 +641,5 @@ def ensure_schema() -> dict[str, object]:
         "workstations_attached": floor_map["attached"],
         "timestamps_shifted": shifted,
         "offset_minutes": offset_minutes,
+        "light_times_shifted": light_shifted,
     }

@@ -1007,5 +1007,145 @@ class TestApi(LightTestBase):
         self.assertTrue(res.content.startswith(b"PK"))  # xlsx 就是 zip
 
 
+class TestLocalTimeContract(LightTestBase):
+    """v2.9.8：**全站时间都是本地 naive**，客户端发 UTC 也不能把库写歪。
+
+    事故：前端拼完本地时间又调了 `toISOString()`，于是东八区落库的时间少 8 小时，
+    轻资产「起始于」和审计日志对不上。这里钉住三件事：
+      1. 带 `Z`（UTC）的入参 → 落库前换算成本地、去掉时区；
+      2. 带偏移（+08:00 / -05:00）同理；
+      3. 裸时间串（前端现在发的）原样通过 —— 别好心再转一次，那会偏两遍。
+    """
+
+    def _payload(self, raw: str):
+        from app.schemas_light import LightMovementCreate
+
+        return LightMovementCreate.model_validate(
+            {"category_id": 1, "op": "stock_in", "occurred_at": raw}
+        )
+
+    def test_utc_suffix_is_converted_to_local_naive(self):
+        from datetime import timezone
+
+        got = self._payload("2026-10-20T06:18:00.000Z").occurred_at
+        self.assertIsNotNone(got)
+        self.assertIsNone(got.tzinfo, "落库前必须去掉时区")
+        expected = datetime(2026, 10, 20, 6, 18, tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+        self.assertEqual(got, expected)
+        # 前提自检：本机不是 UTC 时，这条断言才有分辨力
+        if datetime.now().astimezone().utcoffset():
+            self.assertNotEqual(got, datetime(2026, 10, 20, 6, 18))
+
+    def test_offset_suffix_is_converted(self):
+        from datetime import timezone
+
+        got = self._payload("2026-10-20T14:18:00+08:00").occurred_at
+        expected = datetime(2026, 10, 20, 14, 18, tzinfo=timezone(timedelta(hours=8))).astimezone()
+        self.assertEqual(got, expected.replace(tzinfo=None))
+
+    def test_naive_string_passes_through_untouched(self):
+        got = self._payload("2026-10-20T14:18:00").occurred_at
+        self.assertEqual(got, datetime(2026, 10, 20, 14, 18))
+        self.assertIsNone(got.tzinfo)
+
+    def test_absent_occurred_at_stays_none(self):
+        from app.schemas_light import LightMovementCreate
+
+        payload = LightMovementCreate.model_validate({"category_id": 1, "op": "stock_in"})
+        self.assertIsNone(payload.occurred_at)
+
+
+class TestLightTimeMigration(LightTestBase):
+    """v2.9.8：把历史那批"被浏览器写成 UTC"的 since / occurred_at 校正回本地时间。
+
+    判据是**写入路径**（分钟精度 = 前端发的），不是猜数值：
+      · 微秒为 0 且非 import → 平移；
+      · 带微秒（后端 `datetime.now()` 写的）→ 不动；
+      · `origin='import'`（Excel 里手填的墙钟日期）→ 不动。
+    ⚠️ 断言不写死"平移 8 小时"，而是拿本机时区偏移算 —— 否则换个时区就假红。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        from app.database import LIGHT_TIMES_LOCAL_KEY, engine
+
+        # ensure_schema() 在本进程启动时已经跑过一次并记了账，这里清掉才能重演
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DELETE FROM schema_meta WHERE key = ?", (LIGHT_TIMES_LOCAL_KEY,))
+            conn.exec_driver_sql("DELETE FROM light_movements")
+            conn.exec_driver_sql("DELETE FROM light_holdings")
+        self.category = self.make_category("键鼠")
+
+    def _insert_movement(self, occurred_at: str, *, origin: str = "manual") -> int:
+        from app.database import engine
+
+        with engine.begin() as conn:
+            row = conn.exec_driver_sql(
+                "INSERT INTO light_movements (category_id, op, quantity, occurred_at, origin, created_at) "
+                "VALUES (?, 'stock_in', 1, ?, ?, '2026-10-20 14:00:00.123456')",
+                (self.category.id, occurred_at, origin),
+            )
+            return row.lastrowid
+
+    def _occurred(self, movement_id: int) -> str:
+        from app.database import engine
+
+        with engine.begin() as conn:
+            return conn.exec_driver_sql(
+                "SELECT occurred_at FROM light_movements WHERE id = ?", (movement_id,)
+            ).scalar()
+
+    def _run(self):
+        from app.database import _shift_light_utc_timestamps, engine
+
+        with engine.begin() as conn:
+            return _shift_light_utc_timestamps(conn)
+
+    def test_shifts_minute_precision_rows_once(self):
+        from datetime import timedelta
+
+        offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+        if not offset:
+            self.skipTest("本机时区是 UTC，没有可校正的偏移")
+
+        ui_row = self._insert_movement("2026-10-20 06:18:00.000000")          # 前端写的（UTC）
+        backend_row = self._insert_movement("2026-10-20 14:18:00.633699")     # datetime.now() 写的
+        import_row = self._insert_movement("2026-05-01 00:00:00.000000", origin="import")
+
+        shifted, _ = self._run()
+        self.assertEqual(shifted, 1, "只有前端写的那一行该被平移")
+
+        expected = (datetime(2026, 10, 20, 6, 18) + offset).strftime("%Y-%m-%d %H:%M:%S")
+        self.assertEqual(self._occurred(ui_row), expected)
+        # 另外两行逐字符不变（datetime() 会去掉微秒，所以拿原值比前缀意义不大 → 比整串）
+        self.assertTrue(self._occurred(backend_row).startswith("2026-10-20 14:18"))
+        self.assertTrue(self._occurred(import_row).startswith("2026-05-01 00:00"))
+
+        # 幂等：再跑一次不应该再动任何行
+        again, _ = self._run()
+        self.assertEqual(again, 0, "记账 key 应该挡住第二次平移")
+        self.assertEqual(self._occurred(ui_row), expected)
+
+    def test_holdings_since_uses_same_rule(self):
+        from app.database import engine
+
+        offset = datetime.now().astimezone().utcoffset()
+        if not offset:
+            self.skipTest("本机时区是 UTC，没有可校正的偏移")
+
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO light_holdings (category_id, holder_kind, quantity, since, created_at, updated_at) "
+                "VALUES (?, 'stock', 1, '2026-10-20 06:18:00.000000', "
+                "'2026-10-20 14:18:00.000000', '2026-10-20 14:18:00.000000')",
+                (self.category.id,),
+            )
+        self._run()
+        with engine.begin() as conn:
+            since = conn.exec_driver_sql("SELECT since FROM light_holdings").scalar()
+        expected = (datetime(2026, 10, 20, 6, 18) + offset).strftime("%Y-%m-%d %H:%M:%S")
+        self.assertEqual(since, expected)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)
