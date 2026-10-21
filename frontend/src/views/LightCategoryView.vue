@@ -19,7 +19,7 @@ import LightOpeningDialog from '@/components/LightOpeningDialog.vue'
 import { apiMessage, lightApi } from '@/api'
 import { appState } from '@/stores/app'
 import type { LightCategory, LightHolding, LightMovement, LightMovementPage, LightOrigin } from '@/types'
-import { formatDateTime, orDash } from '@/utils/format'
+import { formatBusinessTime, formatDate, formatDateTime, orDash, sameCalendarDay } from '@/utils/format'
 import { holderIconName } from '@/utils/light'
 
 const route = useRoute()
@@ -232,6 +232,17 @@ function flowPipClass(op: string): string {
   return ''
 }
 
+/**
+ * 这条流水是"补录"的吗 —— 业务发生日与登记日不在同一天。
+ *
+ * 只用来决定**要不要把登记时刻摆出来**，不参与任何判断之外的逻辑：
+ * 当天登记的不显示（没歧义、也别啰嗦），跨天的显示，用户一眼能看出
+ * "这笔记的是 10/18 的事，10/21 才录进来"。
+ */
+function filedOnAnotherDay(row: LightMovement): boolean {
+  return !sameCalendarDay(row.occurred_at, row.created_at)
+}
+
 function flowIconName(op: string): string {
   switch (op) {
     case 'stock_in':
@@ -362,7 +373,15 @@ function flowIconName(op: string): string {
               </div>
               <div class="sub">
                 {{ holdingSub(row) }}
-                <template v-if="row.since"> · 起始于 {{ formatDateTime(row.since) }}</template>
+                <!--
+                  「起始于」会被读成"这条记录是什么时候建的"（用户 2026-10-21 的真实误读）。
+                  这里的 since 是**这段持有关系的业务开始日期**：只在关系建立时写一次，
+                  数量加减都不会改，归零后再建立才取新日期。
+                  所以文案用「自 … 起」，并且**只显示日期** —— 关系从"哪天"开始，
+                  时分没有业务意义；旧数据里那些 09:55 是 v2.9.10 及以前拿登记时刻
+                  补出来的假时分，不该摆在这里当"起始时刻"。
+                -->
+                <template v-if="row.since"> · <span class="since">自 {{ formatDate(row.since) }} 起</span></template>
               </div>
               <div v-if="category.active" class="acts">
                 <button
@@ -406,9 +425,9 @@ function flowIconName(op: string): string {
               </template>
             </el-table-column>
 
-            <el-table-column label="起始时间" width="150">
+            <el-table-column label="起始日期" width="150">
               <template #default="{ row }">
-                <span v-if="row.since" class="date">{{ formatDateTime(row.since) }}</span>
+                <span v-if="row.since" class="date">{{ formatDate(row.since) }}</span>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
@@ -536,7 +555,7 @@ function flowIconName(op: string): string {
                 <span class="op">{{ row.op_label }}</span>
                 <span class="pill" :class="row.origin">{{ originTag(row.origin).label }}</span>
                 <span v-if="row.corrects_id" class="pill fix">冲正 #{{ row.corrects_id }}</span>
-                <span class="when">{{ formatDateTime(row.occurred_at) }} · {{ orDash(row.operator) }}</span>
+                <span class="when">发生 {{ formatBusinessTime(row.occurred_at) }} · {{ orDash(row.operator) }}</span>
               </div>
               <div class="path">
                 <span class="frm" :class="{ dim: !row.from_holder.display }">
@@ -555,6 +574,15 @@ function flowIconName(op: string): string {
                       ? '历史导入只用于追溯，不计入当前库存与持有，不需要冲正。'
                       : '这条没有机械冲正 —— 如果记错了，请用对应的操作更正（误报损可用「调整（盘盈）」把实物重新登记进库存）。'
                   }}
+                </span>
+                <!--
+                  「发生」与「登记于」是两件事：
+                  occurred_at 是业务上哪天发生的（可补录成过去），
+                  created_at 是这条记录什么时候录进系统的（永远是当时）。
+                  只在两者不是同一天时显示 —— 当天登记本来就没歧义，不必每行都念一遍。
+                -->
+                <span v-if="filedOnAnotherDay(row)" class="filed">
+                  登记于 {{ formatDateTime(row.created_at) }}
                 </span>
                 <button v-if="row.can_reverse" class="lk" @click="reverse(row)">
                   <AppIcon name="undo" :size="13" />冲正
@@ -790,6 +818,10 @@ h1 {
   color: var(--text-2);
   margin-top: 3px;
   line-height: 1.6;
+}
+/* 「自 2026/10/18 起」要整体换行，别在日期中间断开（卡片窄，很容易拆成两行） */
+.hold-card .sub .since {
+  white-space: nowrap;
 }
 .hold-card .acts {
   margin-top: 7px;
@@ -1046,6 +1078,15 @@ h1 {
   min-width: 200px;
   color: var(--text-3);
   font-size: 12.5px;
+}
+/* 「登记于 …」：补录的流水才出现，靠右且比备注更弱，不抢业务时间的位置 */
+.flow-body .filed {
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--bg-soft);
 }
 .flow-loading {
   padding: 26px 0;

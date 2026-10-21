@@ -606,11 +606,17 @@ async function submit() {
   try {
     /*
       ⚠️ **不要 `new Date(...).toISOString()`**。它输出的是 UTC（带 Z），
-      后端会把它当成本地时间存进去 —— 东八区就慢 8 小时，轻资产「起始于」
+      后端会把它当成本地时间存进去 —— 东八区就慢 8 小时，轻资产「起始」
       和审计日志对不上（v2.9.8 事故）。
-      这里直接拼本地 naive 字符串：日期来自选择器（YYYY-MM-DD），时间取当前时分。
+      这里直接拼本地 naive 字符串：日期来自选择器（YYYY-MM-DD）。
+
+      ⚠️ **时分一律记 00:00，不要拿"点保存那一刻"补上去**。
+      这个入口只让用户选到天，业务粒度就是天；以前用 `timeNow()` 补时分，
+      补录 10/20 的账会写成「10/20 09:55」—— 09:55 是今天点保存的时刻，
+      一个昨天并不存在的业务时刻。用户拿它对上登记时间，自然以为整串都是登记时间。
+      「哪天发生的」和「哪天录进系统的」是两件事，后者在 created_at 里，界面另处展示。
     */
-    const occurred = occurredAt.value ? `${occurredAt.value}T${timeNow()}:00` : null
+    const occurred = occurredAt.value ? `${occurredAt.value}T00:00:00` : null
     let result: LightMovementResult
     if (isReplace.value) {
       if (fromRefId.value === null) {
@@ -659,12 +665,6 @@ async function submit() {
   } finally {
     saving.value = false
   }
-}
-
-/** 日期输入只给到天，时间补当前时分，让"补登昨天的账"有个合理钟点 */
-function timeNow(): string {
-  const d = new Date()
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 </script>
 
@@ -847,6 +847,7 @@ function timeNow(): string {
             placeholder="默认今天"
             style="width: 100%"
           />
+          <div class="tip">业务上哪天发生的（只到天）；录进系统的时间另记</div>
         </div>
         <div class="field">
           <label class="lbl">操作人</label>

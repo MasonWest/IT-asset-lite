@@ -312,9 +312,25 @@ def to_movement_out(db: Session, movement: LightMovement) -> LightMovementOut:
     )
 
 
+def format_business_date(value: Optional[datetime]) -> str:
+    """业务时间的**导出/展示口径**：只到天的不带时分。
+
+    轻资产的登记入口只让用户选到「天」，`occurred_at` 的时分记 `00:00`。
+    导出 Excel 时若照 `%Y-%m-%d %H:%M` 打，会写出一串 `2026-10-20 00:00` ——
+    看起来像"半夜发生的"，实际只是"没录时分"。真有分秒的记录（历史导入、
+    将来的精确入口）照常带时分，所以这里不能用"一律截到天"糊过去。
+    """
+    if value is None:
+        return ""
+    if value.hour == 0 and value.minute == 0 and value.second == 0:
+        return value.strftime("%Y-%m-%d")
+    return value.strftime("%Y-%m-%d %H:%M")
+
+
 __all__ = [
     "can_reverse",
     "category_label",
+    "format_business_date",
     "to_category_out",
     "to_holder_out",
     "to_holding_out",

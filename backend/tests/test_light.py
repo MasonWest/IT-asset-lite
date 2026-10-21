@@ -124,12 +124,12 @@ class LightTestBase(unittest.TestCase):
     def move(self, category: LightCategory, op: str, *, frm: HolderRef | None = None,
              to: HolderRef | None = None, quantity: int = 1, origin: str = LightOrigin.MANUAL,
              operator: str | None = "tester", request_id: str | None = None,
-             note: str | None = None) -> LightMovement:
+             note: str | None = None, occurred_at: datetime | None = None) -> LightMovement:
         movement = light_service.record_operation(
             self.db, category=category, op=op,
             from_ref=frm or HolderRef(), to_ref=to or HolderRef(),
             quantity=quantity, origin=origin, operator=operator,
-            request_id=request_id, note=note,
+            request_id=request_id, note=note, occurred_at=occurred_at,
         )
         self.db.commit()
         return movement
@@ -288,6 +288,136 @@ class TestQuantityModel(LightTestBase):
             to=HolderRef(kind=LightHolderKind.USER, user="张三"), quantity=1,
         )
         self.assertIn("库房A", detail)
+
+
+class TestHoldingSince(LightTestBase):
+    """`holdings.since` = **一段连续持有关系的开始日期**（2026-10-21 定稿的口径）。
+
+    它回答"这东西从什么时候起在这个位置 / 在这个人手上"，不是"最近一次加货是哪天"。
+    三条规则，全部在这里钉住：
+
+    1. 行一旦建立，数量**怎么加都不改** `since`；
+    2. 减到 0 → 删行（关系结束）；
+    3. 之后重新建立 → 取**新的**发生日期。
+
+    以前 `apply_holding_delta` 里有一句 `if delta > 0: row.since = when`，
+    于是"起始"被悄悄改写成"最近一次加货"，库存从 2 件补到 12 件、
+    界面上的起始日期反而往前跳（实测 10/20 → 10/18）。
+    """
+
+    def holding(self, category: LightCategory, ref: HolderRef):
+        return light_service.find_holding(self.db, category.id, ref)
+
+    def since_of(self, category: LightCategory, ref: HolderRef) -> datetime:
+        row = self.holding(category, ref)
+        assert row is not None, f"{ref} 没有持有记录"
+        return row.since
+
+    # --- 库存 --- #
+    def test_stock_second_intake_keeps_first_date(self):
+        category = self.make_category("键鼠")
+        stock = STOCK()
+
+        self.move(category, LightOp.STOCK_IN, to=stock, quantity=5,
+                  occurred_at=datetime(2026, 10, 1, 0, 0))
+        self.assertEqual(self.since_of(category, stock), datetime(2026, 10, 1, 0, 0))
+
+        # 第二次入库（更晚的日期、更大的量）：起始日期不能跟着走
+        self.move(category, LightOp.STOCK_IN, to=stock, quantity=10,
+                  occurred_at=datetime(2026, 10, 18, 0, 0))
+        self.assertEqual(self.qty(category, stock), 15)
+        self.assertEqual(self.since_of(category, stock), datetime(2026, 10, 1, 0, 0))
+
+    # --- 个人持有 --- #
+    def test_user_second_allocation_keeps_first_date(self):
+        category = self.make_category("键鼠")
+        stock, user = STOCK(), HolderRef(kind=LightHolderKind.USER, user="员工A")
+        self.move(category, LightOp.STOCK_IN, to=stock, quantity=10,
+                  occurred_at=datetime(2026, 10, 1, 0, 0))
+
+        self.move(category, LightOp.ALLOCATE, frm=stock, to=user,
+                  occurred_at=datetime(2026, 10, 5, 0, 0))
+        self.assertEqual(self.since_of(category, user), datetime(2026, 10, 5, 0, 0))
+
+        # 同一人再领一套：关系从 10/5 就开始了，不该被 10/20 覆盖
+        self.move(category, LightOp.ALLOCATE, frm=stock, to=user,
+                  occurred_at=datetime(2026, 10, 20, 0, 0))
+        self.assertEqual(self.qty(category, user), 2)
+        self.assertEqual(self.since_of(category, user), datetime(2026, 10, 5, 0, 0))
+
+    # --- 机器安装 --- #
+    def test_asset_second_attach_keeps_first_date(self):
+        category = self.make_category("内存条")
+        asset = self.make_asset("A100-01-00001")
+        stock = STOCK()
+        ref = HolderRef(kind=LightHolderKind.ASSET, ref_id=asset.id)
+
+        self.move(category, LightOp.STOCK_IN, to=stock, quantity=4,
+                  occurred_at=datetime(2026, 9, 1, 0, 0))
+        self.move(category, LightOp.ATTACH, frm=stock, to=ref,
+                  occurred_at=datetime(2026, 9, 10, 0, 0))
+        self.assertEqual(self.since_of(category, ref), datetime(2026, 9, 10, 0, 0))
+
+        # 同一台机器再加装一根：装机关系仍从 9/10 起
+        self.move(category, LightOp.ATTACH, frm=stock, to=ref,
+                  occurred_at=datetime(2026, 10, 2, 0, 0))
+        self.assertEqual(self.qty(category, ref), 2)
+        self.assertEqual(self.since_of(category, ref), datetime(2026, 9, 10, 0, 0))
+
+    # --- 减少不动起始 --- #
+    def test_reducing_quantity_does_not_touch_since(self):
+        category = self.make_category("键鼠")
+        stock, user = STOCK(), HolderRef(kind=LightHolderKind.USER, user="员工B")
+        self.move(category, LightOp.STOCK_IN, to=stock, quantity=5,
+                  occurred_at=datetime(2026, 10, 1, 0, 0))
+        self.move(category, LightOp.ALLOCATE, frm=stock, to=user, quantity=3,
+                  occurred_at=datetime(2026, 10, 5, 0, 0))
+
+        self.move(category, LightOp.RETURN, frm=user, to=stock, quantity=1,
+                  occurred_at=datetime(2026, 10, 20, 0, 0))
+        self.assertEqual(self.qty(category, user), 2)
+        self.assertEqual(self.since_of(category, user), datetime(2026, 10, 5, 0, 0))
+
+    # --- 归零 → 删行 → 重建取新日期 --- #
+    def test_zero_then_restock_starts_a_new_relation(self):
+        category = self.make_category("键鼠")
+        stock, user = STOCK(), HolderRef(kind=LightHolderKind.USER, user="员工C")
+        self.move(category, LightOp.STOCK_IN, to=stock, quantity=3,
+                  occurred_at=datetime(2026, 9, 1, 0, 0))
+        self.move(category, LightOp.ALLOCATE, frm=stock, to=user, quantity=3,
+                  occurred_at=datetime(2026, 9, 10, 0, 0))
+
+        # 全还回去：持有行被删掉（不留"0 件的记录"）
+        self.move(category, LightOp.RETURN, frm=user, to=stock, quantity=3,
+                  occurred_at=datetime(2026, 9, 20, 0, 0))
+        self.assertIsNone(self.holding(category, user))
+        self.assertEqual(self.qty(category, user), 0)
+
+        # 再领一次：这是**新的一段关系**，起始日期取这次的发生日期
+        self.move(category, LightOp.ALLOCATE, frm=stock, to=user,
+                  occurred_at=datetime(2026, 10, 8, 0, 0))
+        self.assertEqual(self.since_of(category, user), datetime(2026, 10, 8, 0, 0))
+
+    # --- 期初确认重做不推翻已建立的关系 --- #
+    def test_repeated_opening_does_not_move_since(self):
+        category = self.make_category("键鼠")
+        stock = STOCK()
+        light_service.apply_opening(
+            self.db, category=category,
+            entries=[(stock, 4)], operator="tester",
+            occurred_at=datetime(2026, 9, 1, 0, 0),
+        )
+        self.db.commit()
+        self.assertEqual(self.since_of(category, stock), datetime(2026, 9, 1, 0, 0))
+
+        light_service.apply_opening(
+            self.db, category=category,
+            entries=[(stock, 6)], operator="tester",
+            occurred_at=datetime(2026, 10, 15, 0, 0),
+        )
+        self.db.commit()
+        self.assertEqual(self.qty(category, stock), 10)
+        self.assertEqual(self.since_of(category, stock), datetime(2026, 9, 1, 0, 0))
 
 
 class TestAssetAndStation(LightTestBase):
@@ -467,12 +597,12 @@ class TestStationLightGroups(LightTestBase):
         )
 
     def test_user_with_no_station_lands_nowhere(self):
-        """人不在任何点位上（李明媚那种）→ 推不出来，不许硬塞。"""
+        """人不在任何点位上（员工H那种）→ 推不出来，不许硬塞。"""
         kb = self.make_category("键鼠套装")
         w23 = self.make_station("W23", user="张三")
         self.move(kb, LightOp.STOCK_IN, to=STOCK(), quantity=2)
         self.move(kb, LightOp.ALLOCATE, frm=STOCK(),
-                  to=HolderRef(kind=LightHolderKind.USER, user="李明媚"), quantity=1)
+                  to=HolderRef(kind=LightHolderKind.USER, user="员工H"), quantity=1)
         self.assertEqual(self._qty(w23, "via_users"), 0)
 
     def test_placeholder_user_name_is_not_an_owner(self):
@@ -1005,6 +1135,44 @@ class TestApi(LightTestBase):
         res = self.client.get("/api/light/export")
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.content.startswith(b"PK"))  # xlsx 就是 zip
+
+    def test_export_separates_business_date_from_filed_time(self):
+        """导出里「发生日期」不带假 00:00，「登记时间」保留真实时刻。
+
+        补录历史日期是常态（Excel 台账迁移过来的账），两列合成一列
+        就再也看不出"这笔是事后补的"——那正是对账时要盯的东西。
+        """
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        cid = self.client.post("/api/light/categories", json={"name": "转接头", "unit": "个"}).json()["id"]
+        self.client.post("/api/light/movements", json={
+            "category_id": cid, "op": "stock_in", "from_ref": {"kind": "none"},
+            "to_ref": {"kind": "stock"}, "quantity": 2,
+            "occurred_at": "2026-10-19T00:00:00",
+        })
+        res = self.client.get("/api/light/export")
+        self.assertEqual(res.status_code, 200)
+
+        wb = load_workbook(BytesIO(res.content))
+        flow = wb["流转流水"]
+        header = [c.value for c in flow[1]]
+        self.assertEqual(header[:2], ["发生日期", "登记时间"], f"列头不对：{header}")
+        first = [c.value for c in flow[2]]
+        self.assertEqual(first[0], "2026-10-19", f"纯日期记录不该带 00:00：{first[0]}")
+        self.assertRegex(first[1], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$", "登记时间要保留真实时刻")
+
+        holding = wb["当前分配"]
+        self.assertIn("起始日期", [c.value for c in holding[1]])
+
+    def test_format_business_date_keeps_real_time(self):
+        """真有分秒的记录不能被截断 —— 这是"别一刀切"的反向断言。"""
+        from app.services.light_serialize import format_business_date
+
+        self.assertEqual(format_business_date(datetime(2026, 10, 20, 0, 0)), "2026-10-20")
+        self.assertEqual(format_business_date(datetime(2026, 10, 20, 14, 18)), "2026-10-20 14:18")
+        self.assertEqual(format_business_date(None), "")
 
 
 class TestLocalTimeContract(LightTestBase):

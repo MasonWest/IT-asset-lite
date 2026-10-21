@@ -445,6 +445,37 @@ export function formatDateTime(value?: string | null): string {
   return raw.slice(0, 16).replace(/-/g, '/')
 }
 
+/**
+ * **业务时间**：只精确到天的记录只显示日期，真有分秒的才显示分秒。
+ *
+ * ## 为什么需要它（2026-10-21）
+ *
+ * 轻资产的登记入口只让用户选到「天」，后端把 `occurred_at` 的时分记成 `00:00`。
+ * 若一律用 `formatDateTime`，界面上会出现 `2026/10/20 00:00` —— 一个不存在的
+ * 半夜时刻，反而比只写日期更像"精确时间"。
+ *
+ * 判据就是"时分秒是否全 0"：`00:00` = 这条记录**没有业务时刻**，只到天。
+ * ⚠️ 它不区分"真的是 0 点发生的"和"没录时分" —— 现实里没人凌晨 0 点整发放配件，
+ * 而误判的代价只是少显示两个 0，不会改数据、也不会丢日期。
+ * ⚠️ **不要反向使用**：不能用它判断"这条记录是不是历史补录"，
+ * 补录在发生当天的记录看起来和正常登记一样。
+ */
+export function formatBusinessTime(value?: string | null): string {
+  if (!value) return '—'
+  const raw = value.replace('T', ' ')
+  const time = raw.slice(11, 19)
+  if (!time || time === '00:00:00' || time === '00:00') {
+    return raw.slice(0, 10).replace(/-/g, '/')
+  }
+  return raw.slice(0, 16).replace(/-/g, '/')
+}
+
+/** 只比"哪一天"：2026-10-20T23:59:59 与 2026-10-20T00:00:00 视为同一天 */
+export function sameCalendarDay(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false
+  return a.replace('T', ' ').slice(0, 10) === b.replace('T', ' ').slice(0, 10)
+}
+
 /** 只要月日时分：09/23 09:37（时间线里省地方） */
 export function formatShortDateTime(value?: string | null): string {
   if (!value) return '—'

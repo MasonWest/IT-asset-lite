@@ -885,7 +885,7 @@ def export_light(
 
     unit_of = {c.id: c.unit for c in categories}
     holding_rows: list[list] = [[
-        "品类", "品牌规格", "数量", "单位", "持有类型", "持有位置", "使用环境", "起始时间", "备注",
+        "品类", "品牌规格", "数量", "单位", "持有类型", "持有位置", "使用环境", "起始日期", "备注",
     ]]
     for c in categories:
         label = " ".join(x for x in (c.brand, c.spec) if x)
@@ -894,7 +894,9 @@ def export_light(
             holding_rows.append([
                 c.name, label, h.quantity, c.unit, out.kind_label, out.display,
                 out.host_user or out.host_workstation_code or "",
-                h.since.strftime("%Y-%m-%d %H:%M") if h.since else "",
+                # 起始日期只到天：`since` 记的是"这段关系从哪天起"，时分没有业务意义；
+                # 旧数据里那些 09:55 是 v2.9.10 之前拿登记时刻补出来的假时分。
+                h.since.strftime("%Y-%m-%d") if h.since else "",
                 h.note or "",
             ])
 
@@ -904,13 +906,16 @@ def export_light(
     movements = list(
         db.execute(stmt.order_by(LightMovement.occurred_at.asc(), LightMovement.id.asc())).scalars().all()
     )
+    # 「发生」与「登记」分开两列：补录历史日期时两者会差好几天，
+    # 合成一列就再也看不出"这笔是事后补的"（对账时这正是最需要盯的）。
     movement_rows: list[list] = [[
-        "时间", "品类", "操作", "数量", "来源", "去向", "来源类型", "操作人", "备注", "记录来源",
+        "发生日期", "登记时间", "品类", "操作", "数量", "来源", "去向", "来源类型", "操作人", "备注", "记录来源",
     ]]
     name_of = {c.id: c.name for c in db.execute(select(LightCategory)).scalars().all()}
     for m in movements:
         movement_rows.append([
-            m.occurred_at.strftime("%Y-%m-%d %H:%M"),
+            light_serialize.format_business_date(m.occurred_at),
+            m.created_at.strftime("%Y-%m-%d %H:%M"),
             name_of.get(m.category_id, f"#{m.category_id}"),
             LightOp.label(m.op),
             m.quantity,
@@ -922,8 +927,11 @@ def export_light(
         ])
 
     content = spreadsheet.build_xlsx([
-        spreadsheet.Sheet("当前分配", holding_rows, widths=[22, 22, 8, 6, 12, 22, 18, 18, 24]),
-        spreadsheet.Sheet("流转流水", movement_rows, widths=[18, 22, 12, 8, 18, 18, 12, 12, 24, 12]),
+        spreadsheet.Sheet("当前分配", holding_rows, widths=[22, 22, 8, 6, 12, 22, 18, 16, 24]),
+        spreadsheet.Sheet(
+            "流转流水", movement_rows,
+            widths=[14, 18, 22, 12, 8, 18, 18, 12, 12, 24, 12],
+        ),
     ])
     filename = spreadsheet.safe_filename(
         f"轻资产台账-{datetime.now().strftime('%Y%m%d')}.xlsx", "light.xlsx"
