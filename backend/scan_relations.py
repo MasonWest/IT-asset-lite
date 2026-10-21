@@ -224,7 +224,7 @@ def _load(conn: sqlite3.Connection) -> tuple[list[dict], dict[int, list[dict]]]:
     ]
     assets_by_station: dict[int, list[dict]] = {}
     rows = conn.execute(
-        "SELECT id, asset_code, user_name, workstation_id FROM assets "
+        "SELECT id, asset_code, user_name, workstation_id, status FROM assets "
         "WHERE workstation_id IS NOT NULL ORDER BY asset_code"
     ).fetchall()
     for r in rows:
@@ -233,6 +233,10 @@ def _load(conn: sqlite3.Connection) -> tuple[list[dict], dict[int, list[dict]]]:
 
 
 def _classify(issue: rc.Issue, station_user: Optional[str]) -> str:
+    # 状态类结论跟"人名像不像地点"无关，先单独认掉；否则会被下面按 mismatch
+    # 判成「待人工判定」/「规则误报」—— 那两类说的都是人名对照的事。
+    if issue.rule == rc.RuleKey.ASSET_STATUS_VS_HOLDER:
+        return "状态与归属不符"
     if issue.status == rc.CheckStatus.MISMATCH:
         if looks_like_place(station_user):
             return "规则误报"
@@ -283,7 +287,9 @@ def scan(db_file: Path) -> dict[str, Any]:
         assets = assets_by_station.get(int(row["id"]), [])
         st = rc.StationInput(id=row["id"], code=row["code"], user_name=row["user_name"])
         inputs = [
-            rc.AssetInput(id=a["id"], code=a["asset_code"], user_name=a["user_name"])
+            rc.AssetInput(
+                id=a["id"], code=a["asset_code"], user_name=a["user_name"], status=a["status"]
+            )
             for a in assets
         ]
         result = rc.check_station(st, inputs)

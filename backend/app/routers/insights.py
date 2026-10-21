@@ -82,7 +82,13 @@ def _load_scan_inputs(db: Session):
 
     bound = list(
         db.execute(
-            select(Asset.id, Asset.asset_code, Asset.user_name, Asset.workstation_id)
+            select(
+                Asset.id,
+                Asset.asset_code,
+                Asset.user_name,
+                Asset.workstation_id,
+                Asset.status,
+            )
             .where(Asset.workstation_id.is_not(None))
             .order_by(Asset.workstation_id.asc(), Asset.asset_code.asc())
         ).all()
@@ -90,7 +96,8 @@ def _load_scan_inputs(db: Session):
     by_station: dict[int, list[rc.AssetInput]] = {}
     for r in bound:
         by_station.setdefault(int(r[3]), []).append(
-            rc.AssetInput(id=int(r[0]), code=r[1], user_name=r[2])
+            # `status` 是 v2.9.12 那条「状态 ↔ 归属」规则要的：不给就等于这条规则永远不响
+            rc.AssetInput(id=int(r[0]), code=r[1], user_name=r[2], status=r[4])
         )
 
     scans = [

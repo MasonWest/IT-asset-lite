@@ -77,7 +77,9 @@ def _to_inputs(station: Workstation, assets: list[Asset]) -> tuple[
             id=station.id, code=station.code, user_name=station.user_name
         ),
         [
-            relation_check.AssetInput(id=a.id, code=a.asset_code, user_name=a.user_name)
+            relation_check.AssetInput(
+                id=a.id, code=a.asset_code, user_name=a.user_name, status=a.status
+            )
             for a in assets
         ],
     )

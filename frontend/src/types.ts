@@ -719,8 +719,10 @@ export interface MapInventoryView {
 /**
  * 核对结论的四态。
  *
- * ⚠️ `mismatch` 是**待核对**，不是错误：它只说明"两边写的人不一样"，
+ * ⚠️ `mismatch` 是**待核对**，不是错误：它只说明"对不上"，
  * 至于哪边对、要不要改，由人判断。系统永远不会自己改一边。
+ * v2.9.12 起它也覆盖「状态与归属对不上」（`asset_status_vs_holder`）——
+ * 四态回答的都是"对不对得上"，不是"哪里不对"。
  */
 export type RelationCheckStatus = 'consistent' | 'mismatch' | 'unregistered' | 'undetermined'
 /** 展示权重：`review` 只是"值得看一眼"，没有任何 error 语义 */
@@ -905,10 +907,12 @@ export type InsightSeverity = 'ok' | 'info' | 'review'
 export type InsightSource = 'relation_check' | 'data_integrity'
 export type InsightRule =
   | 'station_vs_asset_user'
+  | 'asset_status_vs_holder'
   | 'asset_user_unregistered'
   | 'asset_unbound'
   | 'asset_on_deleted_station'
   | 'relation_exception_stale'
+  | 'light_user_station_ambiguous'
 
 export interface InsightSubject {
   kind: 'workstation' | 'asset'

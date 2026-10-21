@@ -56,6 +56,10 @@ export function severityMeta(severity: string): SeverityMeta {
 /** 每条规则的图标。让一堆规则卡能靠形状区分，而不是只能读字。 */
 const RULE_ICONS: Record<string, string> = {
   station_vs_asset_user: 'users',
+  // 「在库」的设备，人和工位都说它在被这个人用 —— 三样信息互相打架。
+  // 用双箭头（⇄）而不是警告三角：这条是「待核对」，不是「出错了」，
+  // 三角在视觉上就是"系统觉得你错了"，和 severity=review 的语义相冲。
+  asset_status_vs_holder: 'swap',
   asset_user_unregistered: 'help',
   asset_unbound: 'pin',
   asset_on_deleted_station: 'trash',

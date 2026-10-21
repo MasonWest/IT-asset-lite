@@ -35,7 +35,7 @@
 | --- | --- |
 | 找某个功能当初的设计稿 | [设计稿索引](design/README.md) |
 | 查迁移前的原文、或某段内容搬到哪去了 | [归档区说明](archive/README.md) |
-| 查每个版本改了什么 | [CHANGELOG](../CHANGELOG.md)（近 10 个版本；更早见文末「[更早的版本](../CHANGELOG.md#更早的版本)」） |
+| 查每个版本改了什么 | [CHANGELOG](../CHANGELOG.md)（当前系列 v2.9.x；更早见文末「[更早的版本](../CHANGELOG.md#更早的版本)」） |
 
 ---
 

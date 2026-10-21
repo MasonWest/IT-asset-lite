@@ -1,6 +1,6 @@
 # IT 资产管理系统 · 当前状态
 
-> | 版本基线 | **v2.9.11**（2026-10-21） |
+> | 版本基线 | **v2.9.12**（2026-10-21） |
 > | --- | --- |
 > | 这一篇是什么 | **状态入口**：现在是什么状态、改之前必须知道什么 |
 > | 不写什么 | 不记演进（→ [CHANGELOG](CHANGELOG.md)）、不记实施细节（→ [docs/dev/](docs/dev/README.md)）、不写用户操作步骤（→ [docs/user/](docs/user/)） |
@@ -78,10 +78,10 @@
 批量导入导出（模板 → 预览四桶 → 入库，列与导出一致）·
 台账**套装聚合视图**（把主机和它挂的显示器合并成一行看，只换看法不动数据）·
 **点位与资产空间地图**（点位 CRUD / 拖动攒批保存 / 资产挂靠 / JSON 导入 / 地图盘点视图 / 前端页面）·
-**关系核对（点位使用人 ↔ 设备使用人）**（每次现算的四态结论，就地呈现在点位侧栏与资产行上，
+**关系核对（点位使用人 ↔ 设备使用人 / 设备状态 ↔ 归属）**（每次现算的四态结论，就地呈现在点位侧栏与资产行上，
 差异可**记为「已确认的例外」**并带理由进审计、**关系一变自动失效**；只读扫描脚本 `backend/scan_relations.py`）·
 **迁移助手**（资产换点位 / 点位业务迁移，**预览 → 确认 → 执行**三步 + 预览令牌，单事务，从不碰地图坐标）·
-**问题中心**（`/insights`：把五条规则的问题**现算**成一份统一契约，每条带来源 / 原因 / 严重程度 /
+**问题中心**（`/insights`：把检查引擎跑出来的问题**现算**成一份统一契约，每条带来源 / 原因 / 严重程度 /
 可执行动作；已确认的例外不计入待办但仍可查看可撤销；**只读、不落库、没有"已解决"状态**）。
 
 > 用户视角的完整操作说明在 [docs/user/](docs/user/)；实现细节在 [docs/dev/](docs/dev/README.md)。
@@ -109,11 +109,11 @@
 
 ---
 
-## 五、关键设计决策（104 条）
+## 五、关键设计决策（105 条）
 
 **编号永不改**（代码注释、CHANGELOG、验收脚本都在引用「见决策 101」）。
 完整内容按主题分 10 册，见 [docs/dev/decisions/](docs/dev/decisions/README.md)；
-其中最贵的 **28 条"约束型"（不许这么改）全文另存 [invariants.md](docs/dev/invariants.md)**。
+其中最贵的 **29 条"约束型"（不许这么改）全文另存 [invariants.md](docs/dev/invariants.md)**。
 
 | # | 一句话 | 版本 | 主册 |
 | --- | --- | --- | --- |
@@ -221,6 +221,7 @@
 | 103 | 一张卡片里的内容块要自己补横向内边距 —— `.panel`… | v2.9.8 | [ui-contract](docs/dev/decisions/ui-contract.md) |
 | 104 | 「图标 + 文字」的检查要扫两遍… | v2.9.9 | [ui-contract](docs/dev/decisions/ui-contract.md) |
 | 105 | 许可是 Apache-2.0… | v2.9.10 | [process](docs/dev/decisions/process.md) |
+| 106 | 状态不跟着位置 / 归属自动变；只多问一句「状态对不对得上」… | v2.9.12 | [inventory](docs/dev/decisions/inventory.md) |
 
 > 编号 **79 空缺**是历史遗留（全仓无引用），不补号以免打乱已有引用。
 
@@ -257,7 +258,7 @@
 | 决策按主题查 | [docs/dev/decisions/](docs/dev/decisions/README.md) |
 | 地图实现 / 前端契约 / 接口 / 验收 | [docs/dev/](docs/dev/README.md) |
 | 设计稿（时点快照） | [docs/design/](docs/design/README.md) |
-| 每个版本改了什么 | [CHANGELOG.md](CHANGELOG.md)（近 10 个版本；更早见文末「[更早的版本](CHANGELOG.md#更早的版本)」） |
+| 每个版本改了什么 | [CHANGELOG.md](CHANGELOG.md)（当前系列 v2.9.x；更早见文末「[更早的版本](CHANGELOG.md#更早的版本)」） |
 | 重构前的原文、搬迁对照表 | [docs/archive/](docs/archive/README.md) |
 
 > 改这个仓库的文档之前，先读 [docs/dev/maintenance.md](docs/dev/maintenance.md)：

@@ -6,7 +6,24 @@
 也有一个「使用人」。**这是两个不同的事实**（见 `models.Workstation.user_name`
 的说明），现实里可以不一致 —— 而不一致正是现场要找的信号。
 
-这个模块只做一件事：**把这两侧的名字比一遍，给出结构化结论**。
+这个模块做两件事，都只出结论、不动数据：
+
+1. **把两侧的名字比一遍**（`station_vs_asset_user`）；
+2. **看状态和归属是否自相矛盾**（`asset_status_vs_holder`，v2.9.12 新增）——
+   一台「在库」的设备，却挂在有人用的工位上、使用人还是同一个人。
+   三样信息里两样说「这人正在用它」。
+
+### 为什么第二条也在这里，而不是在 `issues.py` 里另算
+
+`issues.py` 的定位是"组装"，而**例外确认的唯一写入口在引擎侧**：
+`routers/relation_check.py::confirm_exception` 要先在 `check_station()` 的结果里
+**找得到**这条 issue，才肯记例外（找不到就 404）。
+
+规则只写在 `issues.py` 里 = 这条规则没有例外通道；想补通道就得再开一个写入口，
+于是"确认例外"这件事有两份实现（指纹校验、审计、设备履历各写一遍），迟早漂 ——
+这个项目在 `ownership.has_owner` 上已经踩过一次同样的坑。
+
+所以宁可让引擎多认识一个字段（`AssetInput.status`），也不复制一份例外写入。
 
 ## 三条铁律
 
@@ -33,6 +50,10 @@
 「无人使用的资产点位」在业务上很正常（`none_asset`：公共设备 / 备用机），
 把它一律判成红色错误，用户第一次用就会把这功能关掉。
 
+⚠️ `mismatch` 这个状态**两种规则共用**：「使用人对不上」和「状态与归属对不上」。
+四态回答的是"对不对得上"，状态说「在库」而位置和人说「这人在用」同样是"对不上"。
+共用它换来的是一处生效：例外按 `(rule, asset_id)` 挂、`review_count`、侧栏徽标都不用另开一条路。
+
 ## 谁在用它
 
 - `routers/relation_check.py` —— 接口层，负责把 DB 里的行取出来喂进来、
@@ -48,6 +69,15 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .ownership import has_owner
+
+#: 「在库」的状态值。与 `models.AssetStatus.IDLE` 是**同一个字面量**。
+#:
+#: ⚠️ 这里刻意不 `from ..models import AssetStatus`：那会把 `app.database` 一起拖进来
+#: （`models` 要 `Base`），于是 DB 路径在任何 import 到引擎的模块里就被固定下来 ——
+#: 实测会让 `tests/test_light.py` 的"必须连临时库"前提门直接崩（按字母序它排在后面）。
+#: 引擎的定位是「纯函数、零 IO」，不该背数据库的副作用。
+#: 两处字面量相等由 `tests/test_relation_check.py::TestStatusLiteral` 钉住，漂了会红。
+IDLE_STATUS = "idle"
 
 # --------------------------------------------------------------------------- #
 # 枚举（用类常量而不是 Enum：与项目其它地方一致，值是直接进 JSON 的字符串）
@@ -98,9 +128,12 @@ class RuleKey:
     """规则标识。前端按它决定怎么渲染 / 怎么挂例外。"""
 
     STATION_VS_ASSET_USER = "station_vs_asset_user"
+    #: 设备状态与它所在点位 / 归属自相矛盾（「在库」，但人和工位都指向同一个人）
+    ASSET_STATUS_VS_HOLDER = "asset_status_vs_holder"
 
     LABELS: dict[str, str] = {
         STATION_VS_ASSET_USER: "点位使用人 ↔ 设备使用人",
+        ASSET_STATUS_VS_HOLDER: "设备状态 ↔ 归属",
     }
 
 
@@ -126,6 +159,10 @@ class AssetInput:
     id: int
     code: str
     user_name: Optional[str] = None
+    #: 资产状态的字符串值（`models.AssetStatus`）。
+    #: ⚠️ 默认 `None` = **调用方没给状态** → 状态类规则一律不触发。
+    #: 「没数据」不等于「矛盾」：老调用方（只关心名字的扫描）不该因此多出一堆问题。
+    status: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -250,6 +287,30 @@ def asset_fingerprint(
     )
 
 
+def status_fingerprint(
+    station_id: int,
+    station_user: Optional[str],
+    asset: AssetInput,
+) -> str:
+    """「状态 ↔ 归属」这条关系的指纹。
+
+    ⚠️ 必须把 `status` 也放进来：用户把状态改成「在用」，矛盾就消失了、条目本身会没了；
+    但同一个 (点位, 设备) 上以后可能出现**另一次**矛盾，"当初那条例外还算不算数"
+    要按当时的状态判断，不能只按名字。编码进指纹的理由同 `asset_fingerprint`（id 会被复用）。
+    """
+    return _digest(
+        [
+            "status",
+            str(station_id),
+            (station_user or "").strip(),
+            str(asset.id),
+            asset.code,
+            (asset.user_name or "").strip(),
+            (asset.status or "").strip(),
+        ]
+    )
+
+
 def station_fingerprint(station: StationInput, assets: list[AssetInput]) -> str:
     """整个点位关系的指纹：点位使用人 + 每台设备的（id, 编码, 使用人）。
 
@@ -296,11 +357,37 @@ def pair_state(station_user: Optional[str], asset_user: Optional[str]) -> str:
     return CheckStatus.UNDETERMINED
 
 
+def status_conflict(
+    station_user: Optional[str], asset_user: Optional[str], asset_status: Optional[str]
+) -> bool:
+    """状态说「在库」，可工位和使用人都在同一个人身上 → 自相矛盾。
+
+    **只认这一种组合**，每排除一条都是为了压住误报（判据来自真库 151 台的矩阵）：
+
+    | 组合 | 报不报 | 理由 |
+    | --- | --- | --- |
+    | 在库 + 点位有人 + 设备使用人 = 点位使用人 | **报** | 人说"他在用"，状态说"它闲着" |
+    | 在库 + 点位无人 / 无点位 | 不报 | 空工位备用机、真库存，正是「在库」该有的样子 |
+    | 在用 + 无点位 | 不报 | 家具 / 摆件 / 移动办公设备的正常形态 |
+    | 在用 + 点位有人 + 设备没登记人 | 不报 | 已有 `asset_user_unregistered` 抓，别重复出题 |
+
+    真库里按这个判据跑：命中 10 台（5 套电脑，主机 + 显示器成对），误报 0。
+    换成"在库且有点位"会把另外 5 套摆在空工位上的同款套装全部误报 —— 误报率 100%。
+
+    `asset_status is None`（调用方没给状态）→ 一律不报。
+    """
+    if asset_status != IDLE_STATUS:
+        return False
+    if not has_owner(station_user) or not has_owner(asset_user):
+        return False
+    return (station_user or "").strip() == (asset_user or "").strip()
+
+
 # --------------------------------------------------------------------------- #
 # 主函数
 # --------------------------------------------------------------------------- #
 def check_station(station: StationInput, assets: list[AssetInput]) -> StationCheck:
-    """核对一个点位的「点位使用人 ↔ 设备使用人」。
+    """核对一个点位：**使用人对不对得上** + **状态与归属矛不矛盾**。
 
     **纯函数**：同样的输入永远给同样的输出，不读库、不写库、不看时钟。
     """
@@ -426,15 +513,55 @@ def check_station(station: StationInput, assets: list[AssetInput]) -> StationChe
             )
         )
 
+    # ---- 规则 4：状态是「在库」，人和工位却都说它在被这个人用 → 待核对 ----
+    # 判定只认 `status_conflict`（唯一实现），这里不重写判据。
+    status_conflicts = [
+        a for a in assets if status_conflict(station.user_name, a.user_name, a.status)
+    ]
+    for asset in status_conflicts:
+        asset_name = (asset.user_name or "").strip()
+        issues.append(
+            Issue(
+                rule=RuleKey.ASSET_STATUS_VS_HOLDER,
+                status=CheckStatus.MISMATCH,
+                severity=Severity.REVIEW,
+                scope=Scope.ASSET,
+                asset_id=asset.id,
+                title="「在库」的设备，人和工位都说它在用",
+                detail=(
+                    f"设备 {asset.code} 的状态是「在库」，却挂在点位 {station.code} 上；"
+                    f"这个点位归「{station_name}」使用，而这台设备的使用人也是「{asset_name}」"
+                    "—— 三样信息里两样说「这个人正在用它」。"
+                ),
+                suggestion=(
+                    "如果它确实在用，到设备详情点「领用」把状态改成「在用」；"
+                    "如果它是**备用机**、或者还没验收（东西在工位上、账上算库存），"
+                    "这条可以记为「例外」。"
+                    "系统**不会**替你改状态 —— 哪台真在用只有人知道。"
+                ),
+                fingerprint=status_fingerprint(station.id, station.user_name, asset),
+                subjects=[
+                    station_subject,
+                    Subject(
+                        kind="asset",
+                        id=asset.id,
+                        code=asset.code,
+                        user_name=asset.user_name,
+                    ),
+                ],
+            )
+        )
+
     # ---- 整体结论 ----
     if not assets:
         # 没有设备 = 没有可核对的对象。**不冒充"正常"**，也不报警。
         verdict = CheckStatus.UNDETERMINED
     else:
-        verdict = max(
-            (c.state for c in asset_checks),
-            key=lambda s: CheckStatus.RANK.get(s, 0),
-        )
+        states = [c.state for c in asset_checks]
+        # 状态矛盾也算一条"对不上"：否则会出现"徽标在报 N 条、卡片却说自己一致"的自相矛盾。
+        if status_conflicts:
+            states.append(CheckStatus.MISMATCH)
+        verdict = max(states, key=lambda s: CheckStatus.RANK.get(s, 0))
         if verdict == CheckStatus.CONSISTENT and both_blank:
             verdict = CheckStatus.UNDETERMINED
 

@@ -49,10 +49,27 @@ const emit = defineEmits<{
 
 const busy = ref(false)
 
-/** 需要人看一眼、且没有被有效例外压住的差异条数 */
+/**
+ * 状态类规则的 key（与后端 `relation_check.RuleKey.ASSET_STATUS_VS_HOLDER` 一致）。
+ * ⚠️ 它和"使用人对不上"共用 `status: 'mismatch'`（四态问的都是"对不对得上"），
+ * 但**措辞不能混**：说"使用人不一致"而事实是状态不对，用户会去改错东西。
+ */
+const STATUS_RULE = 'asset_status_vs_holder'
+
+/** 需要人看一眼、且没有被有效例外压住的**使用人**差异 */
 const openReviews = computed(() =>
-  (props.check?.issues ?? []).filter((i) => i.status === 'mismatch' && !i.suppressed),
+  (props.check?.issues ?? []).filter(
+    (i) => i.status === 'mismatch' && i.rule !== STATUS_RULE && !i.suppressed,
+  ),
 )
+
+/** 需要人看一眼、且没有被有效例外压住的**状态**矛盾（v2.9.12） */
+const openStatus = computed(() =>
+  (props.check?.issues ?? []).filter((i) => i.rule === STATUS_RULE && !i.suppressed),
+)
+
+/** 徽标数 = 两类合计（用户不关心是哪一类，先看总数） */
+const openIssues = computed(() => [...openReviews.value, ...openStatus.value])
 
 const hasExceptionNotice = computed(() =>
   (props.check?.issues ?? []).some((i) => i.exception && !i.exception.valid),
@@ -71,7 +88,7 @@ const settledCount = computed(
  * 只看 verdict 会让"已确认的差异"继续显示成未处理。
  */
 const fullySettled = computed(
-  () => settledCount.value > 0 && openReviews.value.length === 0 && !hasExceptionNotice.value,
+  () => settledCount.value > 0 && openIssues.value.length === 0 && !hasExceptionNotice.value,
 )
 
 /** 这块要不要展开内容 */
@@ -86,8 +103,15 @@ const summary = computed(() => {
   const c = props.check
   if (!c) return ''
   if (!c.applicable) return '这个点位还没有挂载设备，暂无可核对的关系'
-  if (openReviews.value.length) {
-    return `${openReviews.value.length} 处点位使用人与设备使用人不一致，需要核对`
+  if (openIssues.value.length) {
+    const parts: string[] = []
+    if (openReviews.value.length) {
+      parts.push(`${openReviews.value.length} 处点位使用人与设备使用人不一致`)
+    }
+    if (openStatus.value.length) {
+      parts.push(`${openStatus.value.length} 台设备状态与归属不符`)
+    }
+    return `${parts.join('，')}，需要核对`
   }
   // ⚠️ 必须排在 verdict 的 switch 之前：此时 verdict 仍是 mismatch，
   // 落进下面的 default 会说出「两侧都没有登记使用人」这种与事实相反的话。
@@ -181,7 +205,7 @@ async function revokeException(issue: RelationIssue) {
       <span class="rc-title">关系核对</span>
       <span v-if="loading" class="rc-loading">核对中…</span>
       <template v-else>
-        <span v-if="openReviews.length" class="rc-badge review">{{ openReviews.length }}</span>
+        <span v-if="openIssues.length" class="rc-badge review">{{ openIssues.length }}</span>
         <span v-else-if="check?.applicable && (check.verdict === 'consistent' || fullySettled)" class="rc-badge ok">
           {{ fullySettled ? '已确认' : '一致' }}
         </span>
@@ -297,6 +321,8 @@ async function revokeException(issue: RelationIssue) {
 .issue.info .issue-title { color: #475569; }
 .issue-tag {
   margin-left: auto; font-size: 10px; color: #b45309; font-weight: 600;
+  /* 标签自己不许折行：否则标题稍长一点，"差异（待核对）"会被挤成"差异（待核 / 对）" */
+  flex: none; white-space: nowrap;
 }
 .issue.info .issue-tag { color: #94a3b8; }
 .issue-detail { font-size: 11px; color: #475569; line-height: 1.75; margin-top: 5px; }

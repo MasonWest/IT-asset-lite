@@ -69,6 +69,7 @@
 | [business-awareness-roadmap.md](2026-10-insights/business-awareness-roadmap.md) | 部分实施 | 路线图提案：Phase 0–3 已落地（v2.5.0–v2.6.0），**Phase 4–5 没做** |
 | [issue-center-phase3.md](2026-10-insights/issue-center-phase3.md) | 已实施 v2.6.0 | 统一问题中心：哪些检查归它、`key` / `fingerprint` 怎么定、接口怎么给 |
 | [business-awareness-delivery.md](2026-10-insights/business-awareness-delivery.md) | 已实施 v2.5.0 | 那一轮交付了什么（关系核对引擎 / 迁移助手 / 数据质量扫描） |
+| [asset-status-consistency.md](2026-10-insights/asset-status-consistency.md) | 已实施 v2.9.12 | **状态**要不要跟点位使用人联动？结论是不自动改、只做组合校验（规则 `asset_status_vs_holder`）。含真库里 10 台矛盾设备的实测 |
 
 ### 图标（`2026-10-icons/`）
 

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -18,12 +19,27 @@ from app.services import issues as iss  # noqa: E402
 from app.services import relation_check as rc  # noqa: E402
 
 
-def scan(station_id: int, code: str, user: str | None, assets: list[tuple[int, str, str | None]]):
+def scan(
+    station_id: int,
+    code: str,
+    user: str | None,
+    assets: list[tuple],
+):
+    """`assets` 每项是 `(id, 编码, 使用人)` 或 `(id, 编码, 使用人, 状态)`。
+
+    状态是 v2.9.12 加的（「状态 ↔ 归属」规则要用）；不给 = 调用方不关心状态，
+    那条规则一律不响，所以老的 3 元组写法全部照旧有效。
+    """
+
+    def input_of(row):
+        aid, acode, auser, *rest = row
+        return rc.AssetInput(
+            id=aid, code=acode, user_name=auser, status=rest[0] if rest else None
+        )
+
     return iss.StationScan(
         station=rc.StationInput(id=station_id, code=code, user_name=user),
-        assets=tuple(
-            rc.AssetInput(id=aid, code=acode, user_name=auser) for aid, acode, auser in assets
-        ),
+        assets=tuple(input_of(a) for a in assets),
     )
 
 
@@ -148,6 +164,134 @@ class TestRules(unittest.TestCase):
         self.assertEqual(len(mismatch), 1)
         self.assertFalse(mismatch[0].handled)
         self.assertNotEqual(fresh, stale.fingerprint)
+
+
+class TestStatusVsHolder(unittest.TestCase):
+    """「在库」的设备挂在有人用的工位上，使用人还是同一个（v2.9.12）。
+
+    真库 151 台里命中 10 台（5 套电脑）。这条规则的价值全在**误报率**上：
+    整套「在库的电脑套装」有 10 套，只有工位已归人的那 5 套该报。
+    """
+
+    def _one(self, *assets, user="员工A", station_user="员工A", exceptions=()):
+        return iss.build_problems(
+            [scan(1, "W01", station_user, list(assets))], exceptions=exceptions
+        )
+
+    def test_idle_on_occupied_station_is_a_review_problem(self):
+        problems = self._one((10, "A-1", "员工A", "idle"))
+        self.assertEqual(len(problems), 1)
+        p = problems[0]
+        self.assertEqual(p.rule, iss.IssueRule.ASSET_STATUS_VS_HOLDER)
+        self.assertEqual(p.severity, rc.Severity.REVIEW)
+        self.assertEqual(p.source, iss.IssueSource.RELATION)
+        self.assertEqual(p.key, "asset_status_vs_holder:asset:10", "身份只随设备 id 变")
+        self.assertEqual(p.action_url, "/asset/10", "落点必须是能改状态的那一页")
+        self.assertIn("W01", p.detail)
+        self.assertIn("A-1", p.detail)
+
+    def test_action_url_is_whitelisted(self):
+        """`build_problems` 里生成 URL 就会断言白名单 —— 这里显式再钉一次。"""
+        p = self._one((10, "A-1", "员工A", "idle"))[0]
+        self.assertTrue(
+            any(re.match(pat, p.action_url) for pat in iss.ALLOWED_ACTION_PATTERNS)
+        )
+
+    def test_spare_machine_is_silent(self):
+        """⭐ 反向断言：空工位上的同款套装（两边都没人）报了就是 100% 误报。"""
+        self.assertEqual(self._one((10, "A-1", None, "idle"), station_user=None), [])
+        self.assertEqual(self._one((10, "A-1", None, "idle"), station_user="/"), [])
+
+    def test_in_use_is_silent(self):
+        self.assertEqual(self._one((10, "A-1", "员工A", "in_use")), [])
+
+    def test_no_status_is_silent(self):
+        self.assertEqual(self._one((10, "A-1", "员工A")), [])
+
+    def test_different_user_is_left_to_the_name_rule(self):
+        problems = self._one((10, "A-1", "员工B", "idle"))
+        self.assertEqual([p.rule for p in problems], [iss.IssueRule.STATION_VS_ASSET_USER])
+
+    def test_valid_exception_marks_handled(self):
+        fresh = self._one((10, "A-1", "员工A", "idle"))[0].fingerprint
+        exc = iss.ConfirmedException(
+            id=11,
+            rule=iss.IssueRule.ASSET_STATUS_VS_HOLDER,
+            workstation_id=1,
+            asset_id=10,
+            reason="备用机，人还没验收",
+            fingerprint=fresh,
+        )
+        problems = self._one((10, "A-1", "员工A", "idle"), exceptions=[exc])
+        self.assertEqual(len(problems), 1, "盖住了也仍然列着（能看见、能撤销）")
+        self.assertTrue(problems[0].handled)
+        self.assertEqual(problems[0].exception_reason, "备用机，人还没验收")
+        self.assertEqual(
+            iss.count_pending(problems), {rc.Severity.REVIEW: 0, rc.Severity.INFO: 0}
+        )
+
+    def test_exception_dies_when_the_whole_relation_changes(self):
+        """工位换了人、设备跟着换人、状态还在库 → 是**另一次**矛盾，旧例外不能盖住它。
+
+        注意场景的选法：只改设备使用人（不改点位使用人）时，两个名字就不相等了，
+        这条规则本身就不成立了 —— 那时问题整个消失，不该再冒"例外失效"（见下一个用例）。
+        要让"指纹变了但问题还在"，必须**两边一起换人**。
+        """
+        fresh = self._one((10, "A-1", "员工A", "idle"), station_user="员工A")[0].fingerprint
+        exc = iss.ConfirmedException(
+            id=12,
+            rule=iss.IssueRule.ASSET_STATUS_VS_HOLDER,
+            workstation_id=1,
+            asset_id=10,
+            reason="备用机",
+            fingerprint=fresh,
+        )
+        problems = self._one(
+            (10, "A-1", "员工B", "idle"), station_user="员工B", exceptions=[exc]
+        )
+        rules = [p.rule for p in problems]
+        self.assertIn(iss.IssueRule.RELATION_EXCEPTION_STALE, rules)
+        status_problems = [
+            p for p in problems if p.rule == iss.IssueRule.ASSET_STATUS_VS_HOLDER
+        ]
+        self.assertEqual(len(status_problems), 1)
+        self.assertFalse(status_problems[0].handled, "旧例外不许压住新矛盾")
+
+    def test_exception_goes_quiet_when_the_status_is_fixed(self):
+        """⭐ 用户照建议把状态改成「在用」= 做对了。这时**不许**再冒"你的例外失效了"。
+
+        这条是反向断言：没有它，把状态改对的用户会收到一条"提醒你去处理"，
+        而实际上什么都没剩 —— 这种噪音会让例外功能变得不敢用。
+        """
+        fresh = self._one((10, "A-1", "员工A", "idle"))[0].fingerprint
+        exc = iss.ConfirmedException(
+            id=13,
+            rule=iss.IssueRule.ASSET_STATUS_VS_HOLDER,
+            workstation_id=1,
+            asset_id=10,
+            reason="备用机",
+            fingerprint=fresh,
+        )
+        problems = self._one((10, "A-1", "员工A", "in_use"), exceptions=[exc])
+        self.assertEqual(problems, [])
+
+    def test_exception_is_rule_scoped(self):
+        """设备级例外挂在 (rule, asset_id) 上 —— 不能跨规则生效。"""
+        fresh = self._one((10, "A-1", "员工A", "idle"))[0].fingerprint
+        exc = iss.ConfirmedException(
+            id=14,
+            rule=iss.IssueRule.STATION_VS_ASSET_USER,  # 挂错规则
+            workstation_id=1,
+            asset_id=10,
+            reason="别的规则的理由",
+            fingerprint=fresh,
+        )
+        problems = self._one((10, "A-1", "员工A", "idle"), exceptions=[exc])
+        status_problems = [
+            p for p in problems if p.rule == iss.IssueRule.ASSET_STATUS_VS_HOLDER
+        ]
+        self.assertEqual(len(status_problems), 1)
+        self.assertFalse(status_problems[0].handled)
 
 
 class TestLightUserAmbiguity(unittest.TestCase):

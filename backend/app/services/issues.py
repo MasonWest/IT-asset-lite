@@ -71,6 +71,8 @@ class IssueRule:
 
     #: 点位使用人 ↔ 设备使用人（复用关系核对引擎的同一套判定）
     STATION_VS_ASSET_USER = rc.RuleKey.STATION_VS_ASSET_USER
+    #: 设备状态 ↔ 归属（「在库」，但点位有主、设备使用人也是同一个人）
+    ASSET_STATUS_VS_HOLDER = rc.RuleKey.ASSET_STATUS_VS_HOLDER
     #: 设备没登记使用人（点位有人）
     ASSET_USER_UNREGISTERED = "asset_user_unregistered"
     #: 资产没有点位
@@ -84,6 +86,7 @@ class IssueRule:
 
     ALL: tuple[str, ...] = (
         STATION_VS_ASSET_USER,
+        ASSET_STATUS_VS_HOLDER,
         ASSET_USER_UNREGISTERED,
         ASSET_UNBOUND,
         ASSET_ON_DELETED_STATION,
@@ -138,6 +141,17 @@ RULES: tuple[RuleSpec, ...] = (
         "需要人看一眼 —— **这不是错误**，也不该由系统替你改任何一侧。",
         action_label="去地图核对",
         action_url="/map?station={station_code}",
+    ),
+    RuleSpec(
+        rule=IssueRule.ASSET_STATUS_VS_HOLDER,
+        label="设备状态 ↔ 归属",
+        severity=Severity.REVIEW,
+        source=IssueSource.RELATION,
+        reason="这台设备的状态是「在库」，可它挂着有人用的工位、使用人也是那个人 ——"
+        "三样信息里两样说「这人正在用它」。"
+        "**这不是错误**：备用机、还没验收的机器都长这样；系统只负责说出来，不替你改状态。",
+        action_label="去核对状态",
+        action_url="/asset/{asset_id}",
     ),
     RuleSpec(
         rule=IssueRule.ASSET_USER_UNREGISTERED,
@@ -391,6 +405,47 @@ def build_problems(
                 )
             )
 
+        # --- 规则 1b：状态说「在库」，人和工位却都说它在被这个人用 ---
+        # 判定同样来自引擎（`check_station` 里那条 `asset_status_vs_holder`），
+        # 这里只负责装成 Problem + 叠例外，一个字都不重写判据。
+        spec_st = RULE_BY_KEY[IssueRule.ASSET_STATUS_VS_HOLDER]
+        for issue in result.issues:
+            if issue.rule != IssueRule.ASSET_STATUS_VS_HOLDER or issue.asset_id is None:
+                continue
+            asset = asset_by_id.get(issue.asset_id)
+            exc = exc_by_key.get(issue.exception_key)
+            handled = bool(exc and rc.exception_still_valid(exc.fingerprint, issue.fingerprint))
+            # 落点是**设备详情**：那里既有「领用」按钮（改状态），也有使用人 / 点位字段。
+            # 不用 /map?station= 是因为地图只能改归属，改不了状态 —— 会把人带到"看了也办不了事"的地方。
+            url = _action_url(spec_st, asset_id=issue.asset_id)
+            _assert_action_allowed(url, issue.rule)
+            problems.append(
+                Problem(
+                    key=problem_key(issue.rule, "asset", issue.asset_id),
+                    rule=issue.rule,
+                    severity=issue.severity,
+                    source=IssueSource.RELATION,
+                    reason=spec_st.reason,
+                    title=issue.title,
+                    detail=issue.detail,
+                    action_label=spec_st.action_label,
+                    action_url=url,
+                    subjects=[
+                        station_subject,
+                        Subject(
+                            kind="asset",
+                            id=issue.asset_id,
+                            code=asset.code if asset else "",
+                            user_name=asset.user_name if asset else None,
+                        ),
+                    ],
+                    fingerprint=issue.fingerprint,
+                    handled=handled,
+                    exception_id=exc.id if exc else None,
+                    exception_reason=exc.reason if exc else None,
+                )
+            )
+
         # --- 规则 2：点位有人、设备没登记使用人 → **拆到每台设备** ---
         # 引擎给的是点位级聚合（"这个点位有 3 台设备没登记"），但动作要落到单台设备上才点得动，
         # 所以这里按它给的**逐台结论**（`asset_checks`）展开。
@@ -484,8 +539,11 @@ def build_problems(
     spec5 = RULE_BY_KEY[IssueRule.RELATION_EXCEPTION_STALE]
     station_codes = {s.station.id: s.station.code for s in scans}
     for e in exc_rows:
-        if e.rule != IssueRule.STATION_VS_ASSET_USER:
-            continue  # 目前只有这一条规则会挂例外
+        if e.rule not in (
+            IssueRule.STATION_VS_ASSET_USER,
+            IssueRule.ASSET_STATUS_VS_HOLDER,
+        ):
+            continue  # 只有这两条规则会挂例外
         if e.workstation_id not in station_codes:
             # 所属点位已被删除 → **不报**。两个理由：
             #   ① 关系已经不存在了，这条例外不会"掩盖"任何新差异（它要防的就是那个）；
@@ -495,6 +553,12 @@ def build_problems(
             continue
         fresh_fp = fresh_by_station.get(e.workstation_id, {}).get((e.rule, int(e.asset_id)), "")
         if rc.exception_still_valid(e.fingerprint, fresh_fp):
+            continue
+        if e.rule == IssueRule.ASSET_STATUS_VS_HOLDER and not fresh_fp:
+            # 问题**整个消失了**（用户把状态改成「在用」/ 把使用人清空了）= 他照建议做对了。
+            # 这时候再报"你的例外失效了"纯粹是噪音：既没有新差异要核对，也没有东西被捂着。
+            # （使用人那条规则不这么做，是因为它的差异消失往往意味着"有人改了一侧"，
+            #   提醒去看一眼仍然有价值；状态的修正则是一次明确的、正面的动作。）
             continue
         code = station_codes.get(e.workstation_id)
         url = _action_url(spec5, station_code=code)
