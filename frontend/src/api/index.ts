@@ -64,6 +64,7 @@ import type {
   WorkstationUpdatePayload,
   FloorMap,
   FloorMapList,
+  FloorMapCreatePayload,
   FloorMapSavePayload,
   WorkstationBulkPayload,
   WorkstationBulkResult,
@@ -434,10 +435,23 @@ export const workstationApi = {
 export const floorMapApi = {
   list: () => get<FloorMapList>('/floor-maps'),
 
-  /** 默认（也是唯一）那张图。地图页与编辑器都读它。 */
-  default: () => get<FloorMap>('/floor-maps/default'),
+  /**
+   * 默认（也是唯一）那张图。地图页与编辑器都读它。
+   *
+   * `silent` 是给编辑器用的：空库时这里必然 404，而 404 在编辑器里**不是错误**，
+   * 是"还没建图"的正常空态（要显示「创建空白底图」按钮）。
+   * 不静默的话拦截器会先弹一条红条，编辑器再决定怎么展示 —— 用户会看到两条。
+   */
+  default: (silent = false) => get<FloorMap>('/floor-maps/default', undefined, silent),
 
   detail: (id: number) => get<FloorMap>(`/floor-maps/${id}`),
+
+  /**
+   * 新建一张空白平面图（只在一张图都没有时可用，已有图会 409）。
+   *
+   * 没有 `layout` 参数是刻意的：新建出来的图必须空，理由见后端同名 schema 的注释。
+   */
+  create: (payload: FloorMapCreatePayload = {}) => post<FloorMap>('/floor-maps', payload),
 
   /**
    * 保存整张图（覆盖 layout）。

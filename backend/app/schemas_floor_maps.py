@@ -72,3 +72,21 @@ class FloorMapSave(BaseModel):
         default=None, description="乐观锁：打开页面时看到的 updated_at；不带则跳过检查"
     )
     operator: Optional[str] = Field(default=None, max_length=64)
+
+
+class FloorMapCreate(BaseModel):
+    """新建一张**空白**平面图。
+
+    只收"画布多大、叫什么"，**刻意不收 `layout`** —— 允许调用方传图元，
+    就等于把 v2.3.0 那道闸（不往新用户库里塞别人公司的办公室）重新开了一半。
+    新建出来的图必须是空白的，内容只能由用户自己画。
+
+    尺寸默认与既有坐标语义一致（960×1320、网格 20）：点位坐标是按这个基准存的，
+    建一张别的尺寸的图会让现有点位/将来的点位对不齐。
+    """
+
+    name: Optional[str] = Field(default=None, max_length=64, description="默认「我的办公室」")
+    width: int = Field(default=960, ge=200, le=5000)
+    height: int = Field(default=1320, ge=200, le=5000)
+    grid: int = Field(default=20, ge=1, le=200)
+    operator: Optional[str] = Field(default=None, max_length=64)

@@ -575,6 +575,20 @@ export interface FloorMapSavePayload {
   operator?: string | null
 }
 
+/**
+ * 新建一张**空白**平面图。
+ *
+ * 刻意没有 `layout` 字段 —— 后端也不收。新建出来的图必须是空白的，
+ * 否则"不往新用户库里塞别人公司办公室"那条约束会从接口这头漏掉。
+ */
+export interface FloorMapCreatePayload {
+  name?: string | null
+  width?: number
+  height?: number
+  grid?: number
+  operator?: string | null
+}
+
 /** 批量生成点位的参数。与后端 `WorkstationBulkGenerate` 一一对应。 */
 export interface WorkstationBulkPayload {
   /** 生成总数（不是列数） */

@@ -24,6 +24,7 @@
           v-model="mapName"
           class="name-input"
           maxlength="128"
+          :disabled="needCreate"
           placeholder="平面图名称"
           @change="markDirtyByRename"
         />
@@ -38,12 +39,35 @@
       <button class="ed-btn ghost" :disabled="!editor.canRedo.value" title="重做 (Ctrl+Shift+Z)" @click="editor.redo()">
         <span class="ic">↷</span> 重做
       </button>
-      <button class="ed-btn primary" :disabled="saving || !hasUnsaved" @click="save">
+      <button class="ed-btn primary" :disabled="saving || needCreate || !hasUnsaved" @click="save">
         {{ saving ? '保存中…' : '保存' }}
       </button>
     </div>
 
-    <div class="ed-body">
+    <!--
+      空库：一张平面图都没有。**这不是错误页，是起点。**
+      v2.3.0 起真·空库不塞默认底图（不把本项目办公室的布局塞给新用户），
+      所以新 clone 的人必然先看到这一屏 —— 必须在这里给出「建一张空白底图」，
+      否则点位能建、底图永远画不出来（2026-10-27 在真实 clone 上实测到的死路）。
+    -->
+    <div v-if="needCreate" class="ed-empty">
+      <div class="ee-card">
+        <div class="ee-icon">▦</div>
+        <div class="ee-title">还没有平面图</div>
+        <p class="ee-text">
+          这套系统不会替你猜办公室长什么样 —— 底图得你自己画。
+          建一张空白底图（960 × 1320，网格 20），然后在左侧挑「地台 / 走道 / 房间 / 墙」摆上去。
+        </p>
+        <p class="ee-note">
+          点位坐标就是按这个尺寸存的，所以尺寸不在这里选 —— 选错了点位会对不齐。
+        </p>
+        <button class="ed-btn primary ee-btn" :disabled="creating" @click="createFloor">
+          {{ creating ? '创建中…' : '创建空白底图' }}
+        </button>
+      </div>
+    </div>
+
+    <div v-else class="ed-body">
       <!-- ── 左栏：新增图元 + 批量生成点位 + 图元列表 ── -->
       <aside class="ed-pane left">
         <div class="pane-head">新增图元</div>
@@ -258,6 +282,16 @@ const floorId = ref<number | null>(null)
 /** 乐观锁版本：打开页面时那次 GET 拿到的 updated_at */
 const serverVersion = ref<string | null>(null)
 
+/**
+ * 库里一张平面图都没有（GET /floor-maps/default 返回 404）。
+ *
+ * **这不是错误，是空态**。v2.3.0 起真·空库不塞默认底图（不把本项目办公室布局
+ * 塞给新用户），于是新 clone 的人第一次进来必然落到这里 —— 页面上必须给一个
+ * 「创建空白底图」按钮，否则底图永远画不出来（2026-10-27 实测确认过这条死路）。
+ */
+const needCreate = ref(false)
+const creating = ref(false)
+
 const mapName = ref('')
 const canvas = ref({ width: 960, height: 1320, grid: 20 })
 
@@ -317,10 +351,19 @@ watch(selectedShape, (shape) => {
 })
 
 // ── 载入 ────────────────────────────────────────────────────────────────
+/**
+ * 取 HTTP 状态码。拦截器已经把错误弹成 toast 了，但 404 在这里要当成空态处理，
+ * 所以 `floorMapApi.default(true)` 走静默，由这里自己分流。
+ */
+function statusOf(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } })?.response?.status
+}
+
 async function load() {
   loading.value = true
+  needCreate.value = false
   try {
-    const floor = await floorMapApi.default()
+    const floor = await floorMapApi.default(true)
     floorId.value = floor.id
     serverVersion.value = floor.updated_at
     mapName.value = floor.name
@@ -331,9 +374,40 @@ async function load() {
     await nextTick()
     fitCanvas()
   } catch (error) {
-    ElMessage.error(apiMessage(error))
+    if (statusOf(error) === 404) {
+      // 空库：换成"建第一张图"的空态，不弹错误 —— 这不是故障。
+      needCreate.value = true
+      floorId.value = null
+      serverVersion.value = null
+      serverName.value = ''
+      mapName.value = ''
+      editor.load(parseLayout(null))
+    } else {
+      ElMessage.error(apiMessage(error))
+    }
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 建一张空白底图，然后立刻按正常流程重新加载。
+ *
+ * 画布尺寸/网格**不给用户在这一步选**：点位坐标是按 960×1320、网格 20 存的，
+ * 这里开一个"随便填"的口子，只会让人建出一张和点位对不齐的图。
+ * 尺寸真要改，那是另一件事（现在也没有入口）。
+ */
+async function createFloor() {
+  if (creating.value) return
+  creating.value = true
+  try {
+    const floor = await floorMapApi.create({ operator: appState.operator })
+    await load()
+    ElMessage.success(`已建好空白底图「${floor.name}」，从左侧挑图元开始画`)
+  } catch (error) {
+    ElMessage.error(apiMessage(error))
+  } finally {
+    creating.value = false
   }
 }
 
@@ -484,10 +558,13 @@ function onCanvasUp() {
 // ── 图元操作 ────────────────────────────────────────────────────────────
 function addShape(kind: ShapeKind) {
   const id = editor.nextShapeId(kind)
-  // 放在画布中央（粗略），用户再拖
+  // 放在画布中央附近（粗略），用户再拖。
+  // 连续加多个时按数量错开一点（每次 2 格）：全部落在同一像素上，画布上只看得到一个，
+  // 而左栏列表已经写着"图元（2）"—— 用户会以为"我明明加了两个，怎么只画出来一个"。
+  const stagger = (editor.layout.value.shapes.length % 4) * canvas.value.grid * 4
   const cx = Math.round(canvas.value.width / 2 / canvas.value.grid) * canvas.value.grid
   const cy = Math.round(canvas.value.height / 2 / canvas.value.grid) * canvas.value.grid
-  const base: FloorShape = { id, kind, x: cx - 100, y: cy - 60 }
+  const base: FloorShape = { id, kind, x: cx - 100 + stagger, y: cy - 60 + stagger }
   if (kind === 'room') {
     Object.assign(base, { w: 200, h: 120, room: 'meet', name: '新房间' })
   } else if (kind === 'wall') {
@@ -676,6 +753,34 @@ onBeforeUnmount(() => {
 
 /* ── 三栏主体 ── */
 .ed-body { flex: 1; display: flex; min-height: 0; }
+
+/* ── 空库：还没有平面图（一个起点，不是错误页）─────────────────────────
+   刻意做成整块留白 + 单张卡片：这一屏只该有一个动作（建图），
+   旁边若还摆着"新增图元"面板，会让人以为可以先摆图元再建图。 */
+.ed-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ee-card {
+  width: 100%;
+  max-width: 460px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 30px 32px 28px;
+  text-align: center;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+.ee-icon { font-size: 26px; line-height: 1; color: #2f9e8f; margin-bottom: 12px; }
+.ee-title { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
+.ee-text { font-size: 13px; line-height: 1.75; color: #475569; margin: 0 0 10px; }
+.ee-note { font-size: 12px; line-height: 1.7; color: #94a3b8; margin: 0 0 18px; }
+.ee-btn { width: 100%; justify-content: center; height: 40px; font-size: 14px; }
 
 .ed-pane {
   width: 248px; flex: none; background: #fff;
