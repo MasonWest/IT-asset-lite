@@ -3090,8 +3090,21 @@ watch(selectedId, (id) => {
   transition: all 0.16s var(--ease);
   display: flex; justify-content: center; align-items: center;
 }
+/* 朝向 = 椅子在桌子的哪一侧。容器的 56px 高度**装不下**「椅15 + 桌38 + 椅15」= 68，
+   所以朝上的点位让整张卡片在容器内上移 16px：桌面从 top:15 提到 top:-1，
+   椅子紧贴桌面下沿（37~52）。代价是桌面溢出容器上边 1px（`.ws` 没设 overflow，正常显示）。
+
+   为什么上移到 -1 而不是别的数：上一排（朝下）的桌面下沿在容器内 53，
+   上一排容器 y 与本排 y 相差 62 → 两排桌面之间正好留 8px 缝 ——
+   现实中就是一张长桌对拼，但**不能贴死**：0px 会让两排看起来是一张桌子，
+   而且两张桌的边框会互相压边，反而显得脏。
+
+   ⛔ 旧值是 `top: 41`（41~56），与桌面 15~53 重叠 12px，而 `.chair` 的 z-index 1
+   低于 `.desk` 的 2 → 重叠部分被吃掉，朝上的椅子只剩 3px 细边（实测 20% 可见）。
+   那时候朝上的点位看起来"没有椅子"，就是这个数值没和桌面下沿对齐。 */
 .ws.facing-down .chair { top: 0; border-radius: 8px 8px 3px 3px; border-bottom: none; }
-.ws.facing-up .chair { top: 41px; border-radius: 3px 3px 8px 8px; border-top: none; }
+.ws.facing-up .desk { top: -1px; }
+.ws.facing-up .chair { top: 37px; border-radius: 3px 3px 8px 8px; border-top: none; }
 .ws .chair::after { content: ''; width: 14px; height: 3px; border-radius: 2px; background: #94a3b8; opacity: 0.6; }
 
 .ws .desk {

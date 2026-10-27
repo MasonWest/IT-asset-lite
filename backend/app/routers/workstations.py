@@ -70,6 +70,7 @@ from ..schemas_workstations import (
 )
 from ..services import floor_map_layout, light as light_service, ownership, workstation_importer
 from ..services import link_suggestions as link_suggestions_service
+from ..services import station_layout
 from ..services.audit import record_audit
 from ..services.events import record_event
 from ..services.serialize import to_asset_out
@@ -310,8 +311,14 @@ def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db
     排列规则：`i` 从 0 数，`row = i // cols`、`col = i % cols`，
     位置 = `(origin_x + col*step_x, origin_y + row*step_y)`。
 
-    朝向：`alternate` 时按**列**交替（`col % 2`），这样一列朝下、一列朝上 ——
-    面对面点位的真实形态。按行交替会变成"一排里左右乱转"，不像点位图。
+    朝向：`alternate` 时按**行**交替（`row % 2`）—— 一整排朝下、下一整排朝上。
+    这才是现实中"两排桌子对拼、面对面坐 8 个人"的形状：
+    `cols=4` + `count=8` 一次就出一组 4+4。
+
+    ⚠️ 2026-10-27 改：原先是按**列**（`col % 2`），生成结果是同一排里
+    左朝下、右朝上，像锯齿 —— 那样的朝向在现实的工位排布里不存在，
+    只是看起来"有变化"。真正的面对面是整排同向、两排相对。
+    （朝向本身仍然落库、不按行列推导 —— 见 `models.Facing` 的说明。）
 
     编码：整批先算出来再落库（不能边插边算，`_next_code` 查的是库里已有的）。
     分配真相在后端，`start_code` 只是一个"从哪儿起"的建议。
@@ -324,10 +331,7 @@ def bulk_generate(payload: WorkstationBulkGenerate, db: Session = Depends(get_db
     for index, code in enumerate(codes):
         row = index // payload.cols
         col = index % payload.cols
-        if payload.facing == "alternate":
-            facing = Facing.DOWN if col % 2 == 0 else Facing.UP
-        else:
-            facing = Facing.UP if payload.facing == "up" else Facing.DOWN
+        facing = station_layout.resolve_bulk_facing(payload.facing, row)
 
         station = Workstation(
             code=code,
