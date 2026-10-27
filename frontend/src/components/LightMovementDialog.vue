@@ -106,6 +106,45 @@ const {
   onVisibleChange: onUserVisibleChange,
 } = useFreeTextOptions(() => userSuggestions.value)
 
+/**
+ * 「存放到哪里」的输入行为 —— 和上面那个**同一套**。
+ *
+ * ⚠️ 这里原来是 `<el-input list="light-location-suggestions">` 配原生 `<datalist>`。
+ * 后果不是"风格稍有不同"，而是浏览器会在输入框右边缘画一个**实心黑三角**
+ * （原生候选框指示器）：贴边框、零内边距、不跟主题、hover 不变色 ——
+ * 和同一个对话框里别的下拉（EP 的细灰 `el-select__caret`）放在一起，看着就像没画完。
+ * 2026-10-26 用户报障「后面那个下拉箭头怎么怪怪的」，说的就是它。
+ * 顺带它也只会**字面前缀**匹配，`W0` 出得来、`w0` 不一定。
+ */
+const {
+  options: locationOptions,
+  createLabel: locationCreateLabel,
+  onFilter: filterLocations,
+  reset: resetLocationQuery,
+  onVisibleChange: onLocationVisibleChange,
+} = useFreeTextOptions(() => locationSuggestions.value)
+
+/**
+ * 选完 / 清空后收口。两件事：
+ *   1. **截长度** —— `el-select` 没有 `maxlength`，而后端 `stock_location` 是 128 字符，
+ *      不截会把"填得下、存不进去"的锅留给 422；
+ *   2. 清关键字 —— 否则会出现「框里已经空了、候选还只剩一条」的错位（见 composable 的 `reset`）。
+ */
+function onLocationChange(value: string | null | undefined) {
+  toLocation.value = (value ?? '').slice(0, LOCATION_MAX)
+  resetLocationQuery()
+}
+
+/**
+ * 长度上限**必须截在新建项本身上**，不能只截 `@change` 收到的值。
+ *
+ * 只截 `@change` 会造出一个更糟的假象：选项 label 是 200 字、`v-model` 被截成 128 字，
+ * 于是 `el-select` 在候选里找不到等于 128 字的选项 → 选中后**框里变空白**
+ * （用户看到的是"填了却没存上"，比截断本身更像 bug）。实测踩过。
+ */
+const LOCATION_MAX = 128
+const locationCreate = computed(() => locationCreateLabel.value.slice(0, LOCATION_MAX))
+
 /** 资产 / 点位候选的远程搜索 */
 const holderCandidates = ref<LightHolderCandidate[]>([])
 const holderLoading = ref(false)
@@ -390,7 +429,7 @@ watch(
     // 带动作进来（行上的按钮 / 资产详情页"登记配件变动"）：**同步**落到表单。
     // 之前这段在 `loadSuggestions().then()` 里，要等两个候选接口回来才切屏 ——
     // 于是"直达表单"会先闪一下"选业务动作"那一屏，肉眼看得到。
-    // `chooseAction` 不依赖候选（候选只喂自由文本的 datalist），没理由等它。
+    // `chooseAction` 不依赖候选（候选只喂自由文本的下拉），没理由等它。
     if (props.presetActionKey) {
       const action = ACTIONS.find((a) => a.key === props.presetActionKey)
       if (action) {
@@ -799,12 +838,26 @@ async function submit() {
         class="field"
       >
         <label class="lbl">存放到哪里（选填）</label>
-        <el-input
+        <el-select
           v-model="toLocation"
-          maxlength="128"
           placeholder="选填，如：3 楼库房A柜 / 前台抽屉 / W01"
-          list="light-location-suggestions"
-        />
+          filterable
+          default-first-option
+          clearable
+          style="width: 100%"
+          :filter-method="filterLocations"
+          :reserve-keyword="false"
+          @change="onLocationChange"
+          @visible-change="onLocationVisibleChange"
+        >
+          <el-option v-for="l in locationOptions" :key="l" :label="l" :value="l" />
+          <el-option
+            v-if="locationCreate"
+            :key="`__new__${locationCreate}`"
+            :label="locationCreate"
+            :value="locationCreate"
+          />
+        </el-select>
         <div class="tip">
           可以是自由描述，也可以填某个点位的编码。留空就是"没记录存放位置"的库存。
         </div>
@@ -879,10 +932,6 @@ async function submit() {
         </table>
       </div>
     </div>
-
-    <datalist id="light-location-suggestions">
-      <option v-for="l in locationSuggestions" :key="l" :value="l" />
-    </datalist>
 
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">取消</el-button>

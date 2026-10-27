@@ -22,6 +22,7 @@ import { ElMessage } from 'element-plus'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { apiMessage, lightApi } from '@/api'
+import { useFreeTextOptions } from '@/composables/useFreeTextOptions'
 import { appState } from '@/stores/app'
 import type { LightCategory, LightHolderCandidate, LightHolderKind, OpeningPreview } from '@/types'
 
@@ -48,6 +49,66 @@ const rows = ref<Row[]>([])
 
 const stockLocations = ref<string[]>([])
 const users = ref<string[]>([])
+
+/**
+ * 「库存位置 / 使用人」这两列是**自由文本**（值不来自字典表），但既有的一批值得能挑。
+ *
+ * ⚠️ 原来这两列都是 `<el-input list="…">` 配原生 `<datalist>`：浏览器会在框右边缘画一个
+ * **实心黑三角**（原生候选框指示器）—— 贴边框、零内边距、不跟主题、hover 不变色，
+ * 和同一行里「持有位置」那个真 `el-select` 挨着看，一眼就不对（2026-10-26 用户报障）。
+ * 而且原生候选框只按**字面前缀**匹配，打 `ygb` 出不来「员工B」，偏偏这是本项目选人的常规操作。
+ *
+ * 两套候选（位置 / 人名）各一个实例，**所有行共用**：同一时刻只有一个下拉在打字
+ * （点另一个输入框会先让前一个失焦收起），所以不需要按行拆实例。
+ * 这一点靠 `reset()` 兜底 —— 无论哪个收起，关键字都清掉，不会串到下一行去。
+ */
+const {
+  options: stockLocationOptions,
+  createLabel: stockLocationCreateLabel,
+  onFilter: filterStockLocations,
+  reset: resetStockLocationQuery,
+  onVisibleChange: onStockLocationVisibleChange,
+} = useFreeTextOptions(() => stockLocations.value)
+
+const {
+  options: openingUserOptions,
+  createLabel: openingUserCreateLabel,
+  onFilter: filterOpeningUsers,
+  reset: resetOpeningUserQuery,
+  onVisibleChange: onOpeningUserVisibleChange,
+} = useFreeTextOptions(() => users.value)
+
+/**
+ * 选完 / 清空后收口：截长度 + 清关键字。
+ * `el-select` 没有 `maxlength`，后端 `stock_location` 128 / `user` 64，
+ * 不截会把"填得下、存不进去"的锅留给 422。
+ *
+ * ⚠️ 真正的截断点在下面那两个 `*Create` computed 上 —— 只截这里会造出更糟的假象：
+ * 选项 label 还是全长、`v-model` 已被截短，EP 在候选里找不到对应项，
+ * **选中后框里变空白**（看着像"没存上"，比截断本身更像 bug）。实测踩过。
+ */
+const STOCK_LOCATION_MAX = 128
+const USER_NAME_MAX = 64
+const stockLocationCreate = computed(() => stockLocationCreateLabel.value.slice(0, STOCK_LOCATION_MAX))
+const openingUserCreate = computed(() => openingUserCreateLabel.value.slice(0, USER_NAME_MAX))
+
+function onStockLocationChange(row: Row, value: string | null | undefined) {
+  row.stockLocation = (value ?? '').slice(0, STOCK_LOCATION_MAX)
+  resetStockLocationQuery()
+}
+function onUserChange(row: Row, value: string | null | undefined) {
+  row.user = (value ?? '').slice(0, USER_NAME_MAX)
+  resetOpeningUserQuery()
+}
+
+/** 换持有类型 = 这一行的自由文本整列换掉，两套关键字一起清干净 */
+function onKindChange(row: Row) {
+  row.refId = null
+  row.user = ''
+  row.stockLocation = ''
+  resetStockLocationQuery()
+  resetOpeningUserQuery()
+}
 const candidates = ref<Record<number, LightHolderCandidate[]>>({})
 const loadingCandidates = ref<Record<number, boolean>>({})
 const preview = ref<OpeningPreview | null>(null)
@@ -219,25 +280,53 @@ async function submit() {
       <tbody>
         <tr v-for="row in rows" :key="row.key">
           <td>
-            <el-select v-model="row.kind" style="width: 100%" @change="row.refId = null; row.user = ''; row.stockLocation = ''">
+            <el-select v-model="row.kind" style="width: 100%" @change="onKindChange(row)">
               <el-option v-for="k in KIND_OPTIONS" :key="k.value" :value="k.value" :label="k.label" />
             </el-select>
           </td>
           <td>
-            <el-input
+            <el-select
               v-if="row.kind === 'stock'"
               v-model="row.stockLocation"
-              maxlength="128"
+              filterable
+              default-first-option
+              clearable
               placeholder="选填，如：3 楼库房A柜 / 前台抽屉 / W01"
-              list="light-opening-locations"
-            />
-            <el-input
+              style="width: 100%"
+              :filter-method="filterStockLocations"
+              :reserve-keyword="false"
+              @change="(v: string | null | undefined) => onStockLocationChange(row, v)"
+              @visible-change="onStockLocationVisibleChange"
+            >
+              <el-option v-for="l in stockLocationOptions" :key="l" :label="l" :value="l" />
+              <el-option
+                v-if="stockLocationCreate"
+                :key="`__new__${stockLocationCreate}`"
+                :label="stockLocationCreate"
+                :value="stockLocationCreate"
+              />
+            </el-select>
+            <el-select
               v-else-if="row.kind === 'user'"
               v-model="row.user"
-              maxlength="64"
-              placeholder="使用人姓名"
-              list="light-opening-users"
-            />
+              filterable
+              default-first-option
+              clearable
+              placeholder="姓名（可打拼音首字母）"
+              style="width: 100%"
+              :filter-method="filterOpeningUsers"
+              :reserve-keyword="false"
+              @change="(v: string | null | undefined) => onUserChange(row, v)"
+              @visible-change="onOpeningUserVisibleChange"
+            >
+              <el-option v-for="u in openingUserOptions" :key="u" :label="u" :value="u" />
+              <el-option
+                v-if="openingUserCreate"
+                :key="`__new__${openingUserCreate}`"
+                :label="openingUserCreate"
+                :value="openingUserCreate"
+              />
+            </el-select>
             <el-select
               v-else
               v-model="row.refId"
@@ -341,13 +430,6 @@ async function submit() {
         </tbody>
       </table>
     </div>
-
-    <datalist id="light-opening-locations">
-      <option v-for="l in stockLocations" :key="l" :value="l" />
-    </datalist>
-    <datalist id="light-opening-users">
-      <option v-for="u in users" :key="u" :value="u" />
-    </datalist>
 
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">取消</el-button>
