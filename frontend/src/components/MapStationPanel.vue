@@ -706,7 +706,7 @@ function dash(v: string | null | undefined): string {
               两个按钮职责必须分得清（这个项目在"混淆操作语义"上吃过事故）：
                 · 换点位 = 改这台设备的**归属**（搬去别的点位）
                 · 摘下   = 让它**没有点位**（仍在台账里）
-              都不是"挪桌子"—— 那属于地图上的「调整位置」。
+              都不是"挪桌子"—— 那属于地图上的「编辑点位」。
             -->
             <button
               class="mini"
@@ -855,7 +855,7 @@ function dash(v: string | null | undefined): string {
         </div>
 
         <div class="hint-row">
-          朝向：{{ facingLabel(station!.facing) }} · 位置调整请用顶部「调整位置」拖动后保存布局
+          朝向：{{ facingLabel(station!.facing) }} · 位置调整请用顶部「编辑点位」拖动后保存布局
         </div>
 
         <div class="acts">

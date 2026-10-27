@@ -157,7 +157,7 @@ const ZOOM_STEP_BUTTON = 1.15 // 工具条 ±
 const ZOOM_STEP_WHEEL = 1.1 // 滚轮一格
 
 /* ---- 模式 ---- */
-const editMode = ref(false) // 「调整位置」：可拖动
+const editMode = ref(false) // 「编辑点位」：可拖动 / 增删 / 批量生成
 const adding = ref(false) // 「新增」：点空白处放新点位
 const auditMode = ref(false) // 「盘点模式」
 
@@ -169,7 +169,7 @@ const auditMode = ref(false) // 「盘点模式」
  * 说得对 —— 人不会想到"要加一片点位，先去编辑底图"。
  * 而且那个按钮和「新增图元」并排、长得一样，语义却**相反**
  * （图元进草稿要保存，点位立刻写库），真实事故就是这么来的。
- * 点位的家就在这一页的「调整位置」模式里，单个增删也在这 —— 它当然也该在这。
+ * 点位的家就在这一页的「编辑点位」模式里，单个增删也在这 —— 它当然也该在这。
  */
 const bulkOpen = ref(false)
 const bulkBusy = ref(false)
@@ -732,7 +732,7 @@ const stats = computed(() => {
  * 所以分成两层文案（见 `blankHint`），别用一条万能提示糊过去。
  *
  * ⚠️ **刻意不把 `editMode` / `auditMode` 掺进条件。** 引导说的是"这里还什么都没有"，
- * 不是"你现在没在做什么模式"。用户点「开始建点位」进了调整位置模式、
+ * 不是"你现在没在做什么模式"。用户点「开始建点位」进了编辑点位模式、
  * 但一个点位都还没建 —— 引导**应该留着**（他才刚开始，正是最需要指引的时候），
  * 等落下第一个点位它自然消失。
  * 这样"引导何时消失"只有一个判据：**他有没有真的建出东西**。
@@ -771,7 +771,7 @@ function openEditor() {
 /**
  * 空画布引导的「开始建点位」：**一步到位**。
  *
- * 只调 `toggleEditMode()` 是不够的 —— 那样用户进到调整位置模式，
+ * 只调 `toggleEditMode()` 是不够的 —— 那样用户进到编辑点位模式，
  * 但点画布不会加东西，还得自己再点一次「新增」。**两个按钮就够问了**。
  */
 function startFromBlank() {
@@ -1368,7 +1368,7 @@ function onMouseUp() {
 /**
  * 保存布局。**一次提交 = 1 条审计**。
  *
- * 「调整位置」是拖着反复微调，一次排版几十次松手；逐次提交会让审计页被布局记录刷屏，
+ * 「编辑点位」是拖着反复微调，一次排版几十次松手；逐次提交会让审计页被布局记录刷屏，
  * 真正的资产操作被淹掉。所以这里只提交**真的动过**的点位，且只在用户点保存时发一次请求。
  */
 async function saveLayout() {
@@ -1562,7 +1562,7 @@ async function deleteStation(station: Workstation): Promise<boolean> {
 }
 
 /* ========================================================================== */
-/* 批量生成点位（在「调整位置」模式里）                                       */
+/* 批量生成点位（在「编辑点位」模式里）                                       */
 /* ========================================================================== */
 
 /**
@@ -2088,7 +2088,7 @@ watch(selectedId, (id) => {
         -->
 
         <!--
-          编辑类操作（新增 / 删除 / 导出 / 调整位置）。
+          编辑类操作（新增 / 删除 / 导出 / 编辑点位）。
           宽屏：整组用 `display: contents` 摊平，按钮直接当 `.btn-group` 的子项，和以前一模一样。
           手机：整组隐藏，收进右边的「更多」下拉 —— 六个按钮在 390px 里会折成 4 行、吃掉 178px
           （实测数字，见 CURRENT_STATE 第八节），比"点两下才找到"糟得多。
@@ -2102,13 +2102,13 @@ watch(selectedId, (id) => {
           </button>
           <!--
             批量生成点位。**放在这里而不是「编辑底图」里** —— 见 runBulk 的注释。
-            只在「调整位置」模式里出现：它属于"摆点位"，不属于"看地图"。
+            只在「编辑点位」模式里出现：它属于"摆点位"，不属于"看地图"。
           -->
           <button v-if="editMode" class="btn teal" :class="{ on: bulkOpen }" @click="toggleBulkPanel">
             批量生成
           </button>
           <button class="btn" @click="exportJson">导出 JSON</button>
-          <button class="btn teal" :class="{ on: editMode }" @click="toggleEditMode">调整位置</button>
+          <button class="btn teal" :class="{ on: editMode }" @click="toggleEditMode">编辑点位</button>
           <button class="btn primary" :disabled="saving || !dirtyIds.size" v-if="editMode" @click="saveLayout">
             保存布局{{ dirtyIds.size ? `（${dirtyIds.size}）` : '' }}
           </button>
@@ -2131,7 +2131,7 @@ watch(selectedId, (id) => {
               <el-dropdown-item command="export">导出 JSON</el-dropdown-item>
               <el-dropdown-item command="editor">编辑底图</el-dropdown-item>
               <el-dropdown-item command="edit">
-                {{ editMode ? '退出调整' : '调整位置' }}
+                {{ editMode ? '退出编辑' : '编辑点位' }}
               </el-dropdown-item>
               <el-dropdown-item v-if="editMode" command="save" :disabled="saving || !dirtyIds.size">
                 保存布局{{ dirtyIds.size ? `（${dirtyIds.size}）` : '' }}
@@ -2227,7 +2227,7 @@ watch(selectedId, (id) => {
     <!-- ───────────────────────── 地图 + 侧栏 ───────────────────────── -->
     <div class="map-body">
       <!--
-        批量生成点位面板。浮在画布左上角，只在「调整位置」模式下由按钮唤出。
+        批量生成点位面板。浮在画布左上角，只在「编辑点位」模式下由按钮唤出。
         它**不在编辑器里** —— 「底图是底图，点位是点位」（见 runBulk 的注释）。
       -->
       <div v-if="bulkOpen && editMode" class="bulk-panel">
@@ -2445,7 +2445,7 @@ watch(selectedId, (id) => {
             </p>
             <ol class="bh-steps">
               <li>
-                <b>建点位</b>：顶栏「调整位置」→ 点「新增」，再点画布空白处；
+                <b>建点位</b>：顶栏「编辑点位」→ 点「新增」，再点画布空白处；
                 想排一片就用「批量生成」（能实时预览编号范围）
               </li>
               <li><b>画底图</b>：顶栏「编辑底图」→ 从零画地台 / 走道 / 房间 / 墙体</li>
@@ -2493,7 +2493,7 @@ watch(selectedId, (id) => {
             </template>
             <template v-else-if="relFilter !== 'all' && relLayer && !auditMode">点顶栏「全部」取消筛选</template>
             <template v-else-if="auditMode">点击点位可对单台设备盘点</template>
-            <template v-else>点「调整位置」后可拖动点位</template>
+            <template v-else>点「编辑点位」后可拖动、增删、批量生成点位</template>
           </div>
         </div>
 
@@ -2923,7 +2923,7 @@ watch(selectedId, (id) => {
 }
 .map-page.edit-on .grid-backdrop { opacity: 1; }
 
-/* ── 批量生成点位面板（浮在画布左上角，仅「调整位置」模式下出现）──────
+/* ── 批量生成点位面板（浮在画布左上角，仅「编辑点位」模式下出现）──────
    它从「编辑底图」页搬过来的：底图与点位分属两页，别再混在一起。
    面板本身是**覆盖层**，不占画布布局 —— 否则会让 fit() 算出的可用面积变小。 */
 .bulk-panel {
@@ -3314,7 +3314,7 @@ watch(selectedId, (id) => {
 }
 .bh-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
-/* 进了「调整位置」模式：让到画布上方去，别压着用户要点的地方。
+/* 进了「编辑点位」模式：让到画布上方去，别压着用户要点的地方。
    缩到一半宽、字号收一档 —— 这时候他是"在干活"，引导该退居二线而不是占据 C位。 */
 .blank-hint.is-editing { align-items: flex-start; padding-top: 18px; }
 .blank-hint.is-editing .bh-in {
@@ -3373,7 +3373,7 @@ watch(selectedId, (id) => {
      实测（390×844）原来是这样折的：统计独占一行 → 搜索独占一行 → 6 个按钮自己折 2 行
      → 缩放再一行。固定区吃掉 27%，一开盘点模式到 42%。这里三刀：
        ① 统计从"竖排占满一行"改成"横排小字"，缩到约 110px；
-       ② 编辑类按钮（新增 / 删除 / 导出 / 调整位置）整组收进「更多」下拉；
+       ② 编辑类按钮（新增 / 删除 / 导出 / 编辑点位）整组收进「更多」下拉；
        ③ 搜索与统计同行、吃掉剩余宽度。 */
   .map-topbar {
     height: auto;

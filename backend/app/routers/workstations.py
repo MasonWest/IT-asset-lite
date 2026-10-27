@@ -455,7 +455,7 @@ def create_workstation(payload: WorkstationCreate, db: Session = Depends(get_db)
 def save_layout(payload: WorkstationLayoutRequest, db: Session = Depends(get_db)):
     """一次布局调整 = **1 条审计**，不是 N 条。
 
-    界面上的「调整位置」是拖动 + 松手反复微调，一次排版可能几十次动作。
+    界面上的「编辑点位」是拖动 + 松手反复微调，一次排版可能几十次动作。
     逐次提交会让审计页瞬间被布局记录刷屏，真正的资产操作被淹掉 ——
     这和系统拒绝在时间线里记"点保存没改东西"是同一个理由。
     （与「批量导入 30 台设备 = 1 条审计」的口径也一致。）
